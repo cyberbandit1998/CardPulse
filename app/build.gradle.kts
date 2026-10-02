@@ -38,6 +38,16 @@ kotlin {
     }
 }
 
+// CI shows the build log rather than the HTML report, so print why a test failed right there.
+tasks.withType<Test>().configureEach {
+    testLogging {
+        events("failed")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        showCauses = true
+        showStackTraces = true
+    }
+}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     implementation(composeBom)

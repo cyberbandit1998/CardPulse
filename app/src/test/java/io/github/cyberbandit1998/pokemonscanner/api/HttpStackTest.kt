@@ -109,7 +109,8 @@ class HttpStackTest {
         assertEquals("POST", loginRequest.method)
         assertEquals("/api/auth/login", loginRequest.path)
         assertTrue(loginRequest.getHeader("Content-Type")!!.startsWith("application/x-www-form-urlencoded"))
-        assertEquals("username=admin&password=p%26ss%20word", loginRequest.bodyText())
+        // OkHttp writes a space as "+", which is how form bodies are encoded; the server decodes it back.
+        assertEquals("username=admin&password=p%26ss+word", loginRequest.bodyText())
         assertNull(loginRequest.getHeader("Authorization"))
         assertEquals("admin", login.user.username)
 

@@ -110,7 +110,7 @@ class Repository(
         photos.forEach { photo ->
             parts += MultipartBody.Part.createFormData("files", photo.name, photo.asRequestBody(JPEG))
         }
-        val positions = if (individual) photos.indices.joinToString(prefix = "[", postfix = "]") else "[]"
+        val positions = if (individual) photos.indices.joinToString(separator = ",", prefix = "[", postfix = "]") else "[]"
         parts += MultipartBody.Part.createFormData("individual_positions", positions)
         return api.enqueueScan(parts)
     }

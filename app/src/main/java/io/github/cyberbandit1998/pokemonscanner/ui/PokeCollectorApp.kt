@@ -6,10 +6,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -40,7 +40,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
     HOME("Home", Icons.Default.Home),
     SCAN("Scan", Icons.Default.CameraAlt),
     COLLECTION("Collection", Icons.Default.GridView),
-    PORTFOLIO("Portfolio", Icons.Default.ShowChart),
+    PORTFOLIO("Portfolio", Icons.AutoMirrored.Filled.ShowChart),
 }
 
 @Composable
