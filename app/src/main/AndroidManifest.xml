@@ -14,8 +14,9 @@
     <application
         android:name=".PokeApp"
         android:allowBackup="false"
-        android:label="PokéCollector"
-        android:theme="@style/Theme.PokeCollector"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.CardPulse"
         android:usesCleartextTraffic="false">
 
         <activity

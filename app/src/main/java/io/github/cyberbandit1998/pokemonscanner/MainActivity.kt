@@ -6,8 +6,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import io.github.cyberbandit1998.pokemonscanner.ui.PokeCollectorApp
-import io.github.cyberbandit1998.pokemonscanner.ui.theme.PokeCollectorTheme
+import io.github.cyberbandit1998.pokemonscanner.ui.CardPulseApp
+import io.github.cyberbandit1998.pokemonscanner.ui.theme.CardPulseTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -18,8 +18,8 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         setContent {
-            PokeCollectorTheme {
-                PokeCollectorApp()
+            CardPulseTheme {
+                CardPulseApp()
             }
         }
     }

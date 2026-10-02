@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "PokeCollectorAndroid"
+rootProject.name = "CardPulse"
 include(":app")

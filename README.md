@@ -1,6 +1,6 @@
-# Pokémon Scanner for Android
+# CardPulse
 
-An unofficial Android companion for a self-hosted
+CardPulse is an unofficial Android companion for a self-hosted
 [PokéCollector](https://github.com/Git-Romer/pokecollector) server. Browse your collection, watch your
 portfolio value, and scan cards with the phone camera. Recognition is done by **your own** PokéCollector
 server; the phone only takes the photos and uploads them.
@@ -41,7 +41,7 @@ Every successful build on GitHub produces a debug APK:
 
 - **Easiest:** open the repository's **Releases** page on your phone, pick the newest *Debug build*, tap the `.apk`.
   (Releases are created on request; ask or run the *Android CI* workflow with "publish" ticked.)
-- Or open the **Actions** tab, pick the latest run, and download the `pokemonscanner-debug-apk` artifact.
+- Or open the **Actions** tab, pick the latest run, and download the `cardpulse-debug-apk` artifact.
 
 Android will ask to allow "Install unknown apps" for the app you opened the file from.
 

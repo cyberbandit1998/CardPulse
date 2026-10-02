@@ -41,7 +41,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: pokemonscanner-debug-apk
+          name: cardpulse-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
@@ -55,7 +55,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: pokemonscanner-debug-apk
+          name: cardpulse-debug-apk
           path: dist
 
       - name: Publish pre-release
@@ -63,10 +63,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="build-${{ github.run_number }}"
-          apk="dist/PokemonScanner-${tag}.apk"
+          apk="dist/CardPulse-${tag}.apk"
           mv dist/*.apk "$apk"
           {
-            echo "Debug build ${tag} of commit ${GITHUB_SHA::7}. Debug-signed, for sideloading only."
+            echo "CardPulse debug build ${tag} of commit ${GITHUB_SHA::7}. Debug-signed, for sideloading only."
             echo
             echo "**Install:** download the .apk on your phone and open it. If Android asks, allow \"Install unknown apps\" for your browser or Files app."
             echo
@@ -80,5 +80,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --prerelease \
-            --title "Debug build ${tag}" \
+            --title "CardPulse debug build ${tag}" \
             --notes-file notes.md

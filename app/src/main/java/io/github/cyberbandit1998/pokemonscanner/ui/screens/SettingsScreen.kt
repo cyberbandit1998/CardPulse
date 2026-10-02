@@ -87,7 +87,7 @@ fun SettingsScreen(
             Section("About") {
                 Fact("Version", "${BuildConfig.VERSION_NAME}${if (BuildConfig.DEBUG) " (debug build)" else ""}")
                 Text(
-                    "An unofficial companion for the open-source PokéCollector server. Your sign-in token is stored encrypted on this phone, " +
+                    "CardPulse is an unofficial companion for the open-source PokéCollector server. Your sign-in token is stored encrypted on this phone, " +
                         "and photos are sent only to the server address you entered.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

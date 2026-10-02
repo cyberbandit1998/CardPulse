@@ -1,8 +1,10 @@
-<resources xmlns:tools="http://schemas.android.com/tools">
-    <style name="Theme.PokeCollector" parent="android:style/Theme.Material.Light.NoActionBar">
+<resources>
+    <!-- Dark all the way down: the window shows this before Compose draws, so a light base would flash white. -->
+    <style name="Theme.CardPulse" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">@color/window_background</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:statusBarColor">#101014</item>
-        <item name="android:navigationBarColor">#101014</item>
+        <item name="android:statusBarColor">@color/window_background</item>
+        <item name="android:navigationBarColor">@color/window_background</item>
     </style>
 </resources>

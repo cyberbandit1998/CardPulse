@@ -44,7 +44,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 }
 
 @Composable
-fun PokeCollectorApp(
+fun CardPulseApp(
     appVm: AppViewModel = viewModel(),
     scanVm: ScanViewModel = viewModel(),
 ) {

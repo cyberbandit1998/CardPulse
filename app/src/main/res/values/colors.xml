@@ -1,0 +1,4 @@
+<resources>
+    <!-- Matches the app's dark background so nothing flashes white while the app starts. -->
+    <color name="window_background">#101014</color>
+</resources>

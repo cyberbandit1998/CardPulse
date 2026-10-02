@@ -9,10 +9,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -24,8 +30,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import io.github.cyberbandit1998.pokemonscanner.ui.AppState
 import io.github.cyberbandit1998.pokemonscanner.ui.Banner
@@ -45,6 +54,8 @@ fun LoginScreen(
     var username by rememberSaveable { mutableStateOf("") }
     // Not rememberSaveable: a password shouldn't be written into the saved-state bundle.
     var password by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
+    val canSubmit = !state.busy && server.isNotBlank()
 
     Column(
         Modifier
@@ -54,7 +65,7 @@ fun LoginScreen(
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("PokéCollector", style = MaterialTheme.typography.headlineLarge)
+        Text("CardPulse", style = MaterialTheme.typography.headlineLarge)
         Text(
             "An unofficial Android companion for your own self-hosted PokéCollector server.",
             style = MaterialTheme.typography.bodyMedium,
@@ -68,7 +79,12 @@ fun LoginScreen(
             label = { Text("Server address") },
             placeholder = { Text("https://your-server.example") },
             supportingText = { Text("The https:// address of your own PokéCollector server. It is saved on this phone only.") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.None,
+                autoCorrectEnabled = false,
+                keyboardType = KeyboardType.Uri,
+                imeAction = ImeAction.Next,
+            ),
             singleLine = true,
         )
         OutlinedTextField(
@@ -76,6 +92,12 @@ fun LoginScreen(
             onValueChange = { username = it },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Username") },
+            // Keyboards capitalise the first letter by default, which would turn "admin" into "Admin".
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.None,
+                autoCorrectEnabled = false,
+                imeAction = ImeAction.Next,
+            ),
             singleLine = true,
         )
         OutlinedTextField(
@@ -83,8 +105,17 @@ fun LoginScreen(
             onValueChange = { password = it },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Password") },
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+                IconButton(onClick = { showPassword = !showPassword }) {
+                    Icon(
+                        imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                        contentDescription = if (showPassword) "Hide password" else "Show password",
+                    )
+                }
+            },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Go),
+            keyboardActions = KeyboardActions(onGo = { if (canSubmit) onSignIn(server, username, password) }),
             singleLine = true,
         )
 
@@ -93,12 +124,12 @@ fun LoginScreen(
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(
                 onClick = { onTest(server) },
-                enabled = !state.busy && server.isNotBlank(),
+                enabled = canSubmit,
                 modifier = Modifier.weight(1f),
             ) { Text("Test connection") }
             Button(
                 onClick = { onSignIn(server, username, password) },
-                enabled = !state.busy && server.isNotBlank(),
+                enabled = canSubmit,
                 modifier = Modifier.weight(1f),
             ) {
                 if (state.busy) {
