@@ -57,8 +57,11 @@ fun CameraPreview(controller: CaptureController, modifier: Modifier = Modifier) 
         val executor = ContextCompat.getMainExecutor(context)
         val providerFuture = ProcessCameraProvider.getInstance(context)
         var provider: ProcessCameraProvider? = null
+        var disposed = false
 
         providerFuture.addListener({
+            // The screen may have been left before the camera was ready; don't bind one nobody is looking at.
+            if (disposed) return@addListener
             val cameraProvider = providerFuture.get()
             provider = cameraProvider
 
@@ -99,6 +102,7 @@ fun CameraPreview(controller: CaptureController, modifier: Modifier = Modifier) 
         }, executor)
 
         onDispose {
+            disposed = true
             controller.capture = null
             provider?.unbindAll()
         }

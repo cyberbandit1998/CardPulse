@@ -57,7 +57,7 @@ fun HomeScreen(
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Portfolio", style = MaterialTheme.typography.headlineMedium)
+                    Text("CardPulse", style = MaterialTheme.typography.headlineMedium)
                     Text(
                         state.user?.username?.let { "Signed in as $it" } ?: "Connected",
                         style = MaterialTheme.typography.bodySmall,

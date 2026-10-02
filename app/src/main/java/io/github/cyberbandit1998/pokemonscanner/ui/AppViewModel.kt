@@ -111,12 +111,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             outcome.onSuccess { result ->
-                store.saveServer(server)
-                store.saveSignIn(result.token, username.trim().ifEmpty { null }, result.noLogin)
+                // The server accepted the sign-in. If this phone's secure storage can't keep it, stay signed in
+                // for this session rather than failing, and say so.
+                val saved = attempt {
+                    store.saveServer(server)
+                    store.saveSignIn(result.token, username.trim().ifEmpty { null }, result.noLogin)
+                }
                 _state.update {
                     it.copy(
                         busy = false,
-                        message = null,
+                        message = if (saved.isSuccess) null else {
+                            "Signed in, but this phone wouldn't store your sign-in securely, so you'll be asked to sign in again next time."
+                        },
                         serverUrl = server,
                         signedIn = true,
                         noLogin = result.noLogin,
