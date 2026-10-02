@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.aspectRatio
@@ -24,7 +25,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +42,7 @@ import io.github.cyberbandit1998.cardpulse.core.MoneyFormatter
 import io.github.cyberbandit1998.cardpulse.core.defaultArtSource
 import io.github.cyberbandit1998.cardpulse.core.hasCatalogueImage
 import io.github.cyberbandit1998.cardpulse.core.parseServerInstant
+import io.github.cyberbandit1998.cardpulse.ui.AccentTextButton
 import io.github.cyberbandit1998.cardpulse.ui.AppState
 import io.github.cyberbandit1998.cardpulse.ui.Banner
 import io.github.cyberbandit1998.cardpulse.ui.CARD_ASPECT
@@ -95,16 +96,16 @@ fun CollectionScreen(
                 SortOrder.entries.forEach { option ->
                     FilterChip(selected = sort == option, onClick = { sort = option }, label = { Text(option.label) })
                 }
-                Text(
-                    "${shown.size} entries · $totalCards cards",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                TextButton(onClick = onRefresh) { Text("Refresh") }
+                Spacer(Modifier.weight(1f))
+                AccentTextButton(onClick = onRefresh) { Text("Refresh") }
             }
+            Text(
+                "${shown.size} entries · $totalCards cards",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             if (state.collectionLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (state.collectionUnreadable > 0) {
                 Banner("${state.collectionUnreadable} entries from the server couldn't be read by this app and are hidden.", isError = true)
@@ -180,7 +181,7 @@ private fun ItemDialog(entry: CollectionItemDto, state: AppState, onClose: () ->
 
     AlertDialog(
         onDismissRequest = onClose,
-        confirmButton = { TextButton(onClick = onClose) { Text("Close") } },
+        confirmButton = { AccentTextButton(onClick = onClose) { Text("Close") } },
         title = { Text(entry.card?.name.orEmpty()) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {

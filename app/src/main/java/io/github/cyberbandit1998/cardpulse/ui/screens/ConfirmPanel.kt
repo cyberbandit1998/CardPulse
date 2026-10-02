@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -56,11 +57,11 @@ import io.github.cyberbandit1998.cardpulse.core.ScanEntry
 import io.github.cyberbandit1998.cardpulse.core.ServerUrls
 import io.github.cyberbandit1998.cardpulse.core.TileState
 import io.github.cyberbandit1998.cardpulse.core.Variants
+import io.github.cyberbandit1998.cardpulse.core.details
 import io.github.cyberbandit1998.cardpulse.core.headline
 import io.github.cyberbandit1998.cardpulse.core.recognizedSummary
 import io.github.cyberbandit1998.cardpulse.core.scannedLanguage
 import io.github.cyberbandit1998.cardpulse.core.subtitle
-import io.github.cyberbandit1998.cardpulse.core.summary
 import io.github.cyberbandit1998.cardpulse.core.tileState
 import io.github.cyberbandit1998.cardpulse.ui.RemoteImage
 
@@ -180,6 +181,9 @@ private fun ColumnScope.ReadyContent(
             }
         }
 
+        // Do I already have it?
+        OwnershipBanner(ownership)
+
         val matches = item.matches
         if (matches.size > 1) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -214,9 +218,6 @@ private fun ColumnScope.ReadyContent(
             }
         }
 
-        // Do I already have it?
-        OwnershipBanner(ownership)
-
         // What exactly am I adding?
         ChoiceRow("Condition", Conditions.ALL, edits.condition, { it }) { onEdits(edits.copy(condition = it)) }
         ChoiceRow("Variant", Variants.ALL, edits.variant, { it }) { onEdits(edits.copy(variant = it)) }
@@ -250,12 +251,15 @@ private fun ColumnScope.ReadyContent(
     }
 
     ConfirmFooter(error = entry.error) {
-        OutlinedButton(onClick = onSkip, enabled = !entry.busy) { Text("Skip") }
-        Button(onClick = onAdd, enabled = !entry.busy && !priceInvalid, modifier = Modifier.weight(1f)) {
+        OutlinedButton(onClick = onSkip, enabled = !entry.busy, modifier = Modifier.heightIn(min = 56.dp)) { Text("Skip") }
+        Button(onClick = onAdd, enabled = !entry.busy && !priceInvalid, modifier = Modifier.weight(1f).heightIn(min = 56.dp)) {
             if (entry.busy) {
                 CircularProgressIndicator(Modifier.padding(end = 8.dp).size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
             }
-            Text("Add ${edits.summary(scanned)}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Add ×${edits.quantity}", style = MaterialTheme.typography.labelLarge)
+                Text(edits.details(scanned), style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }

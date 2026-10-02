@@ -5,12 +5,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -91,6 +94,27 @@ fun CardArt(
     )
 }
 
+/**
+ * A text button in the lighter accent colour. The brand red the theme uses for filled buttons is too dark to read as
+ * small text on the dark background.
+ */
+@Composable
+fun AccentTextButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    color: Color = MaterialTheme.colorScheme.secondary,
+    content: @Composable RowScope.() -> Unit,
+) {
+    TextButton(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        colors = ButtonDefaults.textButtonColors(contentColor = color),
+        content = content,
+    )
+}
+
 @Composable
 fun Banner(text: String, modifier: Modifier = Modifier, isError: Boolean = false, onDismiss: (() -> Unit)? = null) {
     Card(
@@ -106,7 +130,8 @@ fun Banner(text: String, modifier: Modifier = Modifier, isError: Boolean = false
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(text, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-            if (onDismiss != null) TextButton(onClick = onDismiss) { Text("OK") }
+            // In the banner's own text colour: the accent colour is unreadable on the dark red of an error.
+            if (onDismiss != null) AccentTextButton(onClick = onDismiss, color = LocalContentColor.current) { Text("OK") }
         }
     }
 }

@@ -2,6 +2,7 @@ package io.github.cyberbandit1998.cardpulse.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -36,6 +37,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import io.github.cyberbandit1998.cardpulse.ui.AppState
 import io.github.cyberbandit1998.cardpulse.ui.Banner
 
@@ -126,7 +128,8 @@ fun LoginScreen(
                 onClick = { onTest(server) },
                 enabled = canSubmit,
                 modifier = Modifier.weight(1f),
-            ) { Text("Test connection") }
+                contentPadding = PaddingValues(horizontal = 12.dp),
+            ) { Text("Test connection", maxLines = 1, overflow = TextOverflow.Ellipsis) }
             Button(
                 onClick = { onSignIn(server, username, password) },
                 enabled = canSubmit,

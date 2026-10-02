@@ -72,6 +72,7 @@ import io.github.cyberbandit1998.cardpulse.core.tileState
 import io.github.cyberbandit1998.cardpulse.core.toReview
 import io.github.cyberbandit1998.cardpulse.ui.AppState
 import io.github.cyberbandit1998.cardpulse.ui.Banner
+import io.github.cyberbandit1998.cardpulse.ui.CARD_ASPECT
 import io.github.cyberbandit1998.cardpulse.ui.ScanStage
 import io.github.cyberbandit1998.cardpulse.ui.ScanState
 import io.github.cyberbandit1998.cardpulse.ui.ScanViewModel
@@ -406,7 +407,7 @@ private fun CardFrame(modifier: Modifier = Modifier) {
     Box(
         modifier
             .fillMaxHeight(0.5f)
-            .aspectRatio(63f / 88f)
+            .aspectRatio(CARD_ASPECT)
             .border(2.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(14.dp)),
     )
 }

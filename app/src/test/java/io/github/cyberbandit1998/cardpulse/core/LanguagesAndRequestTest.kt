@@ -72,8 +72,8 @@ class LanguagesAndRequestTest {
 
     @Test
     fun `the choices read as one short line`() {
-        assertEquals("×2 · LP · Holo · EN", AddEdits(quantity = 2, condition = "LP", variant = "Holo").summary("en"))
-        assertEquals("×1 · NM · Normal · DE", AddEdits(lang = "de").summary("en"))
-        assertEquals("×1 · NM · Normal · JA", AddEdits().summary("ja"))
+        assertEquals("LP · Holo · EN", AddEdits(quantity = 2, condition = "LP", variant = "Holo").details("en"))
+        assertEquals("NM · Normal · DE", AddEdits(lang = "de").details("en"))
+        assertEquals("NM · Normal · JA", AddEdits().details("ja"))
     }
 }

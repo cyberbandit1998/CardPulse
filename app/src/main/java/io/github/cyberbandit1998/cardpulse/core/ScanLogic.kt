@@ -68,9 +68,9 @@ data class AddEdits(
     val purchasePrice: Double? = null,
 )
 
-/** "×2 · NM · Normal · EN": the choices, in a line short enough for a button. */
-fun AddEdits.summary(scannedLang: String): String =
-    "×$quantity · $condition · $variant · ${CardLanguages.label(CardLanguages.normalize(lang) ?: scannedLang)}"
+/** "NM · Normal · EN": which copy is being added, in a line short enough for a button. */
+fun AddEdits.details(scannedLang: String): String =
+    "$condition · $variant · ${CardLanguages.label(CardLanguages.normalize(lang) ?: scannedLang)}"
 
 /**
  * Builds the body for `resolve-and-add`. The server requires `card_id` (with the language suffix)

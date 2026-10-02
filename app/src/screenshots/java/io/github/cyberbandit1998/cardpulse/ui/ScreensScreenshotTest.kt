@@ -286,6 +286,19 @@ class ScreensScreenshotTest {
     }
 
     @Test
+    @Config(qualifiers = "w320dp-h640dp-xhdpi")
+    fun confirmOnASmallPhone() {
+        val item = done(
+            5,
+            match("sv9-5_en", "Pikachu", set = "Journey Together", number = "5", rarity = "Common"),
+            match("sv9-5_de", "Pikachu", set = "Reisegefährten", number = "5", rarity = "Common"),
+        )
+        val chosen = entry(5, item = item, edits = AddEdits(quantity = 12, condition = "MP", variant = "First Edition", lang = "zh-tw"))
+        rapid(listOf(chosen) + trayEntries.filter { it.id != 5L }, openId = 5)
+        capture("38-confirm-small-phone")
+    }
+
+    @Test
     fun confirmWhileTheCollectionHasNotLoaded() {
         compose.setContent {
             CardPulseTheme {

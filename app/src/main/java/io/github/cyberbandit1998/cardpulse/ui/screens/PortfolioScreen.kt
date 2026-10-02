@@ -17,7 +17,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -37,6 +36,7 @@ import io.github.cyberbandit1998.cardpulse.core.MoneyFormatter
 import io.github.cyberbandit1998.cardpulse.core.PortfolioRange
 import io.github.cyberbandit1998.cardpulse.core.costCoverage
 import io.github.cyberbandit1998.cardpulse.core.rangeChange
+import io.github.cyberbandit1998.cardpulse.ui.AccentTextButton
 import io.github.cyberbandit1998.cardpulse.ui.AppState
 import io.github.cyberbandit1998.cardpulse.ui.formatDate
 import io.github.cyberbandit1998.cardpulse.ui.gainColor
@@ -114,7 +114,7 @@ fun PortfolioScreen(
                         Text(formatDate(state.history.last().time), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                TextButton(onClick = { onShowHistory(state.historyRange, true) }, enabled = !state.historyLoading) { Text("Refresh chart") }
+                AccentTextButton(onClick = { onShowHistory(state.historyRange, true) }, enabled = !state.historyLoading) { Text("Refresh chart") }
             }
         }
 

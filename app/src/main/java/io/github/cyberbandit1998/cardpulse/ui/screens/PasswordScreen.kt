@@ -13,7 +13,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -23,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import io.github.cyberbandit1998.cardpulse.ui.AccentTextButton
 import io.github.cyberbandit1998.cardpulse.ui.AppState
 import io.github.cyberbandit1998.cardpulse.ui.Banner
 
@@ -84,6 +84,6 @@ fun PasswordScreen(
             enabled = !state.busy && first.length >= MIN_PASSWORD_LENGTH && first == second,
             modifier = Modifier.fillMaxWidth(),
         ) { Text(if (state.busy) "Saving…" else "Save password") }
-        TextButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
+        AccentTextButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
     }
 }

@@ -18,7 +18,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.github.cyberbandit1998.cardpulse.BuildConfig
+import io.github.cyberbandit1998.cardpulse.ui.AccentTextButton
 import io.github.cyberbandit1998.cardpulse.ui.AppState
 import io.github.cyberbandit1998.cardpulse.ui.ScanState
 
@@ -94,8 +94,8 @@ fun SettingsScreen(
             onDismissRequest = { confirmSignOut = false },
             title = { Text("Sign out?") },
             text = { Text("You'll need to sign in again. Photos waiting to be sent stay on this phone. Cached card images are cleared.") },
-            confirmButton = { TextButton(onClick = { confirmSignOut = false; onSignOut() }) { Text("Sign out") } },
-            dismissButton = { TextButton(onClick = { confirmSignOut = false }) { Text("Cancel") } },
+            confirmButton = { AccentTextButton(onClick = { confirmSignOut = false; onSignOut() }) { Text("Sign out") } },
+            dismissButton = { AccentTextButton(onClick = { confirmSignOut = false }) { Text("Cancel") } },
         )
     }
 }
