@@ -61,6 +61,18 @@ jobs:
       - name: Build debug APK
         run: ./gradlew --no-daemon :app:assembleDebug
 
+      - name: Self-test, diagnose apksigner
+        run: |
+          echo "ANDROID_HOME=${ANDROID_HOME:-<unset>}  ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-<unset>}"
+          ls "$ANDROID_HOME/build-tools" || true
+          ls -l "$ANDROID_HOME"/build-tools/*/apksigner || echo "no apksigner file under build-tools"
+          apk=$(ls app/build/outputs/apk/debug/*.apk)
+          for tool in $(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1); do
+            echo "--- $tool verify --print-certs (stdout and stderr, exit code):"
+            "$tool" verify --print-certs "$apk" 2>&1 | head -30
+            echo "exit=${PIPESTATUS[0]}"
+          done
+
       - name: Record which key signed the APK
         id: cert
         env:
@@ -83,7 +95,8 @@ jobs:
           expected=$(cat "$RUNNER_TEMP/expected_sha256.txt")
           echo "expected certificate: $expected"
           echo "actual certificate:   $actual"
-          test -n "$actual" && test "$actual" = "$expected"
+          [ -n "$actual" ] || { echo "FAIL: no certificate digest was read from the APK"; exit 1; }
+          [ "$actual" = "$expected" ] || { echo "FAIL: the APK is not signed with the stand-in key"; exit 1; }
           aapt2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
           badging=$("$aapt2" dump badging "$apk" | head -1)
           echo "$badging"
