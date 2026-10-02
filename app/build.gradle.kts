@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "io.github.cyberbandit1998.pokemonscanner"
+    namespace = "io.github.cyberbandit1998.cardpulse"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "io.github.cyberbandit1998.pokemonscanner"
+        applicationId = "io.github.cyberbandit1998.cardpulse"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
