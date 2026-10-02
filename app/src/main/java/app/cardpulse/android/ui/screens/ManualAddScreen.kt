@@ -367,9 +367,11 @@ private fun LookupBody(state: ManualAddState, serverUrl: String, ownership: (Car
             Text(
                 if (state.lookup.number != null) {
                     "Your server's catalogue has no “${state.lookup.name}” numbered ${state.lookup.number}. " +
-                        "Check the spelling, or try again without the number."
+                        "Check the spelling, or try again without the number. " +
+                        "Typing a set code and number in the name box, like OBF 125, works as well."
                 } else {
-                    "Your server's catalogue has no card named “${state.lookup.name}”. Check the spelling."
+                    "Your server's catalogue has no card named “${state.lookup.name}”. Check the spelling. " +
+                        "Typing a set code and number in the name box, like OBF 125, works as well."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
