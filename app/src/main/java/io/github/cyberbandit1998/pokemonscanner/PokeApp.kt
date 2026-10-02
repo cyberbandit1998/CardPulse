@@ -6,6 +6,7 @@ import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.disk.DiskCache
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.request.crossfade
 import io.github.cyberbandit1998.pokemonscanner.data.AppContainer
 import okio.Path.Companion.toOkioPath
 
