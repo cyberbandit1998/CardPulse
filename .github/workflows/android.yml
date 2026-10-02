@@ -27,6 +27,24 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Diagnostic - versions available on Google Maven
+        continue-on-error: true
+        run: |
+          base=https://dl.google.com/dl/android/maven2
+          for a in androidx/compose/compose-bom androidx/core/core-ktx androidx/activity/activity-compose \
+                   androidx/lifecycle/lifecycle-runtime-compose androidx/navigation/navigation-compose \
+                   androidx/camera/camera-core androidx/datastore/datastore-preferences com/android/tools/build/gradle; do
+            printf '== %s: ' "$a"
+            curl -fsS "$base/$a/maven-metadata.xml" | grep -o '<version>[^<]*' | sed 's/<version>//' | tail -14 | tr '\n' ' '
+            echo
+          done
+          echo "== compose-bom -> compose ui version"
+          for v in $(curl -fsS "$base/androidx/compose/compose-bom/maven-metadata.xml" | grep -o '<version>[^<]*' | sed 's/<version>//' | tail -10); do
+            ui=$(curl -fsS "$base/androidx/compose/compose-bom/$v/compose-bom-$v.pom" | grep -A1 '<artifactId>ui</artifactId>' | grep -o '<version>[^<]*' | head -1 | sed 's/<version>//')
+            m3=$(curl -fsS "$base/androidx/compose/compose-bom/$v/compose-bom-$v.pom" | grep -A1 '<artifactId>material3</artifactId>' | grep -o '<version>[^<]*' | head -1 | sed 's/<version>//')
+            echo "$v -> ui $ui, material3 $m3"
+          done
+
       - name: Unit tests
         run: ./gradlew --no-daemon :app:testDebugUnitTest
 
