@@ -159,13 +159,16 @@ jobs:
           tag="build-${{ github.run_number }}"
           apk="dist/CardPulse-${tag}.apk"
           mv dist/*.apk "$apk"
+          # The app ID the build was made with, straight from the Gradle file.
+          APP_ID=$(sed -n 's/^[[:space:]]*applicationId = "\(.*\)"$/\1/p' app/build.gradle.kts | head -1)
+          if [ -z "$APP_ID" ]; then echo "::error::Could not read the applicationId from app/build.gradle.kts"; exit 1; fi
           {
             echo "CardPulse debug build ${tag} of commit ${GITHUB_SHA::7}. Debug build, for sideloading only."
             echo
             echo "**Install:** download the .apk on your phone and open it. If Android asks, allow \"Install unknown apps\" for your browser or Files app."
             echo
             if [ "$FIXED_KEY" = "true" ]; then
-              echo "**Updating:** this build is signed with your fixed key, so it installs straight over the previous build with no need to uninstall. The exception is a build that was signed with a throwaway key: remove that one first, once."
+              echo "**Updating:** this build is signed with your fixed key, so it installs straight over an earlier build with the same app ID (\`${APP_ID}\`), keeping your saved address and sign-in. A build with a different app ID installs next to the old app as a separate one instead; What's new says when that happens. A build that was signed with a throwaway key has to be removed first, once."
             else
               echo "**Updating:** uninstall the previous build first. This build is signed with a throwaway key that changes every time, so Android will not update one in place. (The README explains how to set up a fixed key.)"
             fi
