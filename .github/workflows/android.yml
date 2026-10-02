@@ -56,11 +56,14 @@ jobs:
         env:
           FIXED_KEY: ${{ steps.signing.outputs.fixed_key }}
         run: |
+          apk=$(ls app/build/outputs/apk/debug/*.apk)
           apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1 || true)
           digest=""
           if [ -n "$apksigner" ]; then
-            digest=$("$apksigner" verify --print-certs app/build/outputs/apk/debug/*.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+            # The line reads "V2 Signer: certificate SHA-256 digest: ..." (older tools: "Signer #1 certificate ...").
+            digest=$("$apksigner" verify --print-certs "$apk" | sed -n 's/^.*certificate SHA-256 digest: //p' | head -1)
           fi
+          if [ -z "$digest" ]; then echo "::warning::Could not read the signing certificate from the APK."; fi
           echo "sha256=$digest" >> "$GITHUB_OUTPUT"
           kind="a throwaway debug key"
           if [ "$FIXED_KEY" = "true" ]; then kind="the fixed signing key"; fi
