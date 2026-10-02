@@ -97,13 +97,15 @@ fun ConfirmPanel(
     ) {
         Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Check before adding", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                if (othersWaiting > 0) {
-                    Text(
-                        "$othersWaiting more waiting",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                Column(Modifier.weight(1f)) {
+                    Text("Check before adding", style = MaterialTheme.typography.titleMedium)
+                    if (othersWaiting > 0) {
+                        Text(
+                            "$othersWaiting more waiting",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Close") }
             }
