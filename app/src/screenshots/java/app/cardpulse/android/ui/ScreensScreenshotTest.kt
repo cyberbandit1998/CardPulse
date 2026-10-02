@@ -263,7 +263,7 @@ class ScreensScreenshotTest {
     @Config(qualifiers = "w360dp-h1000dp-xxhdpi")
     fun settings() = shoot("13-settings") {
         SettingsScreen(
-            app = signedIn, scan = ScanState(prefs = ScanPrefs()), onBack = {}, onSignOut = {}, onSavePhotos = {},
+            app = signedIn, scan = ScanState(prefs = ScanPrefs()), onBack = {}, onSignOut = {}, onSavePhotos = {}, onLookUpPrices = {},
         )
     }
 

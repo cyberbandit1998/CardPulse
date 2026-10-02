@@ -117,6 +117,23 @@ data class CollectionItemDto(
         }
 }
 
+/** One run of a server sync, as listed by `GET /api/sync/status`. */
+@Serializable
+data class SyncLogDto(
+    val status: String? = null,
+    @SerialName("started_at") val startedAt: String? = null,
+    @SerialName("finished_at") val finishedAt: String? = null,
+    @SerialName("cards_updated") val cardsUpdated: Int = 0,
+)
+
+/** What the server says about its background syncs. */
+@Serializable
+data class SyncStatusDto(
+    @SerialName("is_running") val isRunning: Boolean = false,
+    @SerialName("is_price_sync_running") val isPriceSyncRunning: Boolean = false,
+    @SerialName("last_price_sync") val lastPriceSync: SyncLogDto? = null,
+)
+
 /** The body of `PUT /api/collection/{id}` when only the number of copies changes. */
 @Serializable
 data class CollectionQuantityRequest(val quantity: Int)

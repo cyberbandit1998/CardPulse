@@ -38,6 +38,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onSignOut: () -> Unit,
     onSavePhotos: (Boolean) -> Unit,
+    onLookUpPrices: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var confirmSignOut by remember { mutableStateOf(false) }
@@ -57,12 +58,18 @@ fun SettingsScreen(
                 OutlinedButton(onClick = { confirmSignOut = true }) { Text("Sign out or change server") }
             }
 
-            Section("Scanning") {
+            Section("Adding cards") {
                 ToggleRow(
                     "Keep my photo with every card",
                     "Otherwise your photo is kept only for cards that have no official artwork.",
                     scan.prefs.savePhotos,
                     onSavePhotos,
+                )
+                ToggleRow(
+                    "Look up prices after adding a new card",
+                    "Asks your server to fetch prices for new cards, then shows them. Needs an admin account on the server.",
+                    scan.prefs.lookUpPrices,
+                    onLookUpPrices,
                 )
             }
 

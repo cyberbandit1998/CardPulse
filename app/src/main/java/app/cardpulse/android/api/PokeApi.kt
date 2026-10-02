@@ -15,6 +15,7 @@ import app.cardpulse.android.core.ScanItemDto
 import app.cardpulse.android.core.ScanJobDto
 import app.cardpulse.android.core.ScanJobListDto
 import app.cardpulse.android.core.SnapshotDto
+import app.cardpulse.android.core.SyncStatusDto
 import app.cardpulse.android.core.UserDto
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -75,6 +76,13 @@ interface PokeApi {
     /** The whole collection in one response; the server does not paginate. Decoded item by item. */
     @GET("api/collection/")
     suspend fun collection(): JsonArray
+
+    /** Starts the server's price sync in the background. Admin accounts only (anyone else gets a 403). */
+    @POST("api/sync/prices")
+    suspend fun startPriceSync()
+
+    @GET("api/sync/status")
+    suspend fun syncStatus(): SyncStatusDto
 
     /** Removes a collection row with every copy it holds. Any success answer will do, so nothing is parsed. */
     @DELETE("api/collection/{id}")

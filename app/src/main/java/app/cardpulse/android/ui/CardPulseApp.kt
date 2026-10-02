@@ -1,10 +1,14 @@
 package app.cardpulse.android.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ShowChart
 import androidx.compose.material.icons.filled.CameraAlt
@@ -12,6 +16,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -79,6 +84,7 @@ fun CardPulseApp(
                     onBack = { showSettings = false },
                     onSignOut = { showSettings = false; appVm.signOut() },
                     onSavePhotos = scanVm::setSavePhotos,
+                    onLookUpPrices = scanVm::setLookUpPrices,
                     modifier = Modifier.padding(padding),
                 )
             }
@@ -110,6 +116,7 @@ fun CardPulseApp(
                     if (!inCameraOrReview) {
                         app.message?.let { Banner(it, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), isError = true, onDismiss = appVm::dismissMessage) }
                     }
+                    if (!inCameraOrReview && app.lookingUpPrices) PricesNote()
                     val contentModifier = Modifier.weight(1f)
                     when (Tab.entries[tab]) {
                         Tab.HOME -> HomeScreen(
@@ -134,5 +141,22 @@ fun CardPulseApp(
                 }
             }
         }
+    }
+}
+
+/** A thin line above the tabs while the server looks up prices for cards that were just added. */
+@Composable
+private fun PricesNote() {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+        Text(
+            "Looking up prices for your new cards…",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

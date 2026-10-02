@@ -18,12 +18,14 @@ data class StoredSession(
     val noLogin: Boolean = false,
 )
 
-/** Choices that carry over between scans. */
+/** Choices that carry over between scans and typed-in cards. */
 data class ScanPrefs(
     /** Keep my photo with every card I add, not only cards that have no official artwork. */
     val savePhotos: Boolean = false,
     val condition: String = "NM",
     val variant: String = "Normal",
+    /** After a card new to the collection is added, ask the server to look up prices and show them. */
+    val lookUpPrices: Boolean = true,
 )
 
 /** On-device settings. The sign-in token is encrypted with a Keystore key before it is written. */
@@ -36,6 +38,7 @@ class SessionStore(private val context: Context, private val cipher: TokenCipher
         val savePhotos = booleanPreferencesKey("scan_save_photos")
         val condition = stringPreferencesKey("scan_condition")
         val variant = stringPreferencesKey("scan_variant")
+        val lookUpPrices = booleanPreferencesKey("look_up_prices")
     }
 
     suspend fun load(): StoredSession {
@@ -69,6 +72,7 @@ class SessionStore(private val context: Context, private val cipher: TokenCipher
             savePhotos = prefs[Keys.savePhotos] ?: defaults.savePhotos,
             condition = prefs[Keys.condition] ?: defaults.condition,
             variant = prefs[Keys.variant] ?: defaults.variant,
+            lookUpPrices = prefs[Keys.lookUpPrices] ?: defaults.lookUpPrices,
         )
     }
 
@@ -77,6 +81,7 @@ class SessionStore(private val context: Context, private val cipher: TokenCipher
             prefs[Keys.savePhotos] = scan.savePhotos
             prefs[Keys.condition] = scan.condition
             prefs[Keys.variant] = scan.variant
+            prefs[Keys.lookUpPrices] = scan.lookUpPrices
         }
     }
 }

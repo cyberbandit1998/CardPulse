@@ -16,3 +16,6 @@ fun List<CollectionItemDto>.replacing(item: CollectionItemDto): List<CollectionI
  */
 fun CollectionItemDto.takesItsPhotoWhenRemoved(all: List<CollectionItemDto>): Boolean =
     hasScanPhoto && all.none { it.id != id && it.cardId == cardId }
+
+/** A card made by hand (on the website or in this app) rather than taken from the catalogue. It has no market price. */
+fun CollectionItemDto.isCustomCard(): Boolean = card?.isCustom == true || cardId?.startsWith("custom-") == true

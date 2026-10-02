@@ -10,9 +10,12 @@ import app.cardpulse.android.core.DashboardDto
 import app.cardpulse.android.core.DisplayPrefs
 import app.cardpulse.android.core.MoverDto
 import app.cardpulse.android.core.PortfolioRange
+import app.cardpulse.android.core.PriceLookup
 import app.cardpulse.android.core.ServerUrl
 import app.cardpulse.android.core.UserDto
 import app.cardpulse.android.core.attempt
+import app.cardpulse.android.core.isCustomCard
+import app.cardpulse.android.core.lookUpPrices
 import app.cardpulse.android.core.replacing
 import app.cardpulse.android.core.toChartPoints
 import app.cardpulse.android.core.userMessage
@@ -55,6 +58,8 @@ data class AppState(
     val history: List<ChartPoint> = emptyList(),
     val historyLoading: Boolean = false,
     val movers: List<MoverDto> = emptyList(),
+    /** The server is looking up prices for newly added cards. */
+    val lookingUpPrices: Boolean = false,
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -70,6 +75,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val historyFetchedAt = mutableMapOf<PortfolioRange, Long>()
     private val historyCache = mutableMapOf<PortfolioRange, List<ChartPoint>>()
     private var dashboardRefresh: Job? = null
+    private var priceLookup: Job? = null
+    private var pricesNotAllowed = false
 
     init {
         viewModelScope.launch { restoreSession() }
@@ -254,11 +261,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun upsertCollectionItem(item: CollectionItemDto) {
+        // A card the collection hasn't had before may not have a price yet; one it already tracked has.
+        val newCard = item.cardId != null && !item.isCustomCard() && _state.value.collection.none { it.cardId == item.cardId }
         _state.update { state ->
             val without = state.collection.filterNot { it.id == item.id }
             state.copy(collection = listOf(item) + without)
         }
         refreshDashboardSoon()
+        if (newCard) lookUpPricesSoon()
+    }
+
+    /**
+     * Once a new card has been added (scanned or typed in) and things have been quiet for a moment, asks the server to
+     * look up prices and shows what it found. One lookup serves a whole batch of cards.
+     */
+    private fun lookUpPricesSoon() {
+        if (pricesNotAllowed) return
+        priceLookup?.cancel()
+        priceLookup = viewModelScope.launch {
+            delay(PRICE_LOOKUP_DELAY_MS)
+            if (!store.scanPrefs().lookUpPrices) return@launch
+            _state.update { it.copy(lookingUpPrices = true) }
+            try {
+                attempt { lookUpPrices(repo) }.onSuccess { if (it == PriceLookup.NOT_ALLOWED) pricesNotAllowed = true }
+            } finally {
+                _state.update { it.copy(lookingUpPrices = false) }
+            }
+            // Whatever happened, show what the server has now.
+            refreshDashboardNow()
+            refreshCollectionNow()
+        }
     }
 
     /** The portfolio total changed. Waits for a quiet moment so a whole batch of changes triggers one refetch. */
@@ -339,5 +371,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
         const val HISTORY_MAX_AGE_MS = 10 * 60 * 1000L
         const val DASHBOARD_REFRESH_DELAY_MS = 1500L
+        /** How long things must stay quiet after a card is added before prices are looked up. */
+        const val PRICE_LOOKUP_DELAY_MS = 4000L
     }
 }

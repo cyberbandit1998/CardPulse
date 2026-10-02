@@ -231,6 +231,35 @@ class HttpStackTest {
     }
 
     @Test
+    fun `a price sync is started with an empty post and its status is read`() = runBlocking {
+        server.enqueue(json("""{"message": "Price sync started", "status": "started"}"""))
+        server.enqueue(
+            json(
+                """{"is_running": false, "is_price_sync_running": true, "last_sync": null, "last_full_sync": null,
+                    "last_price_sync": {"status": "success", "started_at": "2026-10-02T14:30:00Z", "finished_at": "2026-10-02T14:30:12Z",
+                    "cards_updated": 12, "sets_updated": 0, "sync_type": "price", "error_message": null}, "history": []}""",
+            ),
+        )
+        repo.startPriceSync()
+        val status = repo.syncStatus()
+        val start = next()
+        assertEquals("POST", start.method)
+        assertEquals("/api/sync/prices", start.path)
+        assertEquals("/api/sync/status", next().path)
+        assertTrue(status.isPriceSyncRunning)
+        assertEquals("2026-10-02T14:30:00Z", status.lastPriceSync?.startedAt)
+        assertEquals(12, status.lastPriceSync?.cardsUpdated)
+    }
+
+    @Test
+    fun `only an admin can start a price sync, and the server's words are shown`() = runBlocking {
+        server.enqueue(json("""{"detail": "Admin access required"}""", code = 403))
+        val error = runCatching { repo.startPriceSync() }.exceptionOrNull()
+        assertTrue(error is HttpException)
+        assertEquals("Admin access required", error!!.userMessage())
+    }
+
+    @Test
     fun `one unreadable row is reported and does not hide the rest`() = runBlocking {
         val rows = Fixtures.text("collection").trimEnd().removeSuffix("]") + """,{"card_id":"x","quantity":"many"}]"""
         server.enqueue(json(rows))

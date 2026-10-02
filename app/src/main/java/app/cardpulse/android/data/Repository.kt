@@ -12,6 +12,7 @@ import app.cardpulse.android.core.LoginResponseDto
 import app.cardpulse.android.core.MoverDto
 import app.cardpulse.android.core.NotPokeCollectorException
 import app.cardpulse.android.core.PortfolioRange
+import app.cardpulse.android.core.PriceBackend
 import app.cardpulse.android.core.ResolveAndAddRequest
 import app.cardpulse.android.core.ResolveAndAddResponse
 import app.cardpulse.android.core.ResolveRequest
@@ -19,6 +20,7 @@ import app.cardpulse.android.core.ScanBackend
 import app.cardpulse.android.core.ScanItemDto
 import app.cardpulse.android.core.ScanJobDto
 import app.cardpulse.android.core.SnapshotDto
+import app.cardpulse.android.core.SyncStatusDto
 import app.cardpulse.android.core.attempt
 import app.cardpulse.android.core.displayPrefsFrom
 import kotlinx.serialization.json.Json
@@ -42,7 +44,7 @@ class Repository(
     private val api: PokeApi,
     private val session: SessionHolder,
     private val json: Json = AppJson,
-) : ScanBackend {
+) : ScanBackend, PriceBackend {
     // --- connection and sign-in ---------------------------------------------------------------
 
     /** Points the app at [serverUrl] and confirms it really is a PokéCollector server. */
@@ -100,6 +102,12 @@ class Repository(
 
     suspend fun loadMovers(priceField: String): List<MoverDto> =
         api.topMovers(days = 7, priceField = priceField, sortBy = "percentage")
+
+    override suspend fun startPriceSync() {
+        api.startPriceSync()
+    }
+
+    override suspend fun syncStatus(): SyncStatusDto = api.syncStatus()
 
     /** Removes the whole row: every copy of this exact card. The server refuses for cards in a deck or product. */
     suspend fun removeFromCollection(itemId: Int) {

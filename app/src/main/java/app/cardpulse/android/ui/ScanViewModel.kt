@@ -165,6 +165,8 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setSavePhotos(value: Boolean) = updatePrefs { it.copy(savePhotos = value) }
 
+    fun setLookUpPrices(value: Boolean) = updatePrefs { it.copy(lookUpPrices = value) }
+
     private fun updatePrefs(change: (ScanPrefs) -> ScanPrefs) {
         val updated = change(_state.value.prefs)
         _state.update { it.copy(prefs = updated) }
