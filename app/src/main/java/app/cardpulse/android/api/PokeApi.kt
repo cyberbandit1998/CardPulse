@@ -1,7 +1,12 @@
 package app.cardpulse.android.api
 
+import app.cardpulse.android.core.AddToCollectionRequest
 import app.cardpulse.android.core.AuthModeDto
+import app.cardpulse.android.core.CardDto
+import app.cardpulse.android.core.CardSearchDto
+import app.cardpulse.android.core.CollectionItemDto
 import app.cardpulse.android.core.CollectionQuantityRequest
+import app.cardpulse.android.core.CustomCardRequest
 import app.cardpulse.android.core.DashboardDto
 import app.cardpulse.android.core.ExchangeRateDto
 import app.cardpulse.android.core.ForcePasswordRequest
@@ -14,6 +19,7 @@ import app.cardpulse.android.core.ResolveRequest
 import app.cardpulse.android.core.ScanItemDto
 import app.cardpulse.android.core.ScanJobDto
 import app.cardpulse.android.core.ScanJobListDto
+import app.cardpulse.android.core.SetDto
 import app.cardpulse.android.core.SnapshotDto
 import app.cardpulse.android.core.SyncStatusDto
 import app.cardpulse.android.core.UserDto
@@ -91,6 +97,32 @@ interface PokeApi {
     /** Changes how many copies a row holds. The answer is the row as the server now has it. */
     @PUT("api/collection/{id}")
     suspend fun updateCollectionItem(@Path("id") itemId: Int, @Body body: CollectionQuantityRequest): JsonElement
+
+    /** Adds a card that is already on the server (by its id). The answer is the row, merged with an identical one if there is one. */
+    @POST("api/collection/")
+    suspend fun addToCollection(@Body body: AddToCollectionRequest): CollectionItemDto
+
+    // --- adding a card by typing ------------------------------------------------------------
+    /**
+     * Searches the server's catalogue. [query] matches inside the card's name (or is a set code and number such as
+     * "OBF 125"); [number] narrows it to one card number, leading zeros ignored; [lang] is a language code or "all".
+     */
+    @GET("api/cards/search")
+    suspend fun searchCards(
+        @Query("q") query: String,
+        @Query("number") number: String?,
+        @Query("lang") lang: String,
+        @Query("page") page: Int,
+        @Query("page_size") pageSize: Int,
+    ): CardSearchDto
+
+    /** Every set the server lists for this user's language, newest first. */
+    @GET("api/sets/")
+    suspend fun sets(): List<SetDto>
+
+    /** Makes a card that isn't in the catalogue. It belongs to this user and gets an id starting "custom-". */
+    @POST("api/cards/custom")
+    suspend fun createCustomCard(@Body body: CustomCardRequest): CardDto
 
     @GET("api/dashboard/")
     suspend fun dashboard(@Query("price_field") priceField: String): DashboardDto

@@ -71,6 +71,8 @@ fun CollectionScreen(
     state: AppState,
     onRefresh: () -> Unit,
     onRemove: (item: CollectionItemDto, wholeRow: Boolean, done: (String?) -> Unit) -> Unit,
+    /** Opens the screen where a card is typed in. */
+    onAddCard: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
@@ -101,6 +103,7 @@ fun CollectionScreen(
                     FilterChip(selected = sort == option, onClick = { sort = option }, label = { Text(option.label) })
                 }
                 Spacer(Modifier.weight(1f))
+                AccentTextButton(onClick = onAddCard) { Text("Add card") }
                 AccentTextButton(onClick = onRefresh) { Text("Refresh") }
             }
             Text(
@@ -118,7 +121,7 @@ fun CollectionScreen(
 
         when {
             !state.collectionLoaded && state.collectionLoading -> Unit
-            state.collection.isEmpty() -> EmptyNote("Your collection is empty. Scan a card to add the first one.")
+            state.collection.isEmpty() -> EmptyNote("Your collection is empty. Scan a card, or type one in with Add card, to add the first one.")
             shown.isEmpty() -> EmptyNote("Nothing matches “${query.trim()}”.")
             else -> LazyVerticalGrid(
                 columns = GridCells.Adaptive(112.dp),

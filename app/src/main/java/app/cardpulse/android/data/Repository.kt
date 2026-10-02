@@ -2,13 +2,18 @@ package app.cardpulse.android.data
 
 import app.cardpulse.android.api.PokeApi
 import app.cardpulse.android.api.SessionHolder
+import app.cardpulse.android.core.AddToCollectionRequest
 import app.cardpulse.android.core.AppJson
+import app.cardpulse.android.core.CardDto
+import app.cardpulse.android.core.CardSearchDto
 import app.cardpulse.android.core.CollectionItemDto
 import app.cardpulse.android.core.CollectionQuantityRequest
+import app.cardpulse.android.core.CustomCardRequest
 import app.cardpulse.android.core.DashboardDto
 import app.cardpulse.android.core.DisplayPrefs
 import app.cardpulse.android.core.ForcePasswordRequest
 import app.cardpulse.android.core.LoginResponseDto
+import app.cardpulse.android.core.ManualAddBackend
 import app.cardpulse.android.core.MoverDto
 import app.cardpulse.android.core.NotPokeCollectorException
 import app.cardpulse.android.core.PortfolioRange
@@ -19,6 +24,7 @@ import app.cardpulse.android.core.ResolveRequest
 import app.cardpulse.android.core.ScanBackend
 import app.cardpulse.android.core.ScanItemDto
 import app.cardpulse.android.core.ScanJobDto
+import app.cardpulse.android.core.SetDto
 import app.cardpulse.android.core.SnapshotDto
 import app.cardpulse.android.core.SyncStatusDto
 import app.cardpulse.android.core.attempt
@@ -44,7 +50,7 @@ class Repository(
     private val api: PokeApi,
     private val session: SessionHolder,
     private val json: Json = AppJson,
-) : ScanBackend, PriceBackend {
+) : ScanBackend, PriceBackend, ManualAddBackend {
     // --- connection and sign-in ---------------------------------------------------------------
 
     /** Points the app at [serverUrl] and confirms it really is a PokéCollector server. */
@@ -119,6 +125,18 @@ class Repository(
         val updated = api.updateCollectionItem(itemId, CollectionQuantityRequest(quantity))
         return runCatching { json.decodeFromJsonElement(CollectionItemDto.serializer(), updated) }.getOrNull()
     }
+
+    // --- cards typed in -------------------------------------------------------------------------
+
+    /** Every language the server has, so a card can be found whichever language its name is typed in. */
+    override suspend fun searchCards(name: String, number: String?, pageSize: Int): CardSearchDto =
+        api.searchCards(name, number, lang = "all", page = 1, pageSize = pageSize)
+
+    override suspend fun sets(): List<SetDto> = api.sets()
+
+    override suspend fun createCustomCard(request: CustomCardRequest): CardDto = api.createCustomCard(request)
+
+    override suspend fun addToCollection(request: AddToCollectionRequest): CollectionItemDto = api.addToCollection(request)
 
     // --- scanning ------------------------------------------------------------------------------
 

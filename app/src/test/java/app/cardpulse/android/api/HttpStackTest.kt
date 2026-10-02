@@ -1,12 +1,20 @@
 package app.cardpulse.android.api
 
 import app.cardpulse.android.core.AddEdits
+import app.cardpulse.android.core.AddToCollectionRequest
 import app.cardpulse.android.core.AppJson
+import app.cardpulse.android.core.CardDto
+import app.cardpulse.android.core.CustomCardForm
 import app.cardpulse.android.core.Fixtures
 import app.cardpulse.android.core.NoServerException
 import app.cardpulse.android.core.NotPokeCollectorException
 import app.cardpulse.android.core.PortfolioRange
 import app.cardpulse.android.core.ScanJobDto
+import app.cardpulse.android.core.SetDto
+import app.cardpulse.android.core.facts
+import app.cardpulse.android.core.isCustomCard
+import app.cardpulse.android.core.setName
+import app.cardpulse.android.core.subtitle
 import app.cardpulse.android.core.toAddRequest
 import app.cardpulse.android.core.userMessage
 import app.cardpulse.android.data.Repository
@@ -257,6 +265,168 @@ class HttpStackTest {
         val error = runCatching { repo.startPriceSync() }.exceptionOrNull()
         assertTrue(error is HttpException)
         assertEquals("Admin access required", error!!.userMessage())
+    }
+
+    // --- cards typed in ----------------------------------------------------------------------------
+
+    /** What `POST /api/cards/custom` answers with: the card as the server's `_card_to_dict` lays it out. */
+    private val madeCardJson = """{
+        "id": "custom-3f9a0c1d5b7e4a2c8e6d1b0a9f8e7d6c", "name": "Charizard ex", "number": "025", "localId": "025",
+        "set_id": "sv3", "set_ref": {"id": "sv3_en", "tcg_set_id": "sv3", "name": "Obsidian Flames", "abbreviation": "OBF", "lang": "en"},
+        "rarity": "Rare Holo", "types": ["Fire"], "supertype": null, "subtypes": null, "hp": "200", "artist": "Mitsuhiro Arita",
+        "images_small": "https://example.com/c.png", "images_large": "https://example.com/c.png", "custom_image_url": null,
+        "is_custom": true, "custom_owner_id": 1, "custom_owner_username": "admin", "is_custom_owner": true,
+        "is_shared_template": false, "is_digital": false, "lang": "en", "price_market": null, "price_low": null,
+        "variants_normal": null, "variants_reverse": null, "variants_holo": null, "variants_first_edition": null}"""
+
+    @Test
+    fun `a name and number search the catalogue in every language and the cards come back filled in`() = runBlocking {
+        server.enqueue(
+            json(
+                """{"data": [{
+                    "id": "sv3-125_en", "name": "Charizard ex", "number": "125", "localId": "125", "set_id": "sv3",
+                    "set_ref": {"id": "sv3_en", "tcg_set_id": "sv3", "name": "Obsidian Flames", "abbreviation": "OBF", "lang": "en"},
+                    "rarity": "Double Rare", "types": ["Fire"], "supertype": "Pokémon", "subtypes": ["Basic", "ex"], "hp": "330",
+                    "artist": "5ban Graphics", "images_small": "https://assets.tcgdex.net/en/sv/sv3/125/low.webp",
+                    "images_large": "https://assets.tcgdex.net/en/sv/sv3/125/high.webp", "is_custom": false, "is_digital": false,
+                    "lang": "en", "price_market": 9.1, "variants_normal": true, "variants_reverse": true, "variants_holo": true,
+                    "variants_first_edition": false, "owned": true, "owned_quantity": 2,
+                    "owned_variants": [{"variant": "Holo", "quantity": 2}], "wishlisted": false, "owned_items": []}],
+                   "total_count": 1, "page": 1, "page_size": 20}""",
+            ),
+        )
+
+        val page = repo.searchCards("Charizard ex", "125", pageSize = 20)
+
+        val request = next()
+        assertEquals("GET", request.method)
+        val url = checkNotNull(request.requestUrl)
+        assertEquals("/api/cards/search", url.encodedPath)
+        assertEquals("Charizard ex", url.queryParameter("q"))
+        assertEquals("125", url.queryParameter("number"))
+        assertEquals("all", url.queryParameter("lang"))
+        assertEquals("1", url.queryParameter("page"))
+        assertEquals("20", url.queryParameter("page_size"))
+
+        assertEquals(1, page.totalCount)
+        val card = page.data.single()
+        assertEquals("sv3-125_en", card.id)
+        assertEquals("Obsidian Flames", card.setName())
+        assertEquals("Obsidian Flames · #125 · Double Rare", card.subtitle())
+        assertEquals("Fire · HP 330 · Illus. 5ban Graphics", card.facts())
+        assertEquals("en", card.lang)
+        assertEquals(false, card.isCustom)
+    }
+
+    @Test
+    fun `a search without a number sends no number`() = runBlocking {
+        server.enqueue(json("""{"data": [], "total_count": 0, "page": 1, "page_size": 20}"""))
+        val page = repo.searchCards("OBF 125", null, pageSize = 20)
+        val url = checkNotNull(next().requestUrl)
+        assertEquals("OBF 125", url.queryParameter("q"))
+        assertNull(url.queryParameter("number"))
+        assertTrue(page.data.isEmpty())
+    }
+
+    @Test
+    fun `a search the server fails shows its words`() = runBlocking {
+        server.enqueue(json("""{"detail": "database is locked"}""", code = 500))
+        val error = runCatching { repo.searchCards("Pikachu", null, pageSize = 20) }.exceptionOrNull()
+        assertEquals("database is locked", error!!.userMessage())
+    }
+
+    @Test
+    fun `a card is made with one post and the answer is the new card`() = runBlocking {
+        server.enqueue(json(madeCardJson))
+        val request = CustomCardForm(
+            name = " Charizard ex ", number = "025", rarity = "Rare Holo", hp = "200", artist = "Mitsuhiro Arita",
+            imageUrl = "https://example.com/c.png", types = setOf("Fire"),
+            set = SetDto(id = "sv3_en", tcgSetId = "sv3", name = "Obsidian Flames", lang = "en"),
+        ).toRequest()
+
+        val card = repo.createCustomCard(request)
+
+        val sent = next()
+        assertEquals("POST", sent.method)
+        assertEquals("/api/cards/custom", sent.path)
+        assertTrue(sent.getHeader("Content-Type")!!.startsWith("application/json"))
+        assertEquals(
+            """{"name":"Charizard ex","set_id":"sv3","number":"025","rarity":"Rare Holo","types":["Fire"],"hp":"200",""" +
+                """"artist":"Mitsuhiro Arita","image_url":"https://example.com/c.png","lang":"en","is_shared_template":false}""",
+            sent.bodyText(),
+        )
+        assertEquals("custom-3f9a0c1d5b7e4a2c8e6d1b0a9f8e7d6c", card.id)
+        assertEquals("Charizard ex", card.name)
+        assertEquals("025", card.number)
+        assertEquals("sv3", card.setId)
+        assertEquals("en", card.lang)
+        assertTrue(card.isCustom)
+    }
+
+    @Test
+    fun `a picture the server will not take is explained in the server's words`() = runBlocking {
+        server.enqueue(json("""{"detail": "Image URL host is not publicly reachable"}""", code = 422))
+        val error = runCatching { repo.createCustomCard(CustomCardForm(name = "x", imageUrl = "https://10.0.0.5/c.png").toRequest()) }.exceptionOrNull()
+        assertTrue(error is HttpException)
+        assertEquals("Image URL host is not publicly reachable", error!!.userMessage())
+    }
+
+    @Test
+    fun `a made card is added with one post and comes back as a collection row`() = runBlocking {
+        server.enqueue(
+            json(
+                """{"id": 12, "card_id": "custom-3f9a", "quantity": 2, "allocated_quantity": 0, "available_quantity": 2,
+                    "condition": "LP", "variant": "Holo", "printing_details": [], "purchase_price": 4.5, "lang": "en",
+                    "added_at": "2026-10-02T14:29:26.964228", "has_scan_photo": false, "product_sources": [],
+                    "card": $madeCardJson}""",
+            ),
+        )
+        val card = CardDto(id = "custom-3f9a", name = "Charizard ex", isCustom = true, lang = "en")
+
+        val row = repo.addToCollection(card.toAddRequest(AddEdits(quantity = 2, condition = "LP", variant = "Holo", purchasePrice = 4.5)))
+
+        val sent = next()
+        assertEquals("POST", sent.method)
+        assertEquals("/api/collection/", sent.path)
+        assertEquals(
+            """{"card_id":"custom-3f9a","quantity":2,"condition":"LP","variant":"Holo","printing_details":[],"purchase_price":4.5,"lang":"en"}""",
+            sent.bodyText(),
+        )
+        assertEquals(12, row.id)
+        assertEquals(2, row.quantity)
+        assertEquals(4.5, row.purchasePrice)
+        assertTrue(row.isCustomCard())
+        assertEquals("Charizard ex", row.card?.name)
+    }
+
+    @Test
+    fun `another user's template can't be added, and the server says so`() = runBlocking {
+        server.enqueue(json("""{"detail": "Copy this shared template before adding it."}""", code = 409))
+        val error = runCatching { repo.addToCollection(AddToCollectionRequest(cardId = "custom-x")) }.exceptionOrNull()
+        assertEquals("Copy this shared template before adding it.", error!!.userMessage())
+    }
+
+    @Test
+    fun `the set list is read from the sets endpoint`() = runBlocking {
+        server.enqueue(
+            json(
+                """[{"id": "sv3_en", "tcg_set_id": "sv3", "name": "Obsidian Flames", "series": "Scarlet & Violet",
+                     "release_date": "2023-08-11", "total": 230, "printed_total": 197, "images_symbol": "https://x/s.webp",
+                     "images_logo": "https://x/l.webp", "abbreviation": "OBF", "is_new": false, "is_digital": false,
+                     "lang": "en", "owned_count": 3},
+                    {"id": "my-set", "name": "My Set"}]""",
+            ),
+        )
+        val sets = repo.sets()
+        val request = next()
+        assertEquals("GET", request.method)
+        assertEquals("/api/sets/", request.path)
+        assertEquals(2, sets.size)
+        assertEquals("sv3", sets[0].tcgSetId)
+        assertEquals("OBF", sets[0].abbreviation)
+        assertEquals("my-set", sets[1].id)
+        assertNull(sets[1].tcgSetId)
+        assertEquals("en", sets[1].lang)
     }
 
     @Test

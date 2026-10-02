@@ -94,6 +94,8 @@ fun ConfirmPanel(
     /** Gives up on a photo that is still being sent or read. */
     onCancel: () -> Unit,
     onCancelAll: () -> Unit,
+    /** Opens the screen where the card is typed in, for a photo the scanner could not match or read. */
+    onAddManually: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -120,7 +122,7 @@ fun ConfirmPanel(
             }
             when (entry.tileState()) {
                 TileState.READY -> ReadyContent(entry, serverUrl, ownership, currency, rateFromEur, onSelectCandidate, onEdits, onAdd, onSkip)
-                else -> AttentionContent(entry, serverUrl, othersInFlight, onRetry, onSkip, onCancel, onCancelAll)
+                else -> AttentionContent(entry, serverUrl, othersInFlight, onRetry, onSkip, onCancel, onCancelAll, onAddManually)
             }
         }
     }
@@ -277,8 +279,8 @@ private fun ColumnScope.ReadyContent(
 
 /** Stays in view under the scrolling form, so the main action never has to be hunted for. */
 @Composable
-private fun ConfirmFooter(error: String?, buttons: @Composable RowScope.() -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+internal fun ConfirmFooter(error: String?, modifier: Modifier = Modifier, buttons: @Composable RowScope.() -> Unit) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         HorizontalDivider(Modifier.padding(top = 4.dp))
         error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
         Row(
@@ -388,7 +390,7 @@ private const val MAX_OWNED_LINES = 5
 
 /** A title and a scrolling row of chips, one of which is selected. */
 @Composable
-private fun <T> ChoiceRow(
+internal fun <T> ChoiceRow(
     title: String,
     options: List<T>,
     selected: T,
@@ -406,7 +408,7 @@ private fun <T> ChoiceRow(
 }
 
 @Composable
-private fun QuantityStepper(quantity: Int, onChange: (Int) -> Unit) {
+internal fun QuantityStepper(quantity: Int, onChange: (Int) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = { onChange((quantity - 1).coerceAtLeast(1)) }, enabled = quantity > 1) {
             Icon(Icons.Default.Remove, contentDescription = "Fewer")
@@ -431,6 +433,7 @@ private fun ColumnScope.AttentionContent(
     onSkip: () -> Unit,
     onCancel: () -> Unit,
     onCancelAll: () -> Unit,
+    onAddManually: () -> Unit,
 ) {
     val state = entry.tileState()
     val inFlight = entry.isInFlight
@@ -452,7 +455,7 @@ private fun ColumnScope.AttentionContent(
             )
             Text(
                 progress?.detail ?: when (state) {
-                    TileState.NO_MATCH -> "Try again with the card flat and well lit, or skip it and add it by hand in PokéCollector."
+                    TileState.NO_MATCH -> "Try again with the card flat and well lit, or type its name and number in yourself."
                     TileState.FAILED -> entry.item?.error ?: "The scanner gave up on this photo."
                     TileState.SEND_FAILED -> entry.uploadError ?: "The upload failed."
                     else -> "It will appear here as soon as it is ready."
@@ -481,6 +484,10 @@ private fun ColumnScope.AttentionContent(
             }
             OutlinedButton(onClick = onSkip, enabled = !entry.busy) {
                 Text(if (state == TileState.SEND_FAILED) "Discard" else "Skip")
+            }
+            // A card the scanner can't place can still be added by typing it in.
+            if (state == TileState.NO_MATCH || state == TileState.FAILED) {
+                AccentTextButton(onClick = onAddManually) { Text("Type it in") }
             }
         }
     }

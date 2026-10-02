@@ -57,6 +57,14 @@ The app warns you if it connects to a server in single-user mode.
   condition and variant you used last are suggested for the next card.
 - **Duplicates:** every result says whether the card is new to your collection or how many copies you already own, and
   in which conditions, variants and languages. Until the collection has loaded it says nothing rather than guess.
+- **Add a card by typing:** when you'd rather type than scan, enter the card's name and its number (as printed,
+  "125/197" is fine). Your server's catalogue is searched as you type, and the card's picture, set, rarity, type, hit
+  points and artist fill in by themselves; one match is picked for you, and several are listed to choose from.
+  Then the same condition, variant, language, quantity and price choices as for a scan. A card the catalogue doesn't
+  have can be made by hand, like the website's "Create card manually"; such a card has no market price.
+- **Prices:** after a card that is new to your collection is added (scanned or typed in), the app asks your server to
+  look up prices and then refreshes the Portfolio and Collection. That needs an admin account on the server, and it can
+  be switched off in Settings.
 - **Collection:** search and sort your whole collection, with official artwork or your own photos (following the
   "prefer my own photos" setting of your PokéCollector account). Open a card to see its details or remove it: one
   copy or all of them, after a confirmation.

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -22,6 +23,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -36,6 +38,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.cardpulse.android.ui.screens.CollectionScreen
 import app.cardpulse.android.ui.screens.HomeScreen
 import app.cardpulse.android.ui.screens.LoginScreen
+import app.cardpulse.android.ui.screens.ManualAddScreen
 import app.cardpulse.android.ui.screens.PasswordScreen
 import app.cardpulse.android.ui.screens.PortfolioScreen
 import app.cardpulse.android.ui.screens.ScanScreen
@@ -57,6 +60,10 @@ fun CardPulseApp(
     val scan by scanVm.state.collectAsState()
     var tab by rememberSaveable { mutableIntStateOf(Tab.HOME.ordinal) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showManualAdd by rememberSaveable { mutableStateOf(false) }
+    // Signing out (or the session ending) must not leave this screen waiting behind the next sign-in.
+    LaunchedEffect(app.signedIn) { if (!app.signedIn) showManualAdd = false }
+    val openManualAdd = { showManualAdd = true }
 
     when {
         app.booting -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -86,6 +93,18 @@ fun CardPulseApp(
                     onSavePhotos = scanVm::setSavePhotos,
                     onLookUpPrices = scanVm::setLookUpPrices,
                     modifier = Modifier.padding(padding),
+                )
+            }
+        }
+
+        showManualAdd -> {
+            Scaffold { padding ->
+                ManualAddScreen(
+                    app = app,
+                    vm = scanVm,
+                    onClose = { showManualAdd = false },
+                    // The padding already leaves room for the system bars; the keyboard's padding must not count them twice.
+                    modifier = Modifier.padding(padding).consumeWindowInsets(padding),
                 )
             }
         }
@@ -125,11 +144,12 @@ fun CardPulseApp(
                             onOpenSettings = { showSettings = true },
                             modifier = contentModifier,
                         )
-                        Tab.SCAN -> ScanScreen(app, scanVm, contentModifier)
+                        Tab.SCAN -> ScanScreen(app, scanVm, onAddManually = openManualAdd, modifier = contentModifier)
                         Tab.COLLECTION -> CollectionScreen(
                             app,
                             onRefresh = appVm::refreshCollection,
                             onRemove = appVm::removeFromCollection,
+                            onAddCard = openManualAdd,
                             modifier = contentModifier,
                         )
                         Tab.PORTFOLIO -> PortfolioScreen(

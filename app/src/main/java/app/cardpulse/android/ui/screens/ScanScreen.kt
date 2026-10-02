@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.Button
 import androidx.compose.material3.ElevatedCard
@@ -76,12 +77,12 @@ import app.cardpulse.android.ui.ScanState
 import app.cardpulse.android.ui.ScanViewModel
 
 @Composable
-fun ScanScreen(app: AppState, vm: ScanViewModel, modifier: Modifier = Modifier) {
+fun ScanScreen(app: AppState, vm: ScanViewModel, onAddManually: () -> Unit, modifier: Modifier = Modifier) {
     val scan by vm.state.collectAsState()
     val session by vm.session.state.collectAsState()
     when (scan.stage) {
-        ScanStage.HOME -> ScanHome(scan, session, vm, modifier)
-        ScanStage.RAPID -> RapidScreen(app, scan, session, vm, modifier)
+        ScanStage.HOME -> ScanHome(scan, session, vm, onAddManually, modifier)
+        ScanStage.RAPID -> RapidScreen(app, scan, session, vm, onAddManually, modifier)
     }
 }
 
@@ -90,7 +91,7 @@ fun ScanScreen(app: AppState, vm: ScanViewModel, modifier: Modifier = Modifier) 
 // ---------------------------------------------------------------------------------------------
 
 @Composable
-private fun ScanHome(scan: ScanState, session: SessionState, vm: ScanViewModel, modifier: Modifier) {
+private fun ScanHome(scan: ScanState, session: SessionState, vm: ScanViewModel, onAddManually: () -> Unit, modifier: Modifier) {
     LaunchedEffect(Unit) { vm.refresh() }
     val ready = session.toReview.size
     ScanHomeContent(
@@ -105,6 +106,7 @@ private fun ScanHome(scan: ScanState, session: SessionState, vm: ScanViewModel, 
         message = session.message ?: scan.message,
         savePhotos = scan.prefs.savePhotos,
         onStart = { vm.startRapid() },
+        onAddManually = onAddManually,
         onReview = { vm.startRapid(reviewFirst = ready > 0) },
         onSavePhotos = vm::setSavePhotos,
         onDismissMessage = vm::dismissMessage,
@@ -121,6 +123,7 @@ fun ScanHomeContent(
     message: String?,
     savePhotos: Boolean,
     onStart: () -> Unit,
+    onAddManually: () -> Unit,
     onReview: () -> Unit,
     onSavePhotos: (Boolean) -> Unit,
     onDismissMessage: () -> Unit,
@@ -139,6 +142,14 @@ fun ScanHomeContent(
                 Icon(Icons.Default.PhotoCamera, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("Start rapid scan")
+            }
+        }
+
+        item {
+            OutlinedButton(onClick = onAddManually, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Edit, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Add a card manually")
             }
         }
 
@@ -213,12 +224,21 @@ class RapidActions(
     /** Gives up on a photo that is still being sent or read. */
     val cancel: (Long) -> Unit = {},
     val cancelAll: () -> Unit = {},
+    /** Opens the screen where a card is typed in, for one the scanner couldn't read. */
+    val addManually: () -> Unit = {},
     val dismissMessage: () -> Unit = {},
 )
 
 /** Wires the camera, the camera permission and the view model into [RapidScreenContent]. */
 @Composable
-private fun RapidScreen(app: AppState, scan: ScanState, session: SessionState, vm: ScanViewModel, modifier: Modifier) {
+private fun RapidScreen(
+    app: AppState,
+    scan: ScanState,
+    session: SessionState,
+    vm: ScanViewModel,
+    onAddManually: () -> Unit,
+    modifier: Modifier,
+) {
     val context = LocalContext.current
     var granted by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
@@ -280,6 +300,7 @@ private fun RapidScreen(app: AppState, scan: ScanState, session: SessionState, v
             },
             cancel = vm::cancel,
             cancelAll = vm::cancelUnfinished,
+            addManually = onAddManually,
             dismissMessage = vm::dismissMessage,
         ),
         modifier = modifier,
@@ -395,6 +416,7 @@ fun RapidScreenContent(
                 onRetry = { actions.retry(open.id) },
                 onCancel = { actions.cancel(open.id) },
                 onCancelAll = actions.cancelAll,
+                onAddManually = actions.addManually,
                 onClose = actions.closePanel,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)

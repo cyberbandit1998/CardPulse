@@ -19,11 +19,16 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.dp
 import app.cardpulse.android.camera.CardGuide
 import app.cardpulse.android.core.AddEdits
+import app.cardpulse.android.core.AddedNote
+import app.cardpulse.android.core.CardDto
 import app.cardpulse.android.core.CollectionIndex
 import app.cardpulse.android.core.CollectionItemDto
+import app.cardpulse.android.core.CustomCardForm
 import app.cardpulse.android.core.DashboardDto
 import app.cardpulse.android.core.DisplayPrefs
 import app.cardpulse.android.core.Fixtures
+import app.cardpulse.android.core.ManualAddState
+import app.cardpulse.android.core.ManualMode
 import app.cardpulse.android.core.MoverDto
 import app.cardpulse.android.core.Ownership
 import app.cardpulse.android.core.ScanEntry
@@ -31,15 +36,19 @@ import app.cardpulse.android.core.ScanItemDto
 import app.cardpulse.android.core.ScanJobDto
 import app.cardpulse.android.core.ScanMatchDto
 import app.cardpulse.android.core.ScanOutcome
+import app.cardpulse.android.core.SetDto
 import app.cardpulse.android.core.SnapshotDto
 import app.cardpulse.android.core.Upload
 import app.cardpulse.android.core.UserDto
+import app.cardpulse.android.core.lookup
 import app.cardpulse.android.core.ownershipOf
 import app.cardpulse.android.core.toChartPoints
 import app.cardpulse.android.data.ScanPrefs
 import app.cardpulse.android.ui.screens.CollectionScreen
 import app.cardpulse.android.ui.screens.HomeScreen
 import app.cardpulse.android.ui.screens.LoginScreen
+import app.cardpulse.android.ui.screens.ManualAddActions
+import app.cardpulse.android.ui.screens.ManualAddContent
 import app.cardpulse.android.ui.screens.PasswordScreen
 import app.cardpulse.android.ui.screens.PortfolioScreen
 import app.cardpulse.android.ui.screens.RapidActions
@@ -48,7 +57,9 @@ import app.cardpulse.android.ui.screens.RemoveChoices
 import app.cardpulse.android.ui.screens.ScanHomeContent
 import app.cardpulse.android.ui.screens.SettingsScreen
 import app.cardpulse.android.ui.theme.CardPulseTheme
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.junit.Rule
@@ -220,7 +231,7 @@ class ScreensScreenshotTest {
 
     @Test
     fun collectionTab() = shoot("11-collection") {
-        CollectionScreen(state = signedIn, onRefresh = {}, onRemove = { _, _, _ -> })
+        CollectionScreen(state = signedIn, onRefresh = {}, onRemove = { _, _, _ -> }, onAddCard = {})
     }
 
     // --- taking a card out of the collection -------------------------------------------------------
@@ -273,7 +284,7 @@ class ScreensScreenshotTest {
     fun scanHomeNothingWaiting() = shoot("20-scan-home") {
         ScanHomeContent(
             ready = 0, reading = 0, attention = 0, message = null, savePhotos = false,
-            onStart = {}, onReview = {}, onSavePhotos = {}, onDismissMessage = {},
+            onStart = {}, onAddManually = {}, onReview = {}, onSavePhotos = {}, onDismissMessage = {},
         )
     }
 
@@ -281,7 +292,7 @@ class ScreensScreenshotTest {
     fun scanHomeWithResultsWaiting() = shoot("21-scan-home-waiting") {
         ScanHomeContent(
             ready = 3, reading = 2, attention = 1, message = "A scan is no longer on the server (scans expire after 14 days).",
-            savePhotos = true, onStart = {}, onReview = {}, onSavePhotos = {}, onDismissMessage = {},
+            savePhotos = true, onStart = {}, onAddManually = {}, onReview = {}, onSavePhotos = {}, onDismissMessage = {},
         )
     }
 
@@ -394,6 +405,149 @@ class ScreensScreenshotTest {
     fun rapidScanWithAProblemMessage() {
         rapid(trayEntries.take(5), message = "Couldn't take the photo: camera in use")
         capture("37-rapid-message")
+    }
+
+    // --- adding a card by typing its name and number ---------------------------------------------------
+
+    private val obsidianFlames = SetDto(id = "sv3_en", tcgSetId = "sv3", name = "Obsidian Flames", series = "Scarlet & Violet", abbreviation = "OBF", lang = "en")
+    private val journeyTogether = SetDto(id = "sv9_en", tcgSetId = "sv9", name = "Journey Together", series = "Scarlet & Violet", abbreviation = "JTG", lang = "en")
+    private val baseSet = SetDto(id = "base1_en", tcgSetId = "base1", name = "Base Set", series = "Base", abbreviation = "BS", lang = "en")
+    private val sets = listOf(journeyTogether, obsidianFlames, baseSet, obsidianFlames.copy(id = "sv3_de", name = "Obsidian Flammen", lang = "de"))
+
+    private fun types(vararg names: String) = JsonArray(names.map { JsonPrimitive(it) })
+
+    private val charizardEx = CardDto(
+        id = "sv3-125_en", name = "Charizard ex", setId = "sv3", number = "125", rarity = "Double Rare", lang = "en", setRef = obsidianFlames,
+        types = types("Fire"), hp = "330", artist = "5ban Graphics",
+        variantsNormal = true, variantsReverse = true, variantsHolo = true, variantsFirstEdition = false,
+    )
+    private val pikachuJourney = CardDto(
+        id = "sv9-5_en", name = "Pikachu", setId = "sv9", number = "5", rarity = "Common", lang = "en", setRef = journeyTogether,
+        types = types("Lightning"), hp = "60", artist = "Mitsuhiro Arita",
+        variantsNormal = true, variantsReverse = true, variantsHolo = false, variantsFirstEdition = false,
+    )
+    private val pikachuBase = CardDto(
+        id = "base1-58_en", name = "Pikachu", setId = "base1", number = "58", rarity = "Common", lang = "en", setRef = baseSet,
+        types = types("Lightning"), hp = "40", artist = "Mitsuhiro Arita",
+        variantsNormal = true, variantsReverse = false, variantsHolo = false, variantsFirstEdition = true,
+    )
+    private val pikachuGerman = pikachuJourney.copy(
+        id = "sv9-5_de", lang = "de", setRef = journeyTogether.copy(id = "sv9_de", name = "Reisegefährten", lang = "de"),
+    )
+
+    private fun manual(state: ManualAddState, currency: String = "USD") {
+        compose.setContent {
+            CardPulseTheme {
+                ManualAddContent(
+                    state = state,
+                    serverUrl = "https://cards.example.com/",
+                    currency = currency,
+                    rateFromEur = 1.1,
+                    ownership = { index.ownershipOf(it) },
+                    actions = ManualAddActions(),
+                )
+            }
+        }
+        compose.waitForIdle()
+    }
+
+    private fun typed(name: String, number: String = "", vararg found: CardDto, picked: CardDto? = null, edits: AddEdits = AddEdits()): ManualAddState {
+        val form = CustomCardForm(name = name, number = number)
+        return ManualAddState(
+            form = form, results = found.toList(), matches = found.size, resultsFor = form.lookup,
+            selectedId = picked?.id, edits = edits,
+        )
+    }
+
+    @Test
+    fun manualAddBeforeAnythingIsTyped() {
+        manual(ManualAddState())
+        capture("40-manual-empty")
+    }
+
+    @Test
+    fun manualAddFindsTheCardFromItsNameAndNumber() {
+        // One match is picked by itself: its picture, set, rarity, type, hit points and artist are filled in.
+        manual(typed("Charizard ex", "125/197", charizardEx, picked = charizardEx, edits = AddEdits(quantity = 2, condition = "LP", variant = "Holo")))
+        capture("41-manual-found")
+    }
+
+    @Test
+    fun manualAddListsSeveralMatches() {
+        manual(typed("Pikachu", "", pikachuJourney, pikachuBase, pikachuGerman, charizardEx.copy(id = "sv3-26_en", name = "Pikachu ex", number = "26")))
+        capture("42-manual-several")
+    }
+
+    @Test
+    fun manualAddWithOneOfSeveralPicked() {
+        manual(
+            typed(
+                "Pikachu", "", pikachuJourney, pikachuBase, pikachuGerman, picked = pikachuBase,
+                edits = AddEdits(variant = "First Edition", purchasePrice = 12.0),
+            ),
+        )
+        capture("43-manual-picked")
+    }
+
+    @Test
+    fun manualAddWhenTheCatalogueHasNoSuchCard() {
+        manual(typed("Missingno", "999"))
+        capture("44-manual-no-match")
+    }
+
+    @Test
+    fun manualAddWhenTheSearchFails() {
+        val form = CustomCardForm(name = "Pikachu")
+        manual(ManualAddState(form = form, searchError = "Can't connect to the server. Check the address and that it is running."))
+        capture("47-manual-search-error")
+    }
+
+    @Test
+    fun manualAddRemembersWhatWasJustAdded() {
+        manual(ManualAddState(lastAdded = AddedNote("Charizard ex", 2)))
+        capture("46-manual-added")
+    }
+
+    @Test
+    fun manualAddWhenAddingFails() {
+        manual(
+            typed("Charizard ex", "125", charizardEx, picked = charizardEx)
+                .copy(error = "That wasn't found on the server."),
+        )
+        capture("48-manual-add-error")
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h1500dp-xxhdpi")
+    fun manualAddByHandStartingBlank() {
+        manual(
+            ManualAddState(
+                form = CustomCardForm(name = "Missingno", number = "999"), mode = ManualMode.BY_HAND, sets = sets,
+            ),
+        )
+        capture("45-manual-by-hand")
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h1500dp-xxhdpi")
+    fun manualAddByHandFilledInWithTheSetsOfferedAsYouType() {
+        manual(
+            ManualAddState(
+                form = CustomCardForm(
+                    name = "Charizard ex", number = "025", otherSetId = "obs", rarity = "Rare Holo", types = setOf("Fire", "Dragon"),
+                    hp = "200", artist = "Mitsuhiro Arita", imageUrl = "https://example.com/c.png", shareAsTemplate = true,
+                ),
+                mode = ManualMode.BY_HAND, sets = sets,
+            ),
+        )
+        capture("49-manual-by-hand-filled")
+    }
+
+    @Test
+    @Config(qualifiers = "w320dp-h640dp-xhdpi")
+    fun manualAddOnASmallPhone() {
+        manual(typed("Charizard ex", "125", charizardEx, picked = charizardEx, edits = AddEdits(quantity = 12, condition = "MP", variant = "Holo", lang = "zh-tw")))
+        capture("4a-manual-small-phone")
     }
 
     @Test

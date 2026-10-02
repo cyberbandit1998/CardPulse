@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.cardpulse.android.PokeApp
 import app.cardpulse.android.core.AddEdits
+import app.cardpulse.android.core.ManualAddSession
 import app.cardpulse.android.core.ScanSession
 import app.cardpulse.android.core.SessionState
 import app.cardpulse.android.core.isHandled
@@ -48,10 +49,22 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(ScanState())
     val state: StateFlow<ScanState> = _state.asStateFlow()
 
+    /** Adds cards by typing their name and number. It starts each card with the condition and variant used last. */
+    val manualAdd = ManualAddSession(
+        backend = container.repository,
+        scope = viewModelScope,
+        onCollectionItem = { container.collectionUpdates.tryEmit(it) },
+        describe = { it.userMessage() },
+        defaultEdits = { defaultEdits() },
+    )
+
     private val photoNumber = AtomicInteger()
 
     init {
-        viewModelScope.launch { _state.update { it.copy(prefs = store.scanPrefs()) } }
+        viewModelScope.launch {
+            _state.update { it.copy(prefs = store.scanPrefs()) }
+            manualAdd.reset() // so its first card starts with the saved condition and variant
+        }
         viewModelScope.launch { restorePhotos() }
         viewModelScope.launch { session.state.collect { followSession(it) } }
     }
@@ -137,6 +150,18 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun skip(id: Long) = session.skip(id)
+
+    // --- typing a card in -----------------------------------------------------------------------------
+
+    /** Adds the card picked on the manual-add screen. The next card starts with the condition and variant used here. */
+    fun addManualCard() {
+        val edits = manualAdd.state.value.edits
+        updatePrefs { it.copy(condition = edits.condition, variant = edits.variant) }
+        manualAdd.add()
+    }
+
+    /** Leaving the manual-add screen starts the next visit with blank boxes. */
+    fun closeManualAdd() = manualAdd.reset()
 
     fun retryItem(id: Long) = session.retryItem(id)
 

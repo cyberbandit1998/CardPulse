@@ -2,6 +2,7 @@ package app.cardpulse.android.core
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -89,6 +90,25 @@ data class CardDto(
     @SerialName("variants_holo") val variantsHolo: Boolean? = null,
     @SerialName("variants_first_edition") val variantsFirstEdition: Boolean? = null,
     @SerialName("set_ref") val setRef: SetDto? = null,
+    /** The card's own language, as the search and custom-card endpoints send it. */
+    val lang: String? = null,
+    /** A list of type names; kept as loose JSON so an odd value on one card can never make a whole response unreadable. */
+    val types: JsonElement? = null,
+    val hp: String? = null,
+    val artist: String? = null,
+) {
+    /** "Fire", "Water": the types as text, whatever shape the server stored them in. */
+    val typeNames: List<String>
+        get() = (types as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) }.orEmpty()
+}
+
+/** One page of `GET /api/cards/search`. */
+@Serializable
+data class CardSearchDto(
+    val data: List<CardDto> = emptyList(),
+    @SerialName("total_count") val totalCount: Int = 0,
+    val page: Int = 1,
+    @SerialName("page_size") val pageSize: Int = 20,
 )
 
 @Serializable
@@ -116,6 +136,33 @@ data class CollectionItemDto(
             }
         }
 }
+
+/** The body of `POST /api/cards/custom`: a card made by hand, the way the website's "Create card manually" sends it. */
+@Serializable
+data class CustomCardRequest(
+    val name: String,
+    @SerialName("set_id") val setId: String? = null,
+    val number: String? = null,
+    val rarity: String? = null,
+    val types: List<String>? = null,
+    val hp: String? = null,
+    val artist: String? = null,
+    @SerialName("image_url") val imageUrl: String? = null,
+    val lang: String? = null,
+    @SerialName("is_shared_template") val isSharedTemplate: Boolean = false,
+)
+
+/** The body of `POST /api/collection/`: add a card that already exists on the server, by its id. */
+@Serializable
+data class AddToCollectionRequest(
+    @SerialName("card_id") val cardId: String,
+    val quantity: Int = 1,
+    val condition: String = "NM",
+    val variant: String = "Normal",
+    @SerialName("printing_details") val printingDetails: List<String> = emptyList(),
+    @SerialName("purchase_price") val purchasePrice: Double? = null,
+    val lang: String = "en",
+)
 
 /** One run of a server sync, as listed by `GET /api/sync/status`. */
 @Serializable
