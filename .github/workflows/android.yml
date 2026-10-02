@@ -22,6 +22,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      fixed_key: ${{ steps.signing.outputs.fixed_key }}
+      cert_sha256: ${{ steps.cert.outputs.sha256 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -35,8 +38,33 @@ jobs:
       - name: Unit tests
         run: ./gradlew --no-daemon :app:testDebugUnitTest
 
+      # Builds signed with the same key can be installed over each other. Without these secrets (the README says how
+      # to add them) every build gets a new throwaway key and has to be uninstalled first. Forks never see secrets.
+      - name: Prepare signing key
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.CARDPULSE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.CARDPULSE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.CARDPULSE_KEY_ALIAS }}
+        run: bash .github/scripts/prepare-signing.sh
+
       - name: Build debug APK
         run: ./gradlew --no-daemon :app:assembleDebug
+
+      - name: Record which key signed the APK
+        id: cert
+        env:
+          FIXED_KEY: ${{ steps.signing.outputs.fixed_key }}
+        run: |
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1 || true)
+          digest=""
+          if [ -n "$apksigner" ]; then
+            digest=$("$apksigner" verify --print-certs app/build/outputs/apk/debug/*.apk | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          fi
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+          kind="a throwaway debug key"
+          if [ "$FIXED_KEY" = "true" ]; then kind="the fixed signing key"; fi
+          echo "Signed with ${kind}${digest:+ (certificate SHA-256 $digest)}." | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -61,20 +89,30 @@ jobs:
       - name: Publish pre-release
         env:
           GH_TOKEN: ${{ github.token }}
+          FIXED_KEY: ${{ needs.build.outputs.fixed_key }}
+          CERT_SHA256: ${{ needs.build.outputs.cert_sha256 }}
         run: |
           tag="build-${{ github.run_number }}"
           apk="dist/CardPulse-${tag}.apk"
           mv dist/*.apk "$apk"
           {
-            echo "CardPulse debug build ${tag} of commit ${GITHUB_SHA::7}. Debug-signed, for sideloading only."
+            echo "CardPulse debug build ${tag} of commit ${GITHUB_SHA::7}. Debug build, for sideloading only."
             echo
             echo "**Install:** download the .apk on your phone and open it. If Android asks, allow \"Install unknown apps\" for your browser or Files app."
             echo
-            echo "**Updating:** uninstall the previous build first. Every CI build is signed with a different throwaway key, so Android will not update one in place."
+            if [ "$FIXED_KEY" = "true" ]; then
+              echo "**Updating:** this build is signed with your fixed key, so it installs straight over the previous build with no need to uninstall. The exception is a build that was signed with a throwaway key: remove that one first, once."
+            else
+              echo "**Updating:** uninstall the previous build first. This build is signed with a throwaway key that changes every time, so Android will not update one in place. (The README explains how to set up a fixed key.)"
+            fi
             echo
             echo "**First launch:** enter the https:// address of your own PokéCollector server, then your username and password."
             echo
             echo "SHA-256: \`$(sha256sum "$apk" | cut -d' ' -f1)\`"
+            if [ -n "$CERT_SHA256" ]; then
+              echo
+              echo "Signing certificate SHA-256: \`${CERT_SHA256}\` (Android only updates an app in place when this matches the installed one.)"
+            fi
           } > notes.md
           gh release create "$tag" "$apk" \
             --repo "$GITHUB_REPOSITORY" \

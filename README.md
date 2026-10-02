@@ -45,8 +45,44 @@ Every successful build on GitHub produces a debug APK:
 
 Android will ask to allow "Install unknown apps" for the app you opened the file from.
 
-Debug builds from CI are signed with a throwaway key that changes on every build, so Android will not update one
-in place: **uninstall the old build first** (the saved server address and sign-in go with it).
+Until you set up a signing key (next section), debug builds from CI are signed with a throwaway key that changes on
+every build, so Android will not update one in place: **uninstall the old build first** (the saved server address and
+sign-in go with it).
+
+## Updating in place (a fixed signing key)
+
+Android only installs a new build over an old one when both were signed with the same key. Give the repository one key
+of your own and every later build will install straight over the last, keeping the saved address and sign-in.
+
+1. **Make the key** once, on a computer with Java (`keytool` comes with it):
+
+   ```
+   keytool -genkeypair -v -keystore cardpulse.jks -storetype PKCS12 -alias cardpulse -keyalg RSA -keysize 4096 -validity 10000
+   ```
+
+   Choose a password when asked, and keep `cardpulse.jks` and that password somewhere safe, such as a password
+   manager. GitHub never shows a secret again, and replacing the key later means one more reinstall.
+
+2. **Turn the file into text** and copy it:
+   - macOS: `base64 -i cardpulse.jks | pbcopy`
+   - Linux: `base64 -w0 cardpulse.jks`
+   - Windows PowerShell: `[Convert]::ToBase64String([IO.File]::ReadAllBytes("cardpulse.jks")) | Set-Clipboard`
+
+3. **Add three repository secrets** under *Settings → Secrets and variables → Actions → New repository secret*:
+
+   | Name | Value |
+   | --- | --- |
+   | `CARDPULSE_KEYSTORE_BASE64` | the text from step 2 |
+   | `CARDPULSE_KEYSTORE_PASSWORD` | the password you chose |
+   | `CARDPULSE_KEY_ALIAS` | `cardpulse` |
+
+4. **Publish a build** (run the *Android CI* workflow with "publish" ticked). Its release notes say the build is signed
+   with your fixed key and show the certificate fingerprint. Install it, removing any older build once. From then on,
+   newer builds update it in place.
+
+If a secret is wrong the build fails and says why, rather than quietly using a different key. Every CI build also gets a
+higher version number than the last, which Android requires for an update. Never commit the key file: `*.jks` and
+`*.keystore` are git-ignored.
 
 ## Build it yourself
 

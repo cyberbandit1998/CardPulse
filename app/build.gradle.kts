@@ -5,6 +5,10 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+// CI sets this when the repository has a signing key (see the README, "Updating in place"). Builds signed with the
+// same key install over each other; without it (local builds, forks) the usual throwaway debug key is used.
+val fixedKeystore: String? = System.getenv("CARDPULSE_KEYSTORE_PATH")
+
 android {
     namespace = "io.github.cyberbandit1998.cardpulse"
     compileSdk = 36
@@ -13,8 +17,27 @@ android {
         applicationId = "io.github.cyberbandit1998.cardpulse"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        // CI numbers its builds 1, 2, 3...; Android only accepts an update whose versionCode isn't lower.
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionName = "0.1.0"
+    }
+
+    signingConfigs {
+        if (fixedKeystore != null) {
+            create("fixed") {
+                storeFile = file(fixedKeystore)
+                storePassword = System.getenv("CARDPULSE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("CARDPULSE_KEY_ALIAS")
+                // A PKCS12 keystore (what keytool makes by default) uses one password for the store and the key.
+                keyPassword = System.getenv("CARDPULSE_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            if (fixedKeystore != null) signingConfig = signingConfigs.getByName("fixed")
+        }
     }
 
     buildFeatures {
