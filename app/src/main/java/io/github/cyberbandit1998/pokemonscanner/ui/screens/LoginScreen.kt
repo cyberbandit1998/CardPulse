@@ -20,6 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -42,7 +43,8 @@ fun LoginScreen(
 ) {
     var server by rememberSaveable(state.serverUrl) { mutableStateOf(state.serverUrl) }
     var username by rememberSaveable { mutableStateOf("") }
-    var password by rememberSaveable { mutableStateOf("") }
+    // Not rememberSaveable: a password shouldn't be written into the saved-state bundle.
+    var password by remember { mutableStateOf("") }
 
     Column(
         Modifier

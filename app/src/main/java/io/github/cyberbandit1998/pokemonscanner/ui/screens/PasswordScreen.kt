@@ -17,7 +17,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -36,8 +36,9 @@ fun PasswordScreen(
     onSignOut: () -> Unit,
     onDismissMessage: () -> Unit,
 ) {
-    var first by rememberSaveable { mutableStateOf("") }
-    var second by rememberSaveable { mutableStateOf("") }
+    // Not rememberSaveable: passwords shouldn't be written into the saved-state bundle.
+    var first by remember { mutableStateOf("") }
+    var second by remember { mutableStateOf("") }
     val tooShort = first.isNotEmpty() && first.length < MIN_PASSWORD_LENGTH
     val mismatch = second.isNotEmpty() && first != second
 

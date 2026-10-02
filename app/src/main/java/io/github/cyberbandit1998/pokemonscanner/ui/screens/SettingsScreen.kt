@@ -75,7 +75,7 @@ fun SettingsScreen(
 
             Section("From your PokéCollector account") {
                 Text(
-                    "These come from your account's settings on the server. Change them in PokéCollector and pull to refresh here.",
+                    "These come from your account's settings on the server. Change them in PokéCollector, then tap Refresh on the Home tab.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
