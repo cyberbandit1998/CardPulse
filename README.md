@@ -1,3 +1,27 @@
+# ⚠️ Disclaimer
+
+CardPulse is an experimental, community-driven project built with a healthy amount of vibecoding.
+
+Expect rapid changes, occasional bugs, and plenty of iteration. Use version control, keep backups, and don’t assume every release is production-ready.
+
+Contributions are welcome. If you have a fix, feature, UI improvement, documentation update, or new idea, feel free to open a pull request or issue.
+
+When reporting a bug, please include:
+
+- Steps to reproduce
+- What you expected to happen
+- What actually happened
+- Screenshots or logs when available
+- Your Android version and CardPulse version, if relevant
+
+For contributions, please keep pull requests focused and explain the reason behind the change. Update tests or documentation when appropriate and make sure existing checks still pass.
+
+CardPulse is designed to work with a self-hosted PokéCollector backend. Changes should avoid exposing credentials, API tokens, private collection data, or server configuration.
+
+Be kind, be clear, and keep feedback constructive.
+
+Most importantly: have fun building, scanning, collecting, and improving CardPulse.
+
 # CardPulse
 
 CardPulse is an unofficial Android companion for a self-hosted
