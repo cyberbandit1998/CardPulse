@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -58,10 +59,13 @@ import app.cardpulse.android.core.TileState
 import app.cardpulse.android.core.Variants
 import app.cardpulse.android.core.details
 import app.cardpulse.android.core.headline
+import app.cardpulse.android.core.isInFlight
+import app.cardpulse.android.core.progressNote
 import app.cardpulse.android.core.recognizedSummary
 import app.cardpulse.android.core.scannedLanguage
 import app.cardpulse.android.core.subtitle
 import app.cardpulse.android.core.tileState
+import app.cardpulse.android.ui.AccentTextButton
 import app.cardpulse.android.ui.RemoteImage
 import coil3.compose.AsyncImage
 
@@ -79,12 +83,17 @@ fun ConfirmPanel(
     rateFromEur: Double,
     /** How many other results are waiting for confirmation. */
     othersWaiting: Int,
+    /** How many other photos are still being sent or read. */
+    othersInFlight: Int,
     onSelectCandidate: (Int) -> Unit,
     onEdits: (AddEdits) -> Unit,
     onAdd: () -> Unit,
     onSkip: () -> Unit,
     /** Reads the photo again, or sends it again, whichever the card needs. */
     onRetry: () -> Unit,
+    /** Gives up on a photo that is still being sent or read. */
+    onCancel: () -> Unit,
+    onCancelAll: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -111,7 +120,7 @@ fun ConfirmPanel(
             }
             when (entry.tileState()) {
                 TileState.READY -> ReadyContent(entry, serverUrl, ownership, currency, rateFromEur, onSelectCandidate, onEdits, onAdd, onSkip)
-                else -> AttentionContent(entry, serverUrl, onRetry, onSkip)
+                else -> AttentionContent(entry, serverUrl, othersInFlight, onRetry, onSkip, onCancel, onCancelAll)
             }
         }
     }
@@ -409,11 +418,23 @@ private fun QuantityStepper(quantity: Int, onChange: (Int) -> Unit) {
     }
 }
 
-/** For a card that can't be added yet: say why, and offer the way forward. */
+/**
+ * For a card that can't be added yet: say why, and offer the way forward. A photo that is still being sent or read
+ * says what it is waiting for and can always be cancelled; the server won't let it be skipped before it is read.
+ */
 @Composable
-private fun ColumnScope.AttentionContent(entry: ScanEntry, serverUrl: String, onRetry: () -> Unit, onSkip: () -> Unit) {
+private fun ColumnScope.AttentionContent(
+    entry: ScanEntry,
+    serverUrl: String,
+    othersInFlight: Int,
+    onRetry: () -> Unit,
+    onSkip: () -> Unit,
+    onCancel: () -> Unit,
+    onCancelAll: () -> Unit,
+) {
     val state = entry.tileState()
-    val busyState = state == TileState.SENDING || state == TileState.READING || state == TileState.WAITING
+    val inFlight = entry.isInFlight
+    val progress = if (inFlight) entry.progressNote() else null
     Row(
         Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(bottom = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -421,7 +442,7 @@ private fun ColumnScope.AttentionContent(entry: ScanEntry, serverUrl: String, on
         YourPhoto(entry, serverUrl, Modifier.size(width = 84.dp, height = 117.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                when (state) {
+                progress?.title ?: when (state) {
                     TileState.NO_MATCH -> "The scanner couldn't match this card"
                     TileState.FAILED -> "The scanner couldn't read this card"
                     TileState.SEND_FAILED -> "This photo hasn't reached your server"
@@ -430,24 +451,37 @@ private fun ColumnScope.AttentionContent(entry: ScanEntry, serverUrl: String, on
                 style = MaterialTheme.typography.titleSmall,
             )
             Text(
-                when (state) {
+                progress?.detail ?: when (state) {
                     TileState.NO_MATCH -> "Try again with the card flat and well lit, or skip it and add it by hand in PokéCollector."
                     TileState.FAILED -> entry.item?.error ?: "The scanner gave up on this photo."
                     TileState.SEND_FAILED -> entry.uploadError ?: "The upload failed."
                     else -> "It will appear here as soon as it is ready."
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (entry.slow) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (busyState) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            if (inFlight) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         }
     }
     ConfirmFooter(error = entry.error) {
-        if (state == TileState.FAILED || state == TileState.SEND_FAILED) {
-            Button(onClick = onRetry, enabled = !entry.busy) { Text(if (state == TileState.FAILED) "Try again" else "Send again") }
-        }
-        OutlinedButton(onClick = onSkip, enabled = !entry.busy) {
-            Text(if (state == TileState.SEND_FAILED) "Discard" else "Skip")
+        if (inFlight) {
+            // A scan that looks stuck makes cancelling the obvious thing to do.
+            if (entry.slow) {
+                Button(onClick = onCancel) { Text("Cancel scan") }
+            } else {
+                OutlinedButton(onClick = onCancel) { Text("Cancel scan") }
+            }
+            if (othersInFlight > 0) {
+                Spacer(Modifier.weight(1f))
+                AccentTextButton(onClick = onCancelAll) { Text("Cancel all ${othersInFlight + 1}") }
+            }
+        } else {
+            if (state == TileState.FAILED || state == TileState.SEND_FAILED) {
+                Button(onClick = onRetry, enabled = !entry.busy) { Text(if (state == TileState.FAILED) "Try again" else "Send again") }
+            }
+            OutlinedButton(onClick = onSkip, enabled = !entry.busy) {
+                Text(if (state == TileState.SEND_FAILED) "Discard" else "Skip")
+            }
         }
     }
 }

@@ -145,7 +145,7 @@ class ScreensScreenshotTest {
     /** What each kind of result looks like in the tray. */
     private val trayEntries: List<ScanEntry> = listOf(
         entry(9, upload = Upload.SENDING),
-        entry(8, item = ScanItemDto(id = 8, status = "processing")),
+        entry(8, item = ScanItemDto(id = 8, status = "processing")).copy(slow = true), // has shown no progress for a long time
         entry(7, item = ScanItemDto(id = 7, status = "retrying", retryReason = "rate_limit")),
         entry(6, item = done(6, match("sv3-125_en", "Charizard ex"), match("sv3-125_de", "Glurak ex"))), // owned
         entry(5, item = done(5, match("sv9-5_en", "Pikachu", set = "Journey Together", number = "5", rarity = "Common"))), // new
@@ -298,6 +298,36 @@ class ScreensScreenshotTest {
         val chosen = entry(5, item = item, edits = AddEdits(quantity = 12, condition = "MP", variant = "First Edition", lang = "zh-tw"))
         rapid(listOf(chosen) + trayEntries.filter { it.id != 5L }, openId = 5)
         capture("38-confirm-small-phone")
+    }
+
+    // --- giving up on a scan that is still spinning ----------------------------------------------
+
+    @Test
+    fun cancelWhileTheServerIsReading() {
+        val reading = entry(8, item = ScanItemDto(id = 8, status = "processing"))
+        rapid(listOf(reading) + trayEntries.filter { it.id != 8L }, openId = 8)
+        capture("39-cancel-reading")
+    }
+
+    @Test
+    fun cancelWhenItLooksStuck() {
+        rapid(trayEntries, openId = 8) // entry 8 has shown no progress for a long time
+        capture("3a-cancel-stuck")
+    }
+
+    @Test
+    fun cancelWhileWaitingOutALimit() {
+        val waiting = entry(
+            7, item = ScanItemDto(id = 7, status = "retrying", retryReason = "rate_limit", nextAttemptAt = "2026-10-02T14:32:00Z"),
+        )
+        rapid(listOf(waiting) + trayEntries.filter { it.id != 7L }, openId = 7)
+        capture("3b-cancel-waiting")
+    }
+
+    @Test
+    fun cancelWhileSending() {
+        rapid(trayEntries, openId = 9) // entry 9 is still being sent
+        capture("3c-cancel-sending")
     }
 
     @Test

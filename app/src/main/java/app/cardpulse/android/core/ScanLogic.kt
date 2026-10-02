@@ -35,12 +35,15 @@ fun retryNote(reason: String?, nextAttemptAt: String?, now: Instant = Instant.no
         seconds < 90 -> " in ${seconds}s"
         else -> " in about ${(seconds + 30) / 60} min"
     }
-    return when (reason) {
-        "daily_quota" -> "The scanner's daily quota is used up. Retrying$wait."
-        "rate_limit" -> "The scanner is rate-limited. Retrying$wait."
-        "catalogue_unavailable" -> "The card database isn't reachable right now. Retrying$wait."
-        else -> "Retrying$wait."
-    }
+    return retryReasonText(reason)?.let { "$it Retrying$wait." } ?: "Retrying$wait."
+}
+
+/** Why the server is holding a photo back, as the server names the reasons; null for one this app doesn't know. */
+fun retryReasonText(reason: String?): String? = when (reason) {
+    "daily_quota" -> "The scanner's daily quota is used up."
+    "rate_limit" -> "The scanner is rate-limited."
+    "catalogue_unavailable" -> "The card database isn't reachable right now."
+    else -> null
 }
 
 /** What the scanner read off the photo, e.g. "Charizard ex · 125/197 · OBF"; null if it read nothing. */

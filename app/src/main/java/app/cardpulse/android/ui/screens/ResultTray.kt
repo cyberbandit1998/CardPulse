@@ -45,6 +45,7 @@ internal object ScanColors {
     val newContent = Color(0xFF9BE3AE)
     val ownedContainer = Color(0xFF3A2900)
     val ownedContent = Color(0xFFFFD27A)
+    val stuck = Color(0xFFFFC107)
 }
 
 /**
@@ -101,10 +102,20 @@ fun ScanTile(
     ) {
         TileImage(entry, serverUrl, state)
         when (state) {
-            TileState.SENDING, TileState.READING, TileState.WAITING ->
+            TileState.SENDING, TileState.READING, TileState.WAITING -> {
                 Box(Modifier.fillMaxSize().background(Color(0x99000000)), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
                 }
+                // Nothing has changed for a long time: tap the tile to cancel it.
+                if (entry.slow) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = "Taking a long time",
+                        tint = ScanColors.stuck,
+                        modifier = Modifier.align(Alignment.TopEnd).padding(3.dp).size(16.dp),
+                    )
+                }
+            }
 
             TileState.READY -> OwnershipBadge(ownership, Modifier.align(Alignment.TopStart).padding(3.dp))
 

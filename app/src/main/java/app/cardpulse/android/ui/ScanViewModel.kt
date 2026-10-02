@@ -142,7 +142,10 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     fun resend(id: Long) = session.resend(id)
 
-    fun discard(id: Long) = session.discard(id)
+    /** Gives up on a scan that is still being sent or read: it leaves the list and is deleted on the server. */
+    fun cancel(id: Long) = session.cancel(id)
+
+    fun cancelUnfinished() = session.cancelUnfinished()
 
     /** When the open card is added, skipped or goes away, show the next one waiting, or close the panel. */
     private fun followSession(current: SessionState) {

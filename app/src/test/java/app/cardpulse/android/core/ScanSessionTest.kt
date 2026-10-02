@@ -1,12 +1,15 @@
 package app.cardpulse.android.core
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
@@ -25,6 +28,7 @@ import java.nio.file.Files
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 private fun httpError(code: Int, body: String = """{"detail":"nope"}""") =
     HttpException(Response.error<Any>(code, body.toResponseBody("application/json".toMediaType())))
@@ -36,6 +40,8 @@ private class FakeBackend : ScanBackend {
         @Volatile var matches: List<ScanMatchDto> = emptyList(),
         @Volatile var resolved: Boolean = false,
         @Volatile var gone: Boolean = false,
+        /** Other photos in the same job, as when a scan was started elsewhere. */
+        @Volatile var siblings: Int = 0,
     )
 
     val jobs = ConcurrentHashMap<Int, Job>()
@@ -49,6 +55,12 @@ private class FakeBackend : ScanBackend {
     val skips = CopyOnWriteArrayList<Pair<Int, Int>>()
     val retries = CopyOnWriteArrayList<Pair<Int, Int>>()
     val ownerPhotos = CopyOnWriteArrayList<Pair<Int, ByteArray>>()
+    val deleted = CopyOnWriteArrayList<Int>()
+    @Volatile var deleteError: Throwable? = null
+    /** While set, uploads wait here, like a connection that hangs. */
+    @Volatile var enqueueGate: CompletableDeferred<Unit>? = null
+    /** The server finishes the request even though the app has given up on it. */
+    @Volatile var enqueueIgnoresCancel = false
     val serverPhotoReads = AtomicInteger()
     private val nextJob = AtomicInteger(100)
 
@@ -60,18 +72,25 @@ private class FakeBackend : ScanBackend {
     private fun jobOf(jobId: Int): ScanJobDto {
         val job = jobs.getValue(jobId)
         val active = if (!job.resolved && job.status in setOf("pending", "processing", "retrying")) 1 else 0
-        return ScanJobDto(id = jobId, total = 1, active = active, items = listOf(itemOf(jobId)))
+        val others = List(job.siblings) { ScanItemDto(id = 7_000 + it, status = "pending") }
+        return ScanJobDto(id = jobId, total = 1 + job.siblings, active = active, items = listOf(itemOf(jobId)) + others)
     }
 
     /** A job the server already holds, as if it had been started earlier. */
-    fun existing(status: String = "pending", matches: List<ScanMatchDto> = emptyList(), resolved: Boolean = false): Int {
+    fun existing(
+        status: String = "pending",
+        matches: List<ScanMatchDto> = emptyList(),
+        resolved: Boolean = false,
+        siblings: Int = 0,
+    ): Int {
         val id = nextJob.incrementAndGet()
-        jobs[id] = Job(status, matches, resolved)
+        jobs[id] = Job(status, matches, resolved, siblings = siblings)
         return id
     }
 
     override suspend fun enqueue(photo: File): ScanJobDto {
         enqueueCalls.incrementAndGet()
+        enqueueGate?.let { gate -> if (enqueueIgnoresCancel) withContext(NonCancellable) { gate.await() } else gate.await() }
         if (enqueueFailures > 0) {
             enqueueFailures--
             throw enqueueError
@@ -114,6 +133,12 @@ private class FakeBackend : ScanBackend {
         retries += jobId to itemId
         jobs.getValue(jobId).status = "pending"
         return itemOf(jobId)
+    }
+
+    override suspend fun deleteScanJob(jobId: Int) {
+        deleteError?.let { throw it }
+        deleted += jobId
+        jobs[jobId]?.gone = true // later questions about it get a 404, like the real server
     }
 
     override suspend fun scanPhotoBytes(jobId: Int, itemId: Int): ByteArray {
@@ -407,6 +432,158 @@ class ScanSessionTest {
         await { state -> state.entries.isEmpty() }
         assertTrue(backend.skips.isEmpty())
         awaitTrue { !file.exists() }
+    }
+
+    // --- giving up on a scan ----------------------------------------------------------------------
+
+    private fun otherSession(
+        uploadWorkers: Int = 2,
+        clock: () -> Long = System::currentTimeMillis,
+        slowAfterMs: Long = 120_000,
+    ) = ScanSession(
+        backend = backend, scope = scope, describe = { it.userMessage() },
+        pollMs = 10, waitingPollMs = 20, errorPollMs = 20, uploadWorkers = uploadWorkers, uploadRetryMs = listOf(10, 10),
+        clock = clock, slowAfterMs = slowAfterMs,
+    )
+
+    @Test
+    fun `cancelling a photo that is being read removes it and deletes the scan on the server`() = runBlocking {
+        val file = photo("1")
+        val id = session.capture(file)
+        await { it.tile(id) == TileState.READING }
+        val job = jobFor(file)
+
+        session.cancel(id)
+
+        await { it.entries.isEmpty() }
+        awaitTrue { backend.deleted.toList() == listOf(job) }
+        awaitTrue { !File(dir, "sent-1.jpg").exists() }
+        // Nothing keeps asking the server about it.
+        delay(60)
+        val calls = backend.scanJobCalls.get()
+        delay(60)
+        assertEquals(calls, backend.scanJobCalls.get())
+    }
+
+    @Test
+    fun `cancelling a photo that is being sent abandons the upload and frees the worker`() = runBlocking {
+        val one = otherSession(uploadWorkers = 1)
+        backend.enqueueGate = CompletableDeferred() // the first upload hangs
+        val hanging = one.capture(photo("1"))
+        awaitTrue { backend.enqueueCalls.get() == 1 }
+        assertEquals(TileState.SENDING, one.state.value.tile(hanging))
+
+        one.cancel(hanging)
+        assertTrue(one.state.value.entries.isEmpty())
+
+        // With one worker, the next photo can only go if the hanging upload really was abandoned.
+        backend.enqueueGate = null
+        val next = one.capture(photo("2"))
+        withTimeout(5_000) { one.state.first { it.tile(next) == TileState.READING } }
+        assertEquals(1, backend.enqueued.size)
+        assertTrue(backend.deleted.isEmpty())
+    }
+
+    @Test
+    fun `a photo the server accepts just as it is cancelled does not stay behind on the server`() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        backend.enqueueGate = gate
+        backend.enqueueIgnoresCancel = true
+        val id = session.capture(photo("1"))
+        awaitTrue { backend.enqueueCalls.get() == 1 }
+
+        session.cancel(id)
+        gate.complete(Unit) // the server answers anyway
+
+        awaitTrue { backend.enqueued.size == 1 && backend.deleted.toList() == listOf(backend.enqueued.first().first) }
+        assertTrue(session.state.value.entries.isEmpty())
+    }
+
+    @Test
+    fun `cancelling one photo of a bigger scan only takes it off the list`() = runBlocking {
+        backend.existing(status = "processing", siblings = 2) // three photos in one job, started elsewhere
+        session.resumeServer()
+        val all = await { it.entries.size == 3 }
+        assertTrue(all.entries.all { it.sharesJob })
+
+        session.cancel(all.entries.first().id)
+
+        val after = await { it.entries.size == 2 && it.message != null }
+        assertTrue(backend.deleted.isEmpty())
+        assertTrue(after.message!!.contains("part of a bigger scan"))
+    }
+
+    @Test
+    fun `cancelling still removes the photo when the server cannot be told, and says so`() = runBlocking {
+        val id = session.capture(photo("1"))
+        await { it.tile(id) == TileState.READING }
+        backend.deleteError = IOException("offline")
+
+        session.cancel(id)
+
+        val state = await { it.message != null }
+        assertTrue(state.entries.isEmpty())
+        assertTrue(state.message!!.contains("couldn't be told"))
+    }
+
+    @Test
+    fun `a scan the server has already lost is cancelled without a fuss`() = runBlocking {
+        val id = session.capture(photo("1"))
+        await { it.tile(id) == TileState.READING }
+        backend.deleteError = httpError(404)
+
+        session.cancel(id)
+
+        await { it.entries.isEmpty() }
+        delay(100)
+        assertNull(session.state.value.message)
+    }
+
+    @Test
+    fun `skipping a photo the server is still reading gives up on it instead of failing`() = runBlocking {
+        val file = photo("1")
+        val id = session.capture(file)
+        await { it.tile(id) == TileState.READING }
+        val job = jobFor(file)
+
+        session.skip(id) // the server would answer "still being processed"
+
+        await { it.entries.isEmpty() }
+        awaitTrue { backend.deleted.toList() == listOf(job) }
+        assertTrue(backend.skips.isEmpty())
+    }
+
+    @Test
+    fun `cancelling all unfinished photos leaves the ones that are ready`() = runBlocking {
+        val (ready, _) = scanReady("1", charizard)
+        val first = session.capture(photo("2"))
+        val second = session.capture(photo("3"))
+        await { it.tile(first) == TileState.READING && it.tile(second) == TileState.READING }
+
+        session.cancelUnfinished()
+
+        val state = await { it.entries.size == 1 }
+        assertEquals(ready, state.entries.single().id)
+        awaitTrue { backend.deleted.size == 2 }
+    }
+
+    @Test
+    fun `a photo with no progress for a long time is flagged, and any progress clears the flag`() = runBlocking {
+        val now = AtomicLong(1_000)
+        val timed = otherSession(clock = { now.get() }, slowAfterMs = 5_000)
+        val file = photo("1")
+        val id = timed.capture(file)
+        // Sent and looked at once: the first look counts as progress, so the clock is only moved after it.
+        withTimeout(5_000) { timed.state.first { it.entries.firstOrNull { e -> e.id == id }?.item != null } }
+        assertFalse(timed.state.value.entry(id).slow)
+
+        now.addAndGet(6_000)
+        withTimeout(5_000) { timed.state.first { it.entry(id).slow } }
+
+        // The server moving on is progress, however slow it was before.
+        backend.jobs.getValue(jobFor(file)).status = "processing"
+        withTimeout(5_000) { timed.state.first { !it.entry(id).slow } }
+        timed.cancel(id)
     }
 
     @Test

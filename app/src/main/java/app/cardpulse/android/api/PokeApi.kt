@@ -130,8 +130,9 @@ interface PokeApi {
         @Path("item") itemId: Int,
     ): ScanItemDto
 
+    /** Removes a scan job, even one that is still being read. Any success answer will do, so nothing is parsed. */
     @DELETE("api/cards/recognize/jobs/{job}")
-    suspend fun deleteScanJob(@Path("job") jobId: Int): JsonObject
+    suspend fun deleteScanJob(@Path("job") jobId: Int)
 
     /** The sanitized JPEG of a queued photo. The server deletes it once the item is resolved. */
     @Streaming

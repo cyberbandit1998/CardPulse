@@ -2,8 +2,10 @@ package app.cardpulse.android.core
 
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,6 +16,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import retrofit2.HttpException
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /** What the scan session needs from the server. The real one is `Repository`; tests use a fake. */
@@ -24,6 +27,7 @@ interface ScanBackend {
     suspend fun resolveAndAdd(jobId: Int, itemId: Int, request: ResolveAndAddRequest): ResolveAndAddResponse
     suspend fun skip(jobId: Int, itemId: Int): ScanItemDto
     suspend fun retry(jobId: Int, itemId: Int): ScanItemDto
+    suspend fun deleteScanJob(jobId: Int)
     suspend fun scanPhotoBytes(jobId: Int, itemId: Int): ByteArray
     suspend fun uploadOwnerPhoto(collectionItemId: Int, jpeg: ByteArray)
 }
@@ -54,6 +58,12 @@ data class ScanEntry(
     val busy: Boolean = false,
     /** The last problem adding or skipping this card. */
     val error: String? = null,
+    /** When this photo last changed what it was doing (the session's clock), to notice one that is stuck. */
+    val since: Long = 0,
+    /** Nothing has changed for a long time, so the spinner is probably not going to stop by itself. */
+    val slow: Boolean = false,
+    /** The server's job holds other photos too (a scan started elsewhere), so it must not be deleted for this one. */
+    val sharesJob: Boolean = false,
 ) {
     val match: ScanMatchDto? get() = item?.matches?.getOrNull(candidate)
 }
@@ -91,6 +101,13 @@ val ScanEntry.isWorking: Boolean
 
 val ScanEntry.isHandled: Boolean get() = outcome != null
 
+/** Still on its way: being sent, queued, read, or waiting to be tried again. Nothing the user can decide yet. */
+val ScanEntry.isInFlight: Boolean
+    get() = when (tileState()) {
+        TileState.SENDING, TileState.READING, TileState.WAITING -> true
+        else -> false
+    }
+
 data class SessionState(
     /** Newest first. */
     val entries: List<ScanEntry> = emptyList(),
@@ -102,13 +119,7 @@ data class SessionState(
 val SessionState.toReview: List<ScanEntry> get() = entries.filter { it.tileState() == TileState.READY }
 
 /** Photos still on their way (uploading or being read), not counting the ones that need the user. */
-val SessionState.inFlight: Int
-    get() = entries.count {
-        when (it.tileState()) {
-            TileState.SENDING, TileState.READING, TileState.WAITING -> true
-            else -> false
-        }
-    }
+val SessionState.inFlight: Int get() = entries.count { it.isInFlight }
 
 /**
  * Scans card after card without waiting: every photo is uploaded as its own job the moment it is taken,
@@ -127,18 +138,31 @@ class ScanSession(
     private val errorPollMs: Long = 5_000,
     uploadWorkers: Int = 2,
     private val uploadRetryMs: List<Long> = listOf(1_000, 3_000),
+    private val clock: () -> Long = System::currentTimeMillis,
+    /** How long a photo may go without any change before it is flagged as probably stuck. */
+    private val slowAfterMs: Long = 120_000,
 ) {
     private val mutableState = MutableStateFlow(SessionState())
     val state: StateFlow<SessionState> = mutableState.asStateFlow()
 
     private val uploads = Channel<Long>(Channel.UNLIMITED)
+    /** The uploads under way, so one photo can be abandoned without stopping the worker that is sending it. */
+    private val uploadJobs = ConcurrentHashMap<Long, Job>()
     private val nextId = AtomicLong(1)
     private val lock = Any()
     private var poller: Job? = null
 
     init {
         repeat(uploadWorkers) {
-            scope.launch { for (id in uploads) upload(id) }
+            scope.launch {
+                for (id in uploads) {
+                    // Registered before it starts, so a cancel can never miss it.
+                    val running = launch(start = CoroutineStart.LAZY) { upload(id) }
+                    uploadJobs[id] = running
+                    running.join()
+                    uploadJobs.remove(id, running)
+                }
+            }
         }
     }
 
@@ -147,7 +171,7 @@ class ScanSession(
     /** Adds a freshly taken photo at the front and starts sending it. */
     fun capture(photo: File): Long {
         val id = nextId.getAndIncrement()
-        mutableState.update { it.copy(entries = listOf(ScanEntry(id, photo, Upload.WAITING)) + it.entries) }
+        mutableState.update { it.copy(entries = listOf(ScanEntry(id, photo, Upload.WAITING, since = clock())) + it.entries) }
         uploads.trySend(id)
         return id
     }
@@ -167,9 +191,13 @@ class ScanSession(
         }
         result
             .onSuccess { jobs ->
+                val now = clock()
                 val found = jobs.flatMap { job ->
                     job.items.filter { !it.resolved }.map { item ->
-                        ScanEntry(nextId.getAndIncrement(), photo = null, upload = Upload.SENT, jobId = job.id, item = item)
+                        ScanEntry(
+                            nextId.getAndIncrement(), photo = null, upload = Upload.SENT, jobId = job.id, item = item,
+                            since = now, sharesJob = job.items.size > 1,
+                        )
                     }
                 }.take(MAX_RESUMED)
                 mutableState.update { it.copy(entries = it.entries + found, loading = false) }
@@ -185,11 +213,40 @@ class ScanSession(
         uploads.trySend(entryId)
     }
 
-    /** Drops a photo that never reached the server. */
-    fun discard(entryId: Long) {
-        val entry = find(entryId) ?: return
-        mutableState.update { s -> s.copy(entries = s.entries.filterNot { it.id == entryId }) }
-        scope.launch { deleteLocalPhoto(entry.photo) }
+    /**
+     * Stops waiting for a photo that is still being sent or read, or that never got through: the upload is
+     * abandoned, the tile goes, and the scan is deleted on the server so it can't turn up again later. A card
+     * that is ready to review is dealt with by [skip] instead, which tells the server it was not wanted.
+     */
+    fun cancel(entryId: Long) {
+        var removed: ScanEntry? = null
+        mutableState.update { s ->
+            removed = s.entries.firstOrNull { it.id == entryId && it.outcome == null }
+            if (removed == null) s else s.copy(entries = s.entries.filterNot { it.id == entryId })
+        }
+        val entry = removed ?: return
+        uploadJobs.remove(entryId)?.cancel()
+        scope.launch {
+            deleteLocalPhoto(entry.photo)
+            val jobId = entry.jobId ?: return@launch
+            if (entry.sharesJob) {
+                // Deleting the job would take the other photos in it too.
+                mutableState.update { it.copy(message = "Removed from this list. It is part of a bigger scan, so your server still has it.") }
+                return@launch
+            }
+            attempt { backend.deleteScanJob(jobId) }.onFailure { error ->
+                // Already gone is what was wanted.
+                if (error is HttpException && error.code() == 404) return@onFailure
+                mutableState.update {
+                    it.copy(message = "Removed from this list, but your server couldn't be told: ${describe(error)} It may come back.")
+                }
+            }
+        }
+    }
+
+    /** Cancels every photo that is still being sent or read, leaving the ones that are ready for review. */
+    fun cancelUnfinished() {
+        mutableState.value.entries.filter { it.isInFlight }.forEach { cancel(it.id) }
     }
 
     /** Clears the cards that are already added or skipped, leaving the ones that still need attention. */
@@ -250,12 +307,15 @@ class ScanSession(
 
     fun skip(entryId: Long) {
         val entry = find(entryId) ?: return
-        val jobId = entry.jobId
-        val item = entry.item
-        if (jobId == null || item == null) {
-            discard(entryId)
+        // The server refuses to resolve a scan it is still working on ("still being processed"), so skipping one of
+        // those, or a photo that never arrived, means giving up on it.
+        if (entry.isInFlight || entry.tileState() == TileState.SEND_FAILED) {
+            cancel(entryId)
             return
         }
+        val jobId = entry.jobId
+        val item = entry.item
+        if (jobId == null || item == null) return
         if (entry.busy || entry.outcome != null) return
         update(entryId) { it.copy(busy = true, error = null) }
         scope.launch {
@@ -294,11 +354,12 @@ class ScanSession(
         var failure: Throwable? = null
         for (tryNumber in 0..uploadRetryMs.size) {
             if (tryNumber > 0) delay(uploadRetryMs[tryNumber - 1])
-            if (find(entryId) == null) return // discarded while waiting
+            if (find(entryId) == null) return // cancelled while waiting
             val result = attempt { backend.enqueue(photo) }
             val job = result.getOrNull()
             if (job != null) {
-                markSent(entryId, photo, job)
+                // The server has the photo now, so that gets recorded even if the user cancels at this very moment.
+                withContext(NonCancellable) { markSent(entryId, photo, job) }
                 return
             }
             failure = result.exceptionOrNull()
@@ -314,7 +375,19 @@ class ScanSession(
             val sent = File(photo.parentFile, "sent-" + photo.name.removePrefix("scan-"))
             if (photo.renameTo(sent)) sent else photo
         }
-        update(entryId) { it.copy(upload = Upload.SENT, jobId = job.id, photo = kept) }
+        var recorded = false
+        mutableState.update { s ->
+            recorded = s.entries.any { it.id == entryId }
+            s.copy(entries = s.entries.map {
+                if (it.id == entryId) it.copy(upload = Upload.SENT, jobId = job.id, photo = kept, since = clock()) else it
+            })
+        }
+        if (!recorded) {
+            // Cancelled while the photo was on its way: don't leave the scan behind on the server.
+            attempt { backend.deleteScanJob(job.id) }
+            deleteLocalPhoto(kept)
+            return
+        }
         ensurePolling()
     }
 
@@ -345,9 +418,19 @@ class ScanSession(
                         if (error is HttpException && error.code() == 404) dropJob(jobId) else failed = true
                     }
             }
+            markSlow()
             val working = mutableState.value.entries.filter { it.isWorking }
             val onlyWaiting = working.isNotEmpty() && working.all { it.tileState() == TileState.WAITING }
             delay(if (failed) errorPollMs else if (onlyWaiting) waitingPollMs else pollMs)
+        }
+    }
+
+    /** Flags photos the server has been "working on" for a long time without any change. */
+    private fun markSlow() {
+        val now = clock()
+        fun ScanEntry.stuck() = isWorking && !slow && now - since >= slowAfterMs
+        mutableState.update { s ->
+            if (s.entries.none { it.stuck() }) s else s.copy(entries = s.entries.map { if (it.stuck()) it.copy(slow = true) else it })
         }
     }
 
@@ -365,10 +448,15 @@ class ScanSession(
                     fresh == null -> entry
                     // Handled somewhere else (the web app): nothing left to do here.
                     fresh.resolved && entry.outcome == null -> null
-                    else -> entry.copy(
-                        item = fresh,
-                        candidate = entry.candidate.coerceIn(0, (fresh.matches.size - 1).coerceAtLeast(0)),
-                    )
+                    else -> {
+                        val moved = entry.item?.status != fresh.status
+                        entry.copy(
+                            item = fresh,
+                            candidate = entry.candidate.coerceIn(0, (fresh.matches.size - 1).coerceAtLeast(0)),
+                            since = if (moved) clock() else entry.since,
+                            slow = if (moved) false else entry.slow,
+                        )
+                    }
                 }
             },
         )

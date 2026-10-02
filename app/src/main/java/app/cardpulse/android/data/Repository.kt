@@ -132,7 +132,7 @@ class Repository(
 
     override suspend fun retry(jobId: Int, itemId: Int): ScanItemDto = api.retry(jobId, itemId)
 
-    suspend fun deleteScanJob(jobId: Int) {
+    override suspend fun deleteScanJob(jobId: Int) {
         api.deleteScanJob(jobId)
     }
 

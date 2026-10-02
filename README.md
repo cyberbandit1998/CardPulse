@@ -50,7 +50,8 @@ The app warns you if it connects to a server in single-user mode.
 - **Rapid scan:** the camera stays open while you work through a pile. Each photo is sent to your server the moment
   it is taken and read in the background (up to three at once), so you can photograph the next card straight away.
   Results collect in a tray along the bottom. Photos are kept on the phone until they upload, so a dropped connection or
-  a closed app doesn't lose a card, and scans left on the server are picked up again.
+  a closed app doesn't lose a card, and scans left on the server are picked up again. A scan that keeps spinning can be
+  cancelled from its tile; that also deletes it on your server.
 - **Check before adding:** tap a result to see your photo beside the match, then confirm the condition, variant,
   language, quantity and purchase price it will be added with. One tap adds it and the next waiting result opens. The
   condition and variant you used last are suggested for the next card.

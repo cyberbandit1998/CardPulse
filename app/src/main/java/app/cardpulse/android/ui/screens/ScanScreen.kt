@@ -65,6 +65,7 @@ import app.cardpulse.android.core.ScanEntry
 import app.cardpulse.android.core.SessionState
 import app.cardpulse.android.core.TileState
 import app.cardpulse.android.core.inFlight
+import app.cardpulse.android.core.isInFlight
 import app.cardpulse.android.core.ownershipOf
 import app.cardpulse.android.core.tileState
 import app.cardpulse.android.core.toReview
@@ -209,6 +210,9 @@ class RapidActions(
     val add: (Long) -> Unit = {},
     val skip: (Long) -> Unit = {},
     val retry: (Long) -> Unit = {},
+    /** Gives up on a photo that is still being sent or read. */
+    val cancel: (Long) -> Unit = {},
+    val cancelAll: () -> Unit = {},
     val dismissMessage: () -> Unit = {},
 )
 
@@ -274,6 +278,8 @@ private fun RapidScreen(app: AppState, scan: ScanState, session: SessionState, v
                 val state = session.entries.firstOrNull { it.id == id }?.tileState()
                 if (state == TileState.SEND_FAILED) vm.resend(id) else vm.retryItem(id)
             },
+            cancel = vm::cancel,
+            cancelAll = vm::cancelUnfinished,
             dismissMessage = vm::dismissMessage,
         ),
         modifier = modifier,
@@ -381,11 +387,14 @@ fun RapidScreenContent(
                 currency = currency,
                 rateFromEur = rateFromEur,
                 othersWaiting = entries.count { it.tileState() == TileState.READY && it.id != open.id },
+                othersInFlight = entries.count { it.isInFlight && it.id != open.id },
                 onSelectCandidate = { actions.select(open.id, it) },
                 onEdits = { actions.edits(open.id, it) },
                 onAdd = { actions.add(open.id) },
                 onSkip = { actions.skip(open.id) },
                 onRetry = { actions.retry(open.id) },
+                onCancel = { actions.cancel(open.id) },
+                onCancelAll = actions.cancelAll,
                 onClose = actions.closePanel,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
