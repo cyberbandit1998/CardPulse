@@ -14,6 +14,10 @@ on:
         description: "Also draw every screen to a picture (see the ci-screens branch)"
         type: boolean
         default: false
+      notes_for:
+        description: "Only rewrite the What's new text of an existing release (for example build-34) from .github/release-notes.md. Nothing is built."
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -24,6 +28,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name != 'workflow_dispatch' || inputs.notes_for == ''
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -136,6 +141,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - uses: actions/download-artifact@v4
         with:
           name: cardpulse-debug-apk
@@ -169,9 +178,41 @@ jobs:
               echo "Signing certificate SHA-256: \`${CERT_SHA256}\` (Android only updates an app in place when this matches the installed one.)"
             fi
           } > notes.md
+          # What changed in this build, written by hand in .github/release-notes.md.
+          if [ -s .github/release-notes.md ]; then
+            python3 .github/scripts/whats_new.py notes.md .github/release-notes.md > notes-with-news.md
+            mv notes-with-news.md notes.md
+          fi
           gh release create "$tag" "$apk" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --prerelease \
             --title "CardPulse debug build ${tag}" \
             --notes-file notes.md
+
+  # Started by hand with "notes_for" set to a tag: puts the current .github/release-notes.md into that release's
+  # page (replacing an earlier What's new section), leaving the install text and checksums alone. Builds nothing.
+  notes:
+    if: github.event_name == 'workflow_dispatch' && inputs.notes_for != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Update the release page
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.notes_for }}
+        run: |
+          # Only the debug builds this workflow publishes, the same rule the clean-up workflow follows.
+          if ! [[ "$TAG" =~ ^build-[0-9]+$ ]]; then
+            echo "::error::Only build-<number> releases can be edited here, not '$TAG'."
+            exit 1
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body > current.md
+          python3 .github/scripts/whats_new.py current.md .github/release-notes.md > updated.md
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file updated.md
+          echo "Updated the notes of $TAG." | tee -a "$GITHUB_STEP_SUMMARY"

@@ -74,6 +74,8 @@ Every successful build on GitHub produces a debug APK:
 
 Android will ask to allow "Install unknown apps" for the app you opened the file from.
 
+Each release page starts with what is new in that build.
+
 Until you set up a signing key (next section), debug builds from CI are signed with a throwaway key that changes on
 every build, so Android will not update one in place: **uninstall the old build first** (the saved server address and
 sign-in go with it).
