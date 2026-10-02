@@ -116,7 +116,7 @@ fun CameraPreview(controller: CaptureController, modifier: Modifier = Modifier) 
 
 /** A rounded rectangle with a playing card's proportions (63 x 88 mm), centred in the view. */
 @Composable
-private fun CardGuide(modifier: Modifier = Modifier) {
+internal fun CardGuide(modifier: Modifier = Modifier) {
     Canvas(modifier) {
         val ratio = 63f / 88f
         val maxWidth = size.width * 0.78f

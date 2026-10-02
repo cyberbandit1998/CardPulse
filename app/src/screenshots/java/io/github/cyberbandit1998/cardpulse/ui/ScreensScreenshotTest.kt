@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import io.github.cyberbandit1998.cardpulse.camera.CardGuide
 import io.github.cyberbandit1998.cardpulse.core.AddEdits
 import io.github.cyberbandit1998.cardpulse.core.CollectionIndex
 import io.github.cyberbandit1998.cardpulse.core.CollectionItemDto
@@ -182,6 +183,7 @@ class ScreensScreenshotTest {
     private fun CameraStandIn() {
         Box(Modifier.fillMaxSize().background(Color(0xFF2B3A33)), contentAlignment = Alignment.Center) {
             Text("(live camera)", color = Color(0x88FFFFFF))
+            CardGuide(Modifier.fillMaxSize())
         }
     }
 
