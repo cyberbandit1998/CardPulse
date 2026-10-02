@@ -57,11 +57,12 @@ of your own and every later build will install straight over the last, keeping t
 1. **Make the key** once, on a computer with Java (`keytool` comes with it):
 
    ```
-   keytool -genkeypair -v -keystore cardpulse.jks -storetype PKCS12 -alias cardpulse -keyalg RSA -keysize 4096 -validity 10000
+   keytool -genkeypair -v -keystore cardpulse.jks -storetype PKCS12 -alias cardpulse -keyalg RSA -keysize 4096 -validity 10000 -dname "CN=CardPulse"
    ```
 
-   Choose a password when asked, and keep `cardpulse.jks` and that password somewhere safe, such as a password
-   manager. GitHub never shows a secret again, and replacing the key later means one more reinstall.
+   It asks for a password twice (nothing shows as you type). Keep `cardpulse.jks` and that password somewhere safe,
+   such as a password manager. GitHub never shows a secret again, and replacing the key later means one more reinstall.
+   If the command isn't found, install a JDK (17 or newer) first.
 
 2. **Turn the file into text** and copy it:
    - macOS: `base64 -i cardpulse.jks | pbcopy`
