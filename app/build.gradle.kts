@@ -9,6 +9,10 @@ plugins {
 // same key install over each other; without it (local builds, forks) the usual throwaway debug key is used.
 val fixedKeystore: String? = System.getenv("CARDPULSE_KEYSTORE_PATH")
 
+// ./gradlew :app:testDebugUnitTest -Pscreenshots draws every screen to a PNG (src/screenshots). That needs an Android
+// runtime on the JVM, so none of it is set up unless asked for: normal builds, tests and the APK stay exactly as they were.
+val screenshots = project.hasProperty("screenshots")
+
 android {
     namespace = "io.github.cyberbandit1998.cardpulse"
     compileSdk = 36
@@ -53,6 +57,14 @@ android {
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
+
+    if (screenshots) {
+        testOptions {
+            // The screenshot tests run the real screens on the JVM (Robolectric), which needs the app's resources.
+            unitTests.isIncludeAndroidResources = true
+        }
+        sourceSets.getByName("test").java.srcDir("src/screenshots/java")
+    }
 }
 
 kotlin {
@@ -63,6 +75,12 @@ kotlin {
 
 // CI shows the build log rather than the HTML report, so print why a test failed right there.
 tasks.withType<Test>().configureEach {
+    if (screenshots) {
+        // Only the screenshot tests: the ordinary ones already ran in the step before.
+        filter.includeTestsMatching("*ScreenshotTest")
+        systemProperty("screens.dir", layout.buildDirectory.dir("screens").get().asFile.path)
+        maxHeapSize = "2g"
+    }
     testLogging {
         events("failed")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
@@ -105,4 +123,13 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:5.1.0")
+
+    if (screenshots) {
+        // The manifest piece registers a test activity; it must never be part of the APK people install.
+        debugImplementation("androidx.compose.ui:ui-test-manifest")
+        testImplementation("androidx.compose.ui:ui-test-junit4")
+        testImplementation("androidx.test.ext:junit:1.2.1")
+        testImplementation("androidx.test:core:1.6.1")
+        testImplementation("org.robolectric:robolectric:4.14.1")
+    }
 }

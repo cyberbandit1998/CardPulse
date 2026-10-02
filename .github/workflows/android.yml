@@ -10,6 +10,10 @@ on:
         description: "Also publish the debug APK as a GitHub pre-release (a link you can tap on a phone)"
         type: boolean
         default: false
+      screenshots:
+        description: "Also draw every screen to a picture (see the ci-screens branch)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -75,6 +79,54 @@ jobs:
           name: cardpulse-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+  # Draws every screen with fake data (src/screenshots) and keeps the pictures on the ci-screens branch, which is
+  # rewritten each time, so layout and colour problems can be looked at without a phone. Runs on pushes to claude/*
+  # branches or when asked for. It never decides whether the build is good: the APK doesn't wait for it, and a failure
+  # here doesn't fail the run.
+  screenshots:
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/claude/')) || (github.event_name == 'workflow_dispatch' && inputs.screenshots)
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Draw the screens
+        run: ./gradlew --no-daemon :app:testDebugUnitTest -Pscreenshots
+
+      - name: Keep the pictures with the run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screens
+          path: app/build/screens
+          if-no-files-found: ignore
+
+      - name: Put the pictures on the ci-screens branch
+        if: always() && hashFiles('app/build/screens/*.png') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          dir=$(mktemp -d)
+          cp app/build/screens/*.png "$dir"/
+          cd "$dir"
+          git init -q -b ci-screens
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -q -m "Screens of ${GITHUB_SHA::7} (${GITHUB_REF_NAME})"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-screens
 
   # Only runs when started by hand with "publish" ticked. Pre-releases are public, so this is opt-in.
   release:

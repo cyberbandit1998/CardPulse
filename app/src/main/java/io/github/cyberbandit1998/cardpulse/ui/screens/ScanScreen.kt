@@ -92,24 +92,49 @@ fun ScanScreen(app: AppState, vm: ScanViewModel, modifier: Modifier = Modifier) 
 private fun ScanHome(scan: ScanState, session: SessionState, vm: ScanViewModel, modifier: Modifier) {
     LaunchedEffect(Unit) { vm.refresh() }
     val ready = session.toReview.size
-    val reading = session.inFlight
-    val attention = session.entries.count {
-        when (it.tileState()) {
-            TileState.NO_MATCH, TileState.FAILED, TileState.SEND_FAILED -> true
-            else -> false
-        }
-    }
+    ScanHomeContent(
+        ready = ready,
+        reading = session.inFlight,
+        attention = session.entries.count {
+            when (it.tileState()) {
+                TileState.NO_MATCH, TileState.FAILED, TileState.SEND_FAILED -> true
+                else -> false
+            }
+        },
+        message = session.message ?: scan.message,
+        savePhotos = scan.prefs.savePhotos,
+        onStart = { vm.startRapid() },
+        onReview = { vm.startRapid(reviewFirst = ready > 0) },
+        onSavePhotos = vm::setSavePhotos,
+        onDismissMessage = vm::dismissMessage,
+        modifier = modifier,
+    )
+}
 
+/** What the scan tab shows before the camera is open: start, pick up what is waiting, and the options. */
+@Composable
+fun ScanHomeContent(
+    ready: Int,
+    reading: Int,
+    attention: Int,
+    message: String?,
+    savePhotos: Boolean,
+    onStart: () -> Unit,
+    onReview: () -> Unit,
+    onSavePhotos: (Boolean) -> Unit,
+    onDismissMessage: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item { Text("Scan cards", style = MaterialTheme.typography.headlineMedium) }
-        (session.message ?: scan.message)?.let { item { Banner(it, isError = true, onDismiss = vm::dismissMessage) } }
+        message?.let { item { Banner(it, isError = true, onDismiss = onDismissMessage) } }
 
         item {
-            Button(onClick = { vm.startRapid() }, modifier = Modifier.fillMaxWidth()) {
+            Button(onClick = onStart, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.PhotoCamera, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("Start rapid scan")
@@ -124,7 +149,7 @@ private fun ScanHome(scan: ScanState, session: SessionState, vm: ScanViewModel, 
                         if (ready > 0) Text(if (ready == 1) "1 card is ready to add" else "$ready cards are ready to add")
                         if (reading > 0) Text("$reading still being read", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (attention > 0) Text("$attention need a look", color = MaterialTheme.colorScheme.error)
-                        OutlinedButton(onClick = { vm.startRapid(reviewFirst = ready > 0) }) {
+                        OutlinedButton(onClick = onReview) {
                             Text(if (ready > 0) "Review $ready" else "Open results")
                         }
                     }
@@ -139,8 +164,8 @@ private fun ScanHome(scan: ScanState, session: SessionState, vm: ScanViewModel, 
                     OptionRow(
                         title = "Keep my photo with every card",
                         detail = "Otherwise your photo is kept only for cards that have no official artwork, as in the PokéCollector web app.",
-                        checked = scan.prefs.savePhotos,
-                        onChange = vm::setSavePhotos,
+                        checked = savePhotos,
+                        onChange = onSavePhotos,
                     )
                 }
             }
