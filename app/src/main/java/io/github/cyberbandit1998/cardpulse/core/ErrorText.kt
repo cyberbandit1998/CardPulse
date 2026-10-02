@@ -32,7 +32,10 @@ fun Throwable.userMessage(): String = when (this) {
 }
 
 private fun HttpException.httpMessage(): String {
-    val detail = runCatching { errorDetailFromBody(response()?.errorBody()?.string().orEmpty()) }.getOrNull()
+    // peek(): reading the body normally uses it up, and the same error is often described more than once.
+    val detail = runCatching {
+        errorDetailFromBody(response()?.errorBody()?.source()?.peek()?.readUtf8().orEmpty())
+    }.getOrNull()
     return when (val status = code()) {
         401 -> detail ?: "Your session has expired. Sign in again."
         403 -> detail ?: "You don't have permission to do that."

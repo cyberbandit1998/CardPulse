@@ -78,7 +78,6 @@ fun CardPulseApp(
                     scan = scan,
                     onBack = { showSettings = false },
                     onSignOut = { showSettings = false; appVm.signOut() },
-                    onIndividual = scanVm::setIndividual,
                     onSavePhotos = scanVm::setSavePhotos,
                     modifier = Modifier.padding(padding),
                 )
@@ -86,9 +85,9 @@ fun CardPulseApp(
         }
 
         else -> {
-            val onScanTab = tab == Tab.SCAN.ordinal
-            val inCameraOrReview = onScanTab && scan.stage != ScanStage.HOME
-            val fullScreenCamera = onScanTab && scan.stage == ScanStage.CAPTURE
+            // The open camera uses the whole screen: no tab bar, and it shows its own messages.
+            val fullScreenCamera = tab == Tab.SCAN.ordinal && scan.stage == ScanStage.RAPID
+            val inCameraOrReview = fullScreenCamera
             Scaffold(
                 bottomBar = {
                     // The camera and the review screen use the whole screen.

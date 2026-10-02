@@ -14,6 +14,7 @@ import io.github.cyberbandit1998.cardpulse.core.PortfolioRange
 import io.github.cyberbandit1998.cardpulse.core.ResolveAndAddRequest
 import io.github.cyberbandit1998.cardpulse.core.ResolveAndAddResponse
 import io.github.cyberbandit1998.cardpulse.core.ResolveRequest
+import io.github.cyberbandit1998.cardpulse.core.ScanBackend
 import io.github.cyberbandit1998.cardpulse.core.ScanItemDto
 import io.github.cyberbandit1998.cardpulse.core.ScanJobDto
 import io.github.cyberbandit1998.cardpulse.core.SnapshotDto
@@ -40,7 +41,7 @@ class Repository(
     private val api: PokeApi,
     private val session: SessionHolder,
     private val json: Json = AppJson,
-) {
+) : ScanBackend {
     // --- connection and sign-in ---------------------------------------------------------------
 
     /** Points the app at [serverUrl] and confirms it really is a PokéCollector server. */
@@ -115,27 +116,31 @@ class Repository(
         return api.enqueueScan(parts)
     }
 
-    suspend fun scanJobs(): List<ScanJobDto> = api.scanJobs().jobs
+    /** One photo as its own job, so the server starts reading it straight away (rapid scanning). */
+    override suspend fun enqueue(photo: File): ScanJobDto = enqueueScan(listOf(photo), individual = true)
 
-    suspend fun scanJob(jobId: Int): ScanJobDto = api.scanJob(jobId)
+    override suspend fun scanJobs(): List<ScanJobDto> = api.scanJobs().jobs
 
-    suspend fun resolveAndAdd(jobId: Int, itemId: Int, request: ResolveAndAddRequest): ResolveAndAddResponse =
+    override suspend fun scanJob(jobId: Int): ScanJobDto = api.scanJob(jobId)
+
+    override suspend fun resolveAndAdd(jobId: Int, itemId: Int, request: ResolveAndAddRequest): ResolveAndAddResponse =
         api.resolveAndAdd(jobId, itemId, request)
 
     /** Marks a photo handled without adding anything. */
-    suspend fun skip(jobId: Int, itemId: Int): ScanItemDto = api.resolve(jobId, itemId, ResolveRequest(cardId = null))
+    override suspend fun skip(jobId: Int, itemId: Int): ScanItemDto =
+        api.resolve(jobId, itemId, ResolveRequest(cardId = null))
 
-    suspend fun retry(jobId: Int, itemId: Int): ScanItemDto = api.retry(jobId, itemId)
+    override suspend fun retry(jobId: Int, itemId: Int): ScanItemDto = api.retry(jobId, itemId)
 
     suspend fun deleteScanJob(jobId: Int) {
         api.deleteScanJob(jobId)
     }
 
     /** The server's sanitized copy of a queued photo. It is deleted once the item is resolved. */
-    suspend fun scanPhotoBytes(jobId: Int, itemId: Int): ByteArray =
+    override suspend fun scanPhotoBytes(jobId: Int, itemId: Int): ByteArray =
         api.scanItemImage(jobId, itemId).use { it.bytes() }
 
-    suspend fun uploadOwnerPhoto(collectionItemId: Int, jpeg: ByteArray) {
+    override suspend fun uploadOwnerPhoto(collectionItemId: Int, jpeg: ByteArray) {
         val part = MultipartBody.Part.createFormData("file", "photo.jpg", jpeg.toRequestBody(JPEG))
         api.uploadCollectionPhoto(collectionItemId, part)
     }

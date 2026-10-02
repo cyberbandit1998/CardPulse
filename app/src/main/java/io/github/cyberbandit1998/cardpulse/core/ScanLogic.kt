@@ -63,19 +63,31 @@ data class AddEdits(
     val quantity: Int = 1,
     val condition: String = "NM",
     val variant: String = "Normal",
+    /** The language to add the card in; null keeps the language the scanner found. */
+    val lang: String? = null,
     val purchasePrice: Double? = null,
 )
 
+/** "×2 · NM · Normal · EN": the choices, in a line short enough for a button. */
+fun AddEdits.summary(scannedLang: String): String =
+    "×$quantity · $condition · $variant · ${CardLanguages.label(CardLanguages.normalize(lang) ?: scannedLang)}"
+
 /**
  * Builds the body for `resolve-and-add`. The server requires `card_id` (with the language suffix)
- * and `confirmed_card_id` (without it) to describe the same candidate it returned.
+ * and `confirmed_card_id` (without it) to describe the same candidate it returned. A different
+ * language swaps the suffix: the server then adds that language's version of the card.
  */
-fun ScanMatchDto.toAddRequest(edits: AddEdits): ResolveAndAddRequest = ResolveAndAddRequest(
-    cardId = id,
-    confirmedCardId = tcgCardId ?: id.substringBeforeLast('_'),
-    quantity = edits.quantity.coerceIn(1, 999),
-    condition = edits.condition,
-    variant = edits.variant,
-    purchasePrice = edits.purchasePrice?.takeIf { it >= 0.0 },
-    lang = lang ?: id.substringAfterLast('_', "en"),
-)
+fun ScanMatchDto.toAddRequest(edits: AddEdits): ResolveAndAddRequest {
+    val scanned = scannedLanguage()
+    val language = CardLanguages.normalize(edits.lang) ?: scanned
+    val plain = plainCardId()
+    return ResolveAndAddRequest(
+        cardId = if (language == scanned) id else "${plain}_$language",
+        confirmedCardId = plain,
+        quantity = edits.quantity.coerceIn(1, 999),
+        condition = edits.condition,
+        variant = edits.variant,
+        purchasePrice = edits.purchasePrice?.takeIf { it >= 0.0 },
+        lang = language,
+    )
+}

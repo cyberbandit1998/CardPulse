@@ -219,6 +219,14 @@ class ErrorTextTest {
     }
 
     @Test
+    fun `describing the same error twice gives the same words`() {
+        // The body can only be read once, so a second description used to fall back to the generic text.
+        val error = http(409, """{"detail":"This scan has already been handled."}""")
+        assertEquals("This scan has already been handled.", error.userMessage())
+        assertEquals("This scan has already been handled.", error.userMessage())
+    }
+
+    @Test
     fun `proxy and server failures are explained`() {
         assertTrue(http(524).userMessage().contains("unreachable or too slow"))
         assertTrue(http(502, "<html>").userMessage().contains("HTTP 502"))

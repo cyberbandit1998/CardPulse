@@ -20,8 +20,6 @@ data class StoredSession(
 
 /** Choices that carry over between scans. */
 data class ScanPrefs(
-    /** Read each photo on its own (more accurate) instead of letting the server batch them (saves quota). */
-    val individual: Boolean = true,
     /** Keep my photo with every card I add, not only cards that have no official artwork. */
     val savePhotos: Boolean = false,
     val condition: String = "NM",
@@ -35,7 +33,6 @@ class SessionStore(private val context: Context, private val cipher: TokenCipher
         val token = stringPreferencesKey("token_encrypted")
         val username = stringPreferencesKey("username")
         val noLogin = booleanPreferencesKey("no_login")
-        val individual = booleanPreferencesKey("scan_individual")
         val savePhotos = booleanPreferencesKey("scan_save_photos")
         val condition = stringPreferencesKey("scan_condition")
         val variant = stringPreferencesKey("scan_variant")
@@ -69,7 +66,6 @@ class SessionStore(private val context: Context, private val cipher: TokenCipher
         val prefs = context.dataStore.data.first()
         val defaults = ScanPrefs()
         return ScanPrefs(
-            individual = prefs[Keys.individual] ?: defaults.individual,
             savePhotos = prefs[Keys.savePhotos] ?: defaults.savePhotos,
             condition = prefs[Keys.condition] ?: defaults.condition,
             variant = prefs[Keys.variant] ?: defaults.variant,
@@ -78,7 +74,6 @@ class SessionStore(private val context: Context, private val cipher: TokenCipher
 
     suspend fun saveScanPrefs(scan: ScanPrefs) {
         context.dataStore.edit { prefs ->
-            prefs[Keys.individual] = scan.individual
             prefs[Keys.savePhotos] = scan.savePhotos
             prefs[Keys.condition] = scan.condition
             prefs[Keys.variant] = scan.variant

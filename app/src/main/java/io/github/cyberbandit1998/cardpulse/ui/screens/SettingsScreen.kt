@@ -37,7 +37,6 @@ fun SettingsScreen(
     scan: ScanState,
     onBack: () -> Unit,
     onSignOut: () -> Unit,
-    onIndividual: (Boolean) -> Unit,
     onSavePhotos: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -59,12 +58,6 @@ fun SettingsScreen(
             }
 
             Section("Scanning") {
-                ToggleRow(
-                    "Read each card on its own",
-                    "More accurate. Turn off to let your server combine several photos into one request and save scanner quota.",
-                    scan.prefs.individual,
-                    onIndividual,
-                )
                 ToggleRow(
                     "Keep my photo with every card",
                     "Otherwise your photo is kept only for cards that have no official artwork.",
