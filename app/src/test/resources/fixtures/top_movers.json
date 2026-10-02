@@ -1,0 +1,67 @@
+[
+  {
+    "collection_item_id": 1,
+    "card_id": "sv3-125_en",
+    "name": "Charizard ex",
+    "images_small": "https://assets.tcgdex.net/en/sv/sv3/125/low.webp",
+    "rarity": "Double Rare",
+    "is_custom": false,
+    "has_scan_photo": false,
+    "current_price": 8.5,
+    "old_price": 7.65,
+    "change_abs": 0.85,
+    "change_pct": 11.1
+  },
+  {
+    "collection_item_id": 3,
+    "card_id": "sv3-001_en",
+    "name": "Oddish",
+    "images_small": "https://assets.tcgdex.net/en/sv/sv3/001/low.webp",
+    "rarity": "Common",
+    "is_custom": false,
+    "has_scan_photo": true,
+    "current_price": 0.12,
+    "old_price": 0.11,
+    "change_abs": 0.01,
+    "change_pct": 11.1
+  },
+  {
+    "collection_item_id": 4,
+    "card_id": "sv1-198_en",
+    "name": "Miraidon ex",
+    "images_small": "https://assets.tcgdex.net/en/sv/sv1/198/low.webp",
+    "rarity": "Double Rare",
+    "is_custom": false,
+    "has_scan_photo": false,
+    "current_price": 2.4,
+    "old_price": 2.16,
+    "change_abs": 0.24,
+    "change_pct": 11.1
+  },
+  {
+    "collection_item_id": 5,
+    "card_id": "sv3-125_de",
+    "name": "Glurak-ex",
+    "images_small": "https://assets.tcgdex.net/de/sv/sv3/125/low.webp",
+    "rarity": "Double Rare",
+    "is_custom": false,
+    "has_scan_photo": false,
+    "current_price": 7.9,
+    "old_price": 7.11,
+    "change_abs": 0.79,
+    "change_pct": 11.1
+  },
+  {
+    "collection_item_id": 6,
+    "card_id": "sv9-999_en",
+    "name": "Promo Without Art",
+    "images_small": null,
+    "rarity": "Promo",
+    "is_custom": false,
+    "has_scan_photo": true,
+    "current_price": 1.0,
+    "old_price": 0.9,
+    "change_abs": 0.1,
+    "change_pct": 11.1
+  }
+]

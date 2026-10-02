@@ -1,0 +1,45 @@
+{
+  "id": 2,
+  "position": 1,
+  "batch_mode": false,
+  "status": "done",
+  "resolved": true,
+  "attempts": 1,
+  "transient_failures": 0,
+  "recognized": {
+    "name": "Charizard ex",
+    "name_en": "Charizard ex",
+    "number_local": "125",
+    "number_total": "197",
+    "set_code": "OBF",
+    "regulation_mark": "G",
+    "card_type": "Pokemon",
+    "hp": "330",
+    "language": "en",
+    "artist": "5ban Graphics"
+  },
+  "matches": [
+    {
+      "id": "sv3-125_en",
+      "tcg_card_id": "sv3-125",
+      "name": "Charizard ex",
+      "card_type": "Pokemon",
+      "set": "Obsidian Flames",
+      "number": "125",
+      "image": "https://assets.tcgdex.net/en/sv/sv3/125/low.webp",
+      "image_hd": "https://assets.tcgdex.net/en/sv/sv3/125/high.webp",
+      "rarity": "Double Rare",
+      "lang": "en",
+      "_lang": "en",
+      "set_abbreviation": "OBF",
+      "printed_total": 197,
+      "printed_total_mismatch": false
+    }
+  ],
+  "error": null,
+  "has_image": false,
+  "next_attempt_at": null,
+  "retry_reason": null,
+  "created_at": "2026-10-02T14:29:24",
+  "updated_at": "2026-10-02T14:29:26.991792"
+}

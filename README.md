@@ -1,58 +1,70 @@
 # Pokémon Scanner for Android
 
 An unofficial Android companion for a self-hosted
-[PokéCollector](https://github.com/Git-Romer/pokecollector) server. It lets you
-browse your collection, see your portfolio value, and scan cards with the
-phone camera. Recognition is done by your own PokéCollector server; the phone
-only captures and uploads the photo.
+[PokéCollector](https://github.com/Git-Romer/pokecollector) server. Browse your collection, watch your
+portfolio value, and scan cards with the phone camera. Recognition is done by **your own** PokéCollector
+server; the phone only takes the photos and uploads them.
 
-> **Status: early development.** The first source drop was machine-generated and
-> is being reworked against the real PokéCollector API. Expect rough edges.
+> **Status: early development.** Built and checked against PokéCollector 1.51.0. Newer or older servers should
+> mostly work (unknown fields are ignored) but are untested.
 
 ## Connecting to your server
 
-The app has **no built-in server address**. The first time you open it, enter the
-`https://` address of your own PokéCollector server on the sign-in screen, then
-your username and password. The address is saved on the phone only; you can edit
-it on the sign-in screen at any time.
-
-Only HTTPS addresses are accepted.
+The app has **no built-in server address**. On first launch, enter the `https://` address of your own
+PokéCollector server, then your username and password. The address is stored on the phone only. Plain `http://`
+is refused.
 
 ### Before you expose a server to the internet
 
-PokéCollector's *single-user mode* has no authentication: every client that can
-reach it is treated as the administrator. If the server is reachable from the
-internet (for example through a tunnel or reverse proxy), turn on **Multi-User
-Mode** first, and set a known admin password **before** enabling it. See the
-PokéCollector README for the exact steps.
+PokéCollector's *single-user mode* has no authentication: every client that can reach it is treated as the
+administrator. If the server is reachable from the internet (a tunnel, a reverse proxy, port forwarding), turn on
+**Multi-User Mode** first, and set a known admin password **before** enabling it. See the PokéCollector README.
+The app warns you if it connects to a server in single-user mode.
 
-## Features (v0.1 baseline)
+## What it does
 
-- Sign in with a PokéCollector username and password
-- Collection gallery
-- Portfolio value and a simple chart
-- Camera capture, recognition through your server, and add-to-collection
+- **Scan:** a live camera view with a card-shaped guide. Take photos of up to 50 cards, send them as one job,
+  and review the results on a screen that shows your photo beside each candidate. Add with one tap, or edit
+  quantity, condition, variant and price first. Photos are kept on the phone until they upload, so a dropped
+  connection or a closed app doesn't lose a batch, and scans left on the server can be resumed later.
+- **Collection:** search and sort your whole collection, with official artwork or your own photos (following the
+  "prefer my own photos" setting of your PokéCollector account).
+- **Portfolio:** total value, gain or loss, a history chart (1W to All), a breakdown, and the week's biggest movers.
+  Amounts are shown in the currency chosen in your PokéCollector account.
 
-## Build
+PokéCollector counts a card with no purchase price as zero cost, so its gain figures look larger than they are
+until prices are filled in. The app says so when that applies.
 
-**Android Studio:** open this folder, let Gradle sync, run on a device.
+## Install
 
-**GitHub Actions:** every push builds a debug APK. Open the repository's
-*Actions* tab, pick the latest run, and download the `pokemonscanner-debug-apk`
-artifact. To install it, allow "install unknown apps" for the app you use to open
-the file.
+Every successful build on GitHub produces a debug APK:
 
-Debug builds from CI are signed with a throwaway key that changes between runs,
-so Android will ask you to uninstall the previous build before installing a newer
-one (the saved server address and sign-in are lost when you do).
+- **Easiest:** open the repository's **Releases** page on your phone, pick the newest *Debug build*, tap the `.apk`.
+  (Releases are created on request; ask or run the *Android CI* workflow with "publish" ticked.)
+- Or open the **Actions** tab, pick the latest run, and download the `pokemonscanner-debug-apk` artifact.
+
+Android will ask to allow "Install unknown apps" for the app you opened the file from.
+
+Debug builds from CI are signed with a throwaway key that changes on every build, so Android will not update one
+in place: **uninstall the old build first** (the saved server address and sign-in go with it).
+
+## Build it yourself
+
+Android Studio (current stable): open this folder, let Gradle sync, run on a device. Or from a shell with JDK 17:
+
+```
+./gradlew :app:testDebugUnitTest :app:assembleDebug
+```
+
+The unit tests decode real responses captured from PokéCollector's own API code
+(`app/src/test/resources/fixtures`) and run the HTTP stack against a local mock server, so a change in the server's
+API shows up as a failing test.
 
 ## Security notes
 
-- Use HTTPS. Plain HTTP is blocked by the app.
-- The sign-in token is currently kept in app storage without extra encryption;
-  hardening this is on the to-do list.
-- Never commit signing keys (`*.jks`, `*.keystore`) or credentials; they are
-  git-ignored.
+- The sign-in token is stored encrypted with a key in the Android Keystore, and excluded from backups.
+- The token is only ever sent to the server address you entered, never to other hosts (card art CDNs, etc.).
+- Never commit signing keys (`*.jks`, `*.keystore`) or credentials; they are git-ignored.
 
 ## License
 

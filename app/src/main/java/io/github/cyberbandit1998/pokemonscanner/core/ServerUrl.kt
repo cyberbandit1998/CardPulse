@@ -1,4 +1,4 @@
-package io.github.cyberbandit1998.pokemonscanner.data
+package io.github.cyberbandit1998.pokemonscanner.core
 
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 

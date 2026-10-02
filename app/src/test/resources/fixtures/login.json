@@ -1,0 +1,11 @@
+{
+  "access_token": "fixture-token-not-a-real-credential",
+  "token_type": "bearer",
+  "user": {
+    "id": 1,
+    "username": "admin",
+    "role": "admin",
+    "avatar_id": 25,
+    "must_change_password": false
+  }
+}

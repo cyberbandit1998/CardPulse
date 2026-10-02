@@ -1,89 +1,133 @@
 package io.github.cyberbandit1998.pokemonscanner.ui
 
-import androidx.compose.foundation.layout.*
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.ShowChart
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import io.github.cyberbandit1998.pokemonscanner.ui.screens.*
+import io.github.cyberbandit1998.pokemonscanner.ui.screens.CollectionScreen
+import io.github.cyberbandit1998.pokemonscanner.ui.screens.HomeScreen
+import io.github.cyberbandit1998.pokemonscanner.ui.screens.LoginScreen
+import io.github.cyberbandit1998.pokemonscanner.ui.screens.PasswordScreen
+import io.github.cyberbandit1998.pokemonscanner.ui.screens.PortfolioScreen
+import io.github.cyberbandit1998.pokemonscanner.ui.screens.ScanScreen
+import io.github.cyberbandit1998.pokemonscanner.ui.screens.SettingsScreen
 
-enum class HomeTab { Home, Scan, Collection, Portfolio }
+private enum class Tab(val label: String, val icon: ImageVector) {
+    HOME("Home", Icons.Default.Home),
+    SCAN("Scan", Icons.Default.CameraAlt),
+    COLLECTION("Collection", Icons.Default.GridView),
+    PORTFOLIO("Portfolio", Icons.Default.ShowChart),
+}
 
 @Composable
-fun PokeCollectorApp(vm: AppViewModel = viewModel()) {
-    val state by vm.state.collectAsState()
+fun PokeCollectorApp(
+    appVm: AppViewModel = viewModel(),
+    scanVm: ScanViewModel = viewModel(),
+) {
+    val app by appVm.state.collectAsState()
+    val scan by scanVm.state.collectAsState()
+    var tab by rememberSaveable { mutableIntStateOf(Tab.HOME.ordinal) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
 
-    if (state.booting) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
-        return
-    }
+    when {
+        app.booting -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
 
-    if (!state.loggedIn) {
-        LoginScreen(
-            initialServer = state.serverUrl,
-            loading = state.loading,
-            error = state.error,
-            onLogin = vm::login
+        !app.signedIn -> LoginScreen(
+            state = app,
+            onTest = appVm::testConnection,
+            onSignIn = appVm::signIn,
+            onDismissMessage = appVm::dismissMessage,
         )
-        return
-    }
 
-    var tab by remember { mutableStateOf(HomeTab.Home) }
+        app.mustChangePassword -> PasswordScreen(
+            state = app,
+            onChange = appVm::changeRequiredPassword,
+            onSignOut = { appVm.signOut() },
+            onDismissMessage = appVm::dismissMessage,
+        )
 
-    Scaffold(
-        bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = tab == HomeTab.Home,
-                    onClick = { tab = HomeTab.Home },
-                    icon = { Icon(Icons.Default.Home, null) },
-                    label = { Text("Home") }
-                )
-                NavigationBarItem(
-                    selected = tab == HomeTab.Scan,
-                    onClick = { tab = HomeTab.Scan },
-                    icon = { Icon(Icons.Default.CenterFocusStrong, null) },
-                    label = { Text("Scan") }
-                )
-                NavigationBarItem(
-                    selected = tab == HomeTab.Collection,
-                    onClick = { tab = HomeTab.Collection },
-                    icon = { Icon(Icons.Default.GridView, null) },
-                    label = { Text("Collection") }
-                )
-                NavigationBarItem(
-                    selected = tab == HomeTab.Portfolio,
-                    onClick = { tab = HomeTab.Portfolio },
-                    icon = { Icon(Icons.Default.ShowChart, null) },
-                    label = { Text("Portfolio") }
+        showSettings -> {
+            BackHandler { showSettings = false }
+            Scaffold { padding ->
+                SettingsScreen(
+                    app = app,
+                    scan = scan,
+                    onBack = { showSettings = false },
+                    onSignOut = { showSettings = false; appVm.signOut() },
+                    onIndividual = scanVm::setIndividual,
+                    onSavePhotos = scanVm::setSavePhotos,
+                    modifier = Modifier.padding(padding),
                 )
             }
         }
-    ) { padding ->
-        Box(
-            Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            when (tab) {
-                HomeTab.Home -> HomeScreen(state, vm::refreshAll, vm::logout)
-                HomeTab.Scan -> ScanScreen(state, vm::scan, vm::addMatch, vm::clearScan)
-                HomeTab.Collection -> CollectionScreen(state, vm::refreshAll)
-                HomeTab.Portfolio -> PortfolioScreen(state, vm::refreshAll)
-            }
 
-            if (state.loading) {
-                LinearProgressIndicator(
-                    Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.TopCenter)
-                )
+        else -> {
+            val onScanTab = tab == Tab.SCAN.ordinal
+            val inCameraOrReview = onScanTab && scan.stage != ScanStage.HOME
+            val fullScreenCamera = onScanTab && scan.stage == ScanStage.CAPTURE
+            Scaffold(
+                bottomBar = {
+                    // The camera and the review screen use the whole screen.
+                    if (!fullScreenCamera) {
+                        NavigationBar {
+                            Tab.entries.forEach { entry ->
+                                NavigationBarItem(
+                                    selected = tab == entry.ordinal,
+                                    onClick = { tab = entry.ordinal },
+                                    icon = { Icon(entry.icon, contentDescription = null) },
+                                    label = { Text(entry.label) },
+                                )
+                            }
+                        }
+                    }
+                },
+            ) { padding ->
+                Column(Modifier.fillMaxSize().then(if (fullScreenCamera) Modifier else Modifier.padding(padding))) {
+                    // Errors from background loads show above whichever tab is open (the scanner shows its own).
+                    if (!inCameraOrReview) {
+                        app.message?.let { Banner(it, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), isError = true, onDismiss = appVm::dismissMessage) }
+                    }
+                    val contentModifier = Modifier.weight(1f)
+                    when (Tab.entries[tab]) {
+                        Tab.HOME -> HomeScreen(
+                            state = app,
+                            onRefresh = appVm::refreshAll,
+                            onOpenSettings = { showSettings = true },
+                            modifier = contentModifier,
+                        )
+                        Tab.SCAN -> ScanScreen(app, scanVm, contentModifier)
+                        Tab.COLLECTION -> CollectionScreen(app, onRefresh = appVm::refreshCollection, modifier = contentModifier)
+                        Tab.PORTFOLIO -> PortfolioScreen(
+                            state = app,
+                            onShowHistory = { range, force -> appVm.showHistory(range, force) },
+                            modifier = contentModifier,
+                        )
+                    }
+                }
             }
         }
     }

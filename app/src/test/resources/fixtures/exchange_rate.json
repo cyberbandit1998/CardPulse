@@ -1,0 +1,6 @@
+{
+  "from": "EUR",
+  "to": "USD",
+  "rate": 1.1,
+  "fallback": true
+}

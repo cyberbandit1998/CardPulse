@@ -1,127 +1,215 @@
 package io.github.cyberbandit1998.pokemonscanner.ui.screens
 
-import android.graphics.BitmapFactory
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.background
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
-import io.github.cyberbandit1998.pokemonscanner.api.CollectionItem
+import io.github.cyberbandit1998.pokemonscanner.core.ArtSource
+import io.github.cyberbandit1998.pokemonscanner.core.CollectionItemDto
+import io.github.cyberbandit1998.pokemonscanner.core.MoneyFormatter
+import io.github.cyberbandit1998.pokemonscanner.core.defaultArtSource
+import io.github.cyberbandit1998.pokemonscanner.core.hasCatalogueImage
+import io.github.cyberbandit1998.pokemonscanner.core.parseServerInstant
 import io.github.cyberbandit1998.pokemonscanner.ui.AppState
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import io.github.cyberbandit1998.pokemonscanner.ui.Banner
+import io.github.cyberbandit1998.pokemonscanner.ui.CARD_ASPECT
+import io.github.cyberbandit1998.pokemonscanner.ui.CardArt
+import io.github.cyberbandit1998.pokemonscanner.ui.formatDate
+
+private enum class SortOrder(val label: String) {
+    RECENT("Recent"),
+    NAME("Name"),
+    SET("Set"),
+}
+
+private fun CollectionItemDto.setName(): String = card?.setRef?.name ?: card?.setRef?.abbreviation ?: card?.setId.orEmpty()
+
+private fun CollectionItemDto.matches(query: String): Boolean {
+    if (query.isBlank()) return true
+    val haystack = listOfNotNull(card?.name, setName(), card?.number, card?.rarity, variant, condition)
+    return query.trim().split(' ').filter { it.isNotEmpty() }.all { word -> haystack.any { it.contains(word, ignoreCase = true) } }
+}
 
 @Composable
 fun CollectionScreen(
     state: AppState,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            Modifier.fillMaxWidth().padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text("Collection", style = MaterialTheme.typography.headlineMedium)
-            TextButton(onClick = onRefresh) { Text("Refresh") }
+    var query by rememberSaveable { mutableStateOf("") }
+    var sort by rememberSaveable { mutableStateOf(SortOrder.RECENT) }
+    var openItem by remember { mutableStateOf<CollectionItemDto?>(null) }
+
+    val shown = remember(state.collection, query, sort) {
+        val filtered = state.collection.filter { it.matches(query) }
+        when (sort) {
+            SortOrder.RECENT -> filtered // the server already returns newest first
+            SortOrder.NAME -> filtered.sortedBy { it.card?.name?.lowercase().orEmpty() }
+            SortOrder.SET -> filtered.sortedWith(compareBy({ it.setName().lowercase() }, { it.card?.number?.padStart(4, '0').orEmpty() }))
+        }
+    }
+    val totalCards = remember(state.collection) { state.collection.sumOf { it.quantity } }
+
+    Column(modifier.fillMaxSize()) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Search name, set, number, rarity…") },
+                singleLine = true,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                SortOrder.entries.forEach { option ->
+                    FilterChip(selected = sort == option, onClick = { sort = option }, label = { Text(option.label) })
+                }
+                Text(
+                    "${shown.size} entries · $totalCards cards",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                TextButton(onClick = onRefresh) { Text("Refresh") }
+            }
+            if (state.collectionLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (state.collectionUnreadable > 0) {
+                Banner("${state.collectionUnreadable} entries from the server couldn't be read by this app and are hidden.", isError = true)
+            }
         }
 
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(145.dp),
-            contentPadding = PaddingValues(10.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            items(state.collection, key = { it.id }) { item ->
-                ElevatedCard {
-                    Column {
-                        CardArtwork(
-                            item = item,
-                            serverUrl = state.serverUrl,
-                            token = state.token,
-                            modifier = Modifier.fillMaxWidth().aspectRatio(0.716f)
-                        )
-                        Column(Modifier.padding(10.dp)) {
-                            Text(
-                                item.card?.name ?: "Unknown card",
-                                maxLines = 2,
-                                style = MaterialTheme.typography.titleSmall
-                            )
-                            Text(
-                                "Qty ${item.quantity} • ${item.condition ?: ""}",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            if (item.hasScanPhoto) {
-                                Text(
-                                    "Your scanned photo",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
+        when {
+            !state.collectionLoaded && state.collectionLoading -> Unit
+            state.collection.isEmpty() -> EmptyNote("Your collection is empty. Scan a card to add the first one.")
+            shown.isEmpty() -> EmptyNote("Nothing matches “${query.trim()}”.")
+            else -> LazyVerticalGrid(
+                columns = GridCells.Adaptive(112.dp),
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(shown, key = { it.id }) { entry ->
+                    CollectionTile(entry, state, onClick = { openItem = entry })
                 }
             }
         }
+    }
+
+    openItem?.let { entry -> ItemDialog(entry, state, onClose = { openItem = null }) }
+}
+
+@Composable
+private fun EmptyNote(text: String) {
+    Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.TopCenter) {
+        Text(text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
-private fun CardArtwork(
-    item: CollectionItem,
-    serverUrl: String,
-    token: String?,
-    modifier: Modifier = Modifier
-) {
-    var privatePhoto by remember(item.id, item.hasScanPhoto) {
-        mutableStateOf<android.graphics.Bitmap?>(null)
-    }
-    var privatePhotoFailed by remember(item.id, item.hasScanPhoto) {
-        mutableStateOf(false)
-    }
-
-    LaunchedEffect(item.id, item.hasScanPhoto, serverUrl, token) {
-        privatePhoto = null
-        privatePhotoFailed = false
-        if (item.hasScanPhoto && !token.isNullOrBlank()) {
-            privatePhoto = withContext(Dispatchers.IO) {
-                runCatching {
-                    val base = if (serverUrl.endsWith("/")) serverUrl else "$serverUrl/"
-                    val request = Request.Builder()
-                        .url("${base}api/collection/${item.id}/photo")
-                        .header("Authorization", "Bearer $token")
-                        .build()
-                    OkHttpClient().newCall(request).execute().use { response ->
-                        if (!response.isSuccessful) error("Photo request failed")
-                        val bytes = response.body.bytes()
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    }
-                }.getOrElse {
-                    privatePhotoFailed = true
-                    null
+private fun CollectionTile(entry: CollectionItemDto, state: AppState, onClick: () -> Unit) {
+    Card(Modifier.clickable(onClick = onClick)) {
+        Column(Modifier.padding(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Box {
+                CardArt(entry, state.serverUrl, state.prefs, Modifier.fillMaxWidth().cardAspect())
+                if (entry.quantity > 1) {
+                    Text(
+                        "×${entry.quantity}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(4.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.primary)
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
                 }
             }
+            Text(entry.card?.name.orEmpty(), style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                listOfNotNull(entry.setName().ifBlank { null }, entry.card?.number?.let { "#$it" }).joinToString(" · "),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
+}
 
-    when {
-        privatePhoto != null -> Image(
-            bitmap = privatePhoto!!.asImageBitmap(),
-            contentDescription = item.card?.name,
-            modifier = modifier,
-            contentScale = ContentScale.Crop
-        )
-        else -> AsyncImage(
-            model = item.card?.imagesSmall ?: item.card?.imagesLarge,
-            contentDescription = item.card?.name,
-            modifier = modifier,
-            contentScale = ContentScale.Crop
-        )
+private fun Modifier.cardAspect(): Modifier = this.aspectRatio(CARD_ASPECT)
+
+@Composable
+private fun ItemDialog(entry: CollectionItemDto, state: AppState, onClose: () -> Unit) {
+    val money = remember(state.prefs.currency, state.prefs.rateFromEur) { MoneyFormatter(state.prefs.currency, state.prefs.rateFromEur) }
+    val hasOfficial = entry.card.hasCatalogueImage()
+    var source by remember { mutableStateOf(defaultArtSource(entry, state.prefs.preferOwnPhotos)) }
+
+    AlertDialog(
+        onDismissRequest = onClose,
+        confirmButton = { TextButton(onClick = onClose) { Text("Close") } },
+        title = { Text(entry.card?.name.orEmpty()) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                CardArt(entry, state.serverUrl, state.prefs, Modifier.fillMaxWidth().cardAspect(), large = true, source = source)
+                if (entry.hasScanPhoto && hasOfficial) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = source == ArtSource.OFFICIAL, onClick = { source = ArtSource.OFFICIAL }, label = { Text("Official art") })
+                        FilterChip(selected = source == ArtSource.OWN_PHOTO, onClick = { source = ArtSource.OWN_PHOTO }, label = { Text("My photo") })
+                    }
+                }
+                DetailRow("Set", entry.setName().ifBlank { "—" })
+                DetailRow("Number", entry.card?.number ?: "—")
+                DetailRow("Rarity", entry.card?.rarity ?: "—")
+                DetailRow("Quantity", entry.quantity.toString())
+                DetailRow("Condition", entry.condition)
+                DetailRow("Variant", entry.variant)
+                DetailRow("Language", entry.lang.uppercase())
+                entry.printingDetailNames.takeIf { it.isNotEmpty() }?.let { DetailRow("Details", it.joinToString(", ")) }
+                DetailRow("Paid", entry.purchasePrice?.let { money.format(it) } ?: "not recorded")
+                DetailRow("Added", formatDate(parseServerInstant(entry.addedAt)).ifBlank { "—" })
+            }
+        },
+    )
+}
+
+@Composable
+private fun DetailRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium)
     }
 }

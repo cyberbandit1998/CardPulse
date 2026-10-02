@@ -7,25 +7,22 @@
         android:name="android.hardware.camera.any"
         android:required="false" />
 
+    <!--
+        allowBackup is off so the stored sign-in token and server address are never copied to cloud backups or
+        another phone. Cleartext HTTP is blocked: the app only talks to https:// servers.
+    -->
     <application
-        android:allowBackup="true"
+        android:name=".PokeApp"
+        android:allowBackup="false"
         android:label="PokéCollector"
         android:theme="@style/Theme.PokeCollector"
         android:usesCleartextTraffic="false">
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:screenOrientation="portrait">
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

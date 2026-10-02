@@ -1,0 +1,25 @@
+{
+  "jobs": [
+    {
+      "id": 1,
+      "status": "pending",
+      "total": 6,
+      "processing": 1,
+      "retrying": 1,
+      "done": 2,
+      "failed": 1,
+      "pending": 1,
+      "processed": 3,
+      "active": 3,
+      "attention": 3,
+      "failed_attention": 1,
+      "next_retry_at": "2026-10-02T14:30:54",
+      "retry_reason": "rate_limit",
+      "unresolved": 3,
+      "created_at": "2026-10-02T14:29:24",
+      "finished_at": null,
+      "expires_at": "2026-10-16T14:29:24",
+      "error_message": null
+    }
+  ]
+}
