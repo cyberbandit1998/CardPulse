@@ -36,6 +36,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +45,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -54,6 +57,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.cardpulse.android.core.AddEdits
+import app.cardpulse.android.core.AddedNote
 import app.cardpulse.android.core.CardDto
 import app.cardpulse.android.core.CardLanguages
 import app.cardpulse.android.core.CardTypes
@@ -151,6 +155,10 @@ fun ManualAddContent(
     modifier: Modifier = Modifier,
 ) {
     val selected = state.selected
+    // The cursor is ready in the name box when the screen opens and after each add, so cards can be typed one after another.
+    val nameFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { nameFocus.requestFocus() } }
+    LaunchedEffect(state.lastAdded) { if (state.lastAdded != null) runCatching { nameFocus.requestFocus() } }
     // The text of the price box lives here so the Add button, pinned below, knows when it can't be read.
     var priceText by remember(state.selectedId) { mutableStateOf(MoneyInput.toInput(state.edits.purchasePrice, rateFromEur)) }
     val priceInvalid = selected != null && priceText.isNotBlank() && MoneyInput.toEuros(priceText, rateFromEur) == null
@@ -165,10 +173,8 @@ fun ManualAddContent(
             Modifier.weight(1f, fill = true).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            state.lastAdded?.let { note ->
-                Banner("✓ Added ${note.name}${if (note.quantity > 1) " ×${note.quantity}" else ""} to your collection")
-            }
-            NameAndNumber(state, actions)
+            state.lastAdded?.let { note -> AddedBanner(note) }
+            NameAndNumber(state, actions, nameFocus)
             when (state.mode) {
                 ManualMode.LOOKUP -> LookupBody(state, serverUrl, ownership, actions)
                 ManualMode.BY_HAND -> ByHandBody(state, actions)
@@ -191,6 +197,12 @@ fun ManualAddContent(
                     },
                     onEdits = actions.edits,
                 )
+            }
+            // Offered once there is something to say "no" to: nothing was found, or a list is showing.
+            if (state.mode == ManualMode.LOOKUP && (state.noMatch || (state.results.isNotEmpty() && !state.searching))) {
+                AccentTextButton(onClick = actions.byHand) {
+                    Text(if (state.noMatch) "Create it by hand" else "Not the one? Create it by hand")
+                }
             }
         }
 
@@ -231,6 +243,23 @@ fun ManualAddContent(
     }
 }
 
+/** What was just added, in the green the scanner uses for a new card. */
+@Composable
+private fun AddedBanner(note: AddedNote) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(ScanColors.newContainer).padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = ScanColors.newContent)
+        Text(
+            "Added ${note.name}${if (note.quantity > 1) " ×${note.quantity}" else ""} to your collection",
+            color = ScanColors.newContent,
+            style = MaterialTheme.typography.titleSmall,
+        )
+    }
+}
+
 @Composable
 private fun BusyDot() {
     CircularProgressIndicator(Modifier.padding(end = 8.dp).size(16.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
@@ -241,13 +270,13 @@ private fun BusyDot() {
 // ---------------------------------------------------------------------------------------------
 
 @Composable
-private fun NameAndNumber(state: ManualAddState, actions: ManualAddActions) {
+private fun NameAndNumber(state: ManualAddState, actions: ManualAddActions, nameFocus: FocusRequester) {
     val focus = LocalFocusManager.current
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
         OutlinedTextField(
             value = state.form.name,
             onValueChange = actions.name,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).focusRequester(nameFocus),
             label = { Text("Card name") },
             placeholder = { Text("e.g. Charizard ex") },
             singleLine = true,
@@ -319,9 +348,6 @@ private fun LookupBody(state: ManualAddState, serverUrl: String, ownership: (Car
                         },
                     )
                 }
-                if (selected != null && !seeAll && state.results.size > 1) {
-                    AccentTextButton(onClick = { seeAll = true }) { Text("Not this one? See all ${state.results.size} matches") }
-                }
                 if (showAll && state.matches > state.results.size) {
                     Text(
                         "Showing the first ${state.results.size} of ${state.matches} matches. Add the number, or more of the name, to narrow it down.",
@@ -330,6 +356,9 @@ private fun LookupBody(state: ManualAddState, serverUrl: String, ownership: (Car
                     )
                 }
                 if (selected != null) OwnershipBanner(ownership(selected))
+                if (selected != null && !seeAll && state.results.size > 1) {
+                    AccentTextButton(onClick = { seeAll = true }) { Text("Not this one? See all ${state.results.size} matches") }
+                }
             }
         }
 
@@ -353,12 +382,6 @@ private fun LookupBody(state: ManualAddState, serverUrl: String, ownership: (Car
         }
     }
 
-    // Offered once there is something to say "no" to: nothing was found, or a list is showing.
-    if (state.noMatch || (state.results.isNotEmpty() && !state.searching)) {
-        AccentTextButton(onClick = actions.byHand) {
-            Text(if (state.noMatch) "Create it by hand" else "Not the one? Create it by hand")
-        }
-    }
 }
 
 /** A found card. The one that is picked shows everything the server knows about it. */
@@ -450,15 +473,6 @@ private fun AddControls(
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ChoiceRow("Condition", Conditions.ALL, edits.condition, { it }) { onEdits(edits.copy(condition = it)) }
         ChoiceRow("Variant", Variants.ALL, edits.variant, { it }) { onEdits(edits.copy(variant = it)) }
-        // A card made by hand has the one language it was made in.
-        if (!card.isCustom) {
-            ChoiceRow(
-                title = "Language · ${CardLanguages.name(language)}",
-                options = CardLanguages.ALL.map { it.code },
-                selected = language,
-                label = { CardLanguages.label(it) },
-            ) { code -> onEdits(edits.copy(lang = code.takeIf { it != own })) }
-        }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             QuantityStepper(edits.quantity) { onEdits(edits.copy(quantity = it)) }
             OutlinedTextField(
@@ -471,6 +485,16 @@ private fun AddControls(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
             )
+        }
+        // A result is already in its own language, so this is the rarely changed choice and comes last.
+        // A card made by hand has the one language it was made in.
+        if (!card.isCustom) {
+            ChoiceRow(
+                title = "Language · ${CardLanguages.name(language)}",
+                options = CardLanguages.ALL.map { it.code },
+                selected = language,
+                label = { CardLanguages.label(it) },
+            ) { code -> onEdits(edits.copy(lang = code.takeIf { it != own })) }
         }
     }
 }

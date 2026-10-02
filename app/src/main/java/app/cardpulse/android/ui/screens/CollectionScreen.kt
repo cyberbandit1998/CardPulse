@@ -103,16 +103,19 @@ fun CollectionScreen(
                     FilterChip(selected = sort == option, onClick = { sort = option }, label = { Text(option.label) })
                 }
                 Spacer(Modifier.weight(1f))
-                AccentTextButton(onClick = onAddCard) { Text("Add card") }
                 AccentTextButton(onClick = onRefresh) { Text("Refresh") }
             }
-            Text(
-                "${shown.size} entries · $totalCards cards",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${shown.size} entries · $totalCards cards",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                AccentTextButton(onClick = onAddCard) { Text("Add card") }
+            }
             if (state.collectionLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
             if (state.collectionUnreadable > 0) {
                 Banner("${state.collectionUnreadable} entries from the server couldn't be read by this app and are hidden.", isError = true)
