@@ -38,14 +38,24 @@ jobs:
       - name: Unit tests
         run: ./gradlew --no-daemon :app:testDebugUnitTest
 
+      - name: Self-test, stand-in for the secrets
+        id: fake
+        run: |
+          keytool -genkeypair -keystore "$RUNNER_TEMP/fake.jks" -storetype PKCS12 -storepass 'self test pw$1' \
+            -alias cardpulse -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=CardPulse self-test"
+          echo "b64=$(base64 "$RUNNER_TEMP/fake.jks" | tr -d '\n')" >> "$GITHUB_OUTPUT"
+          keytool -list -v -keystore "$RUNNER_TEMP/fake.jks" -storepass 'self test pw$1' \
+            | sed -n 's/^.*SHA256: //p' | tr -d ':' | tr 'A-F' 'a-f' | head -1 > "$RUNNER_TEMP/expected_sha256.txt"
+          echo "expected certificate: $(cat "$RUNNER_TEMP/expected_sha256.txt")"
+
       # Builds signed with the same key can be installed over each other. Without these secrets (the README says how
       # to add them) every build gets a new throwaway key and has to be uninstalled first. Forks never see secrets.
       - name: Prepare signing key
         id: signing
         env:
-          KEYSTORE_BASE64: ${{ secrets.CARDPULSE_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.CARDPULSE_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.CARDPULSE_KEY_ALIAS }}
+          KEYSTORE_BASE64: ${{ steps.fake.outputs.b64 }}
+          KEYSTORE_PASSWORD: 'self test pw$1'
+          KEY_ALIAS: cardpulse
         run: bash .github/scripts/prepare-signing.sh
 
       - name: Build debug APK
@@ -68,6 +78,24 @@ jobs:
           kind="a throwaway debug key"
           if [ "$FIXED_KEY" = "true" ]; then kind="the fixed signing key"; fi
           echo "Signed with ${kind}${digest:+ (certificate SHA-256 $digest)}." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Self-test, assert the signing key, the key kind and the version number
+        env:
+          ACTUAL: ${{ steps.cert.outputs.sha256 }}
+          FIXED_KEY: ${{ steps.signing.outputs.fixed_key }}
+        run: |
+          apk=$(ls app/build/outputs/apk/debug/*.apk)
+          expected=$(cat "$RUNNER_TEMP/expected_sha256.txt")
+          echo "expected certificate: $expected"
+          echo "actual certificate:   $ACTUAL"
+          [ "$FIXED_KEY" = "true" ] || { echo "FAIL: the fixed key was not used"; exit 1; }
+          [ -n "$ACTUAL" ] || { echo "FAIL: no certificate digest was read from the APK"; exit 1; }
+          [ "$ACTUAL" = "$expected" ] || { echo "FAIL: the APK is not signed with the stand-in key"; exit 1; }
+          aapt2=$(ls -d "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
+          badging=$("$aapt2" dump badging "$apk" | head -1)
+          echo "$badging"
+          echo "$badging" | grep -q "versionCode='${{ github.run_number }}'" || { echo "FAIL: versionCode is not the run number"; exit 1; }
+          echo "SELF-TEST PASSED: signed with the stand-in key, and versionCode is the run number"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
