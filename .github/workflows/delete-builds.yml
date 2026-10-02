@@ -1,0 +1,35 @@
+name: Delete old debug builds
+
+# Debug builds are published as public pre-releases and go stale quickly. Run this by hand to remove some of them
+# (the release and its tag). It only ever touches tags that look like build-<number>.
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: "Tags to delete, separated by spaces (for example: build-6 build-11)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the releases and their tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAGS: ${{ inputs.tags }}
+        run: |
+          # Check every tag first so a typo can't leave the job half done.
+          for tag in $TAGS; do
+            if ! [[ "$tag" =~ ^build-[0-9]+$ ]]; then
+              echo "Refusing '$tag': only build-<number> tags can be deleted here." >&2
+              exit 1
+            fi
+          done
+          for tag in $TAGS; do
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+            echo "Deleted $tag"
+          done
