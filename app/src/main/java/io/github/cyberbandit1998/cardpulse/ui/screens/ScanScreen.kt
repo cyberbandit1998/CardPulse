@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -306,6 +308,7 @@ fun RapidScreenContent(
         val panelMaxHeight = maxHeight * 0.82f
 
         Box(Modifier.fillMaxSize()) { preview() }
+        CardFrame(Modifier.align(Alignment.Center))
 
         Column(
             Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 8.dp),
@@ -332,7 +335,7 @@ fun RapidScreenContent(
             message?.let { Banner(it, isError = true, onDismiss = actions.dismissMessage) }
             if (entries.isEmpty()) {
                 Text(
-                    "Fill the outline with one card, then tap the button. Results appear below as they are read, " +
+                    "Line one card up in the frame, then tap the button. Results appear below as they are read, " +
                         "while you carry on with the next card.",
                     color = Color.White,
                     style = MaterialTheme.typography.bodyMedium,
@@ -395,6 +398,17 @@ fun RapidScreenContent(
             )
         }
     }
+}
+
+/** A card-shaped frame to line the card up with. The whole photo is sent, so it only helps with framing. */
+@Composable
+private fun CardFrame(modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .fillMaxHeight(0.5f)
+            .aspectRatio(63f / 88f)
+            .border(2.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(14.dp)),
+    )
 }
 
 @Composable

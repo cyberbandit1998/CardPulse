@@ -47,10 +47,15 @@ The app warns you if it connects to a server in single-user mode.
 
 ## What it does
 
-- **Scan:** a live camera view with a card-shaped guide. Take photos of up to 50 cards, send them as one job,
-  and review the results on a screen that shows your photo beside each candidate. Add with one tap, or edit
-  quantity, condition, variant and price first. Photos are kept on the phone until they upload, so a dropped
-  connection or a closed app doesn't lose a batch, and scans left on the server can be resumed later.
+- **Rapid scan:** the camera stays open while you work through a pile. Each photo is sent to your server the moment
+  it is taken and read in the background (up to three at once), so you can photograph the next card straight away.
+  Results collect in a tray along the bottom. Photos are kept on the phone until they upload, so a dropped connection or
+  a closed app doesn't lose a card, and scans left on the server are picked up again.
+- **Check before adding:** tap a result to see your photo beside the match, then confirm the condition, variant,
+  language, quantity and purchase price it will be added with. One tap adds it and the next waiting result opens. The
+  condition and variant you used last are suggested for the next card.
+- **Duplicates:** every result says whether the card is new to your collection or how many copies you already own, and
+  in which conditions, variants and languages. Until the collection has loaded it says nothing rather than guess.
 - **Collection:** search and sort your whole collection, with official artwork or your own photos (following the
   "prefer my own photos" setting of your PokéCollector account).
 - **Portfolio:** total value, gain or loss, a history chart (1W to All), a breakdown, and the week's biggest movers.

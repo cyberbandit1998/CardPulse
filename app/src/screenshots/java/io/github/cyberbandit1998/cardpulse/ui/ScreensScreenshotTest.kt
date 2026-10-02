@@ -1,6 +1,11 @@
 package io.github.cyberbandit1998.cardpulse.ui
 
 import android.graphics.Bitmap
+import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
+import android.view.PixelCopy
+import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,10 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.test.captureToImage
-import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import io.github.cyberbandit1998.cardpulse.core.AddEdits
 import io.github.cyberbandit1998.cardpulse.core.CollectionIndex
 import io.github.cyberbandit1998.cardpulse.core.CollectionItemDto
@@ -62,12 +64,27 @@ import java.io.File
 @Config(sdk = [34], qualifiers = "w360dp-h780dp-xxhdpi")
 class ScreensScreenshotTest {
     @get:Rule
-    val compose = createComposeRule()
+    val compose = createAndroidComposeRule<ComponentActivity>()
 
     private fun shoot(name: String, content: @Composable () -> Unit) {
         compose.setContent { CardPulseTheme { content() } }
+        capture(name)
+    }
+
+    /**
+     * Saves a picture of the window as it is now. Compose's own captureToImage waits for the phone to draw a frame,
+     * which never happens on the JVM, so this asks for the copy of the screen that Robolectric makes synchronously.
+     */
+    private fun capture(name: String) {
         compose.waitForIdle()
-        val image = compose.onRoot().captureToImage().asAndroidBitmap()
+        val window = compose.activity.window
+        val decor = window.decorView
+        check(decor.width > 0 && decor.height > 0) { "The window has no size yet" }
+        val image = Bitmap.createBitmap(decor.width, decor.height, Bitmap.Config.ARGB_8888)
+        var result = Int.MIN_VALUE
+        val wholeWindow: Rect? = null
+        PixelCopy.request(window, wholeWindow, image, { result = it }, Handler(Looper.getMainLooper()))
+        check(result == PixelCopy.SUCCESS) { "Copying the screen failed with code $result" }
         val dir = File(System.getProperty("screens.dir") ?: "build/screens").apply { mkdirs() }
         File(dir, "$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
@@ -166,12 +183,6 @@ class ScreensScreenshotTest {
         Box(Modifier.fillMaxSize().background(Color(0xFF2B3A33)), contentAlignment = Alignment.Center) {
             Text("(live camera)", color = Color(0x88FFFFFF))
         }
-    }
-
-    private fun capture(name: String) {
-        val image = compose.onRoot().captureToImage().asAndroidBitmap()
-        val dir = File(System.getProperty("screens.dir") ?: "build/screens").apply { mkdirs() }
-        File(dir, "$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
     // --- signing in -------------------------------------------------------------------------------------

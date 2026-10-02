@@ -7,10 +7,10 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -93,10 +94,7 @@ fun ConfirmPanel(
         tonalElevation = 6.dp,
         shadowElevation = 16.dp,
     ) {
-        Column(
-            Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
+        Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Check before adding", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 if (othersWaiting > 0) {
@@ -109,15 +107,16 @@ fun ConfirmPanel(
                 IconButton(onClick = onClose) { Icon(Icons.Default.Close, contentDescription = "Close") }
             }
             when (entry.tileState()) {
-                TileState.READY -> ReadyForm(entry, serverUrl, ownership, currency, rateFromEur, onSelectCandidate, onEdits, onAdd, onSkip)
-                else -> NeedsAttention(entry, serverUrl, onRetry, onSkip)
+                TileState.READY -> ReadyContent(entry, serverUrl, ownership, currency, rateFromEur, onSelectCandidate, onEdits, onAdd, onSkip)
+                else -> AttentionContent(entry, serverUrl, onRetry, onSkip)
             }
         }
     }
 }
 
+/** The form (which scrolls when it is taller than the panel) with Skip and Add pinned underneath it. */
 @Composable
-private fun ReadyForm(
+private fun ColumnScope.ReadyContent(
     entry: ScanEntry,
     serverUrl: String,
     ownership: Ownership,
@@ -138,118 +137,119 @@ private fun ReadyForm(
     var priceText by remember(entry.id) { mutableStateOf(MoneyInput.toInput(edits.purchasePrice, rateFromEur)) }
     val priceInvalid = priceText.isNotBlank() && MoneyInput.toEuros(priceText, rateFromEur) == null
 
-    // Which card is it?
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        PhotoColumn("Your photo") { YourPhoto(entry, serverUrl, Modifier.size(width = 84.dp, height = 117.dp)) }
-        PhotoColumn("Match") {
-            RemoteImage(
-                ServerUrls.candidateImage(serverUrl, jobId, item.id, entry.candidate),
-                match.name,
-                Modifier.size(width = 84.dp, height = 117.dp).clip(RoundedCornerShape(6.dp)),
-                ContentScale.Fit,
-            )
-        }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(match.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(
-                match.subtitle(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-            )
-            item.recognizedSummary()?.let {
+    Column(
+        Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        // Which card is it?
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            PhotoColumn("Your photo") { YourPhoto(entry, serverUrl, Modifier.size(width = 84.dp, height = 117.dp)) }
+            PhotoColumn("Match") {
+                RemoteImage(
+                    ServerUrls.candidateImage(serverUrl, jobId, item.id, entry.candidate),
+                    match.name,
+                    Modifier.size(width = 84.dp, height = 117.dp).clip(RoundedCornerShape(6.dp)),
+                    ContentScale.Fit,
+                )
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(match.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "Scanner read: $it",
-                    style = MaterialTheme.typography.labelSmall,
+                    match.subtitle(),
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
-            if (match.printedTotalMismatch) {
-                Text(
-                    "The set size on your photo doesn't match this card's set. Check it carefully.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
+                item.recognizedSummary()?.let {
+                    Text(
+                        "Scanner read: $it",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (match.printedTotalMismatch) {
+                    Text(
+                        "The set size on your photo doesn't match this card's set. Check it carefully.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         }
-    }
 
-    val matches = item.matches
-    if (matches.size > 1) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Not the right card? Pick another match", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                matches.forEachIndexed { index, candidate ->
-                    val selected = index == entry.candidate
-                    val shape = RoundedCornerShape(8.dp)
-                    Column(
-                        Modifier
-                            .width(58.dp)
-                            .clip(shape)
-                            .border(2.dp, if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, shape)
-                            .clickable { onSelectCandidate(index) }
-                            .padding(2.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        RemoteImage(
-                            ServerUrls.candidateImage(serverUrl, jobId, item.id, index),
-                            candidate.name,
-                            Modifier.size(width = 54.dp, height = 75.dp).clip(RoundedCornerShape(5.dp)),
-                            ContentScale.Fit,
-                        )
-                        Text(
-                            CardLanguages.label(candidate.scannedLanguage()),
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1,
-                        )
+        val matches = item.matches
+        if (matches.size > 1) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Not the right card? Pick another match", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    matches.forEachIndexed { index, candidate ->
+                        val selected = index == entry.candidate
+                        val shape = RoundedCornerShape(8.dp)
+                        Column(
+                            Modifier
+                                .width(58.dp)
+                                .clip(shape)
+                                .border(2.dp, if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, shape)
+                                .clickable { onSelectCandidate(index) }
+                                .padding(2.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            RemoteImage(
+                                ServerUrls.candidateImage(serverUrl, jobId, item.id, index),
+                                candidate.name,
+                                Modifier.size(width = 54.dp, height = 75.dp).clip(RoundedCornerShape(5.dp)),
+                                ContentScale.Fit,
+                            )
+                            Text(
+                                CardLanguages.label(candidate.scannedLanguage()),
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                            )
+                        }
                     }
                 }
             }
         }
+
+        // Do I already have it?
+        OwnershipBanner(ownership)
+
+        // What exactly am I adding?
+        ChoiceRow("Condition", Conditions.ALL, edits.condition, { it }) { onEdits(edits.copy(condition = it)) }
+        ChoiceRow("Variant", Variants.ALL, edits.variant, { it }) { onEdits(edits.copy(variant = it)) }
+        ChoiceRow(
+            title = "Language · ${CardLanguages.name(language)}",
+            options = CardLanguages.ALL.map { it.code },
+            selected = language,
+            label = { CardLanguages.label(it) },
+        ) { code -> onEdits(edits.copy(lang = code.takeIf { it != scanned })) }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            QuantityStepper(edits.quantity) { onEdits(edits.copy(quantity = it)) }
+            OutlinedTextField(
+                value = priceText,
+                onValueChange = { text ->
+                    priceText = text
+                    if (text.isBlank()) {
+                        onEdits(edits.copy(purchasePrice = null))
+                    } else {
+                        MoneyInput.toEuros(text, rateFromEur)?.let { euros -> onEdits(edits.copy(purchasePrice = euros)) }
+                    }
+                },
+                modifier = Modifier.weight(1f),
+                label = { Text("Paid each ($currency)") },
+                placeholder = { Text("optional") },
+                isError = priceInvalid,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+            )
+        }
     }
 
-    // Do I already have it?
-    OwnershipBanner(ownership)
-
-    // What exactly am I adding?
-    ChoiceRow("Condition", Conditions.ALL, edits.condition, { it }) { onEdits(edits.copy(condition = it)) }
-    ChoiceRow("Variant", Variants.ALL, edits.variant, { it }) { onEdits(edits.copy(variant = it)) }
-    ChoiceRow(
-        title = "Language · ${CardLanguages.name(language)}",
-        options = CardLanguages.ALL.map { it.code },
-        selected = language,
-        label = { CardLanguages.label(it) },
-    ) { code -> onEdits(edits.copy(lang = code.takeIf { it != scanned })) }
-
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-        QuantityStepper(edits.quantity) { onEdits(edits.copy(quantity = it)) }
-        OutlinedTextField(
-            value = priceText,
-            onValueChange = { text ->
-                priceText = text
-                if (text.isBlank()) {
-                    onEdits(edits.copy(purchasePrice = null))
-                } else {
-                    MoneyInput.toEuros(text, rateFromEur)?.let { euros -> onEdits(edits.copy(purchasePrice = euros)) }
-                }
-            },
-            modifier = Modifier.weight(1f),
-            label = { Text("Paid each ($currency)") },
-            placeholder = { Text("optional") },
-            isError = priceInvalid,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true,
-        )
-    }
-
-    entry.error?.let {
-        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-    }
-
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+    ConfirmFooter(error = entry.error) {
         OutlinedButton(onClick = onSkip, enabled = !entry.busy) { Text("Skip") }
         Button(onClick = onAdd, enabled = !entry.busy && !priceInvalid, modifier = Modifier.weight(1f)) {
             if (entry.busy) {
@@ -258,7 +258,21 @@ private fun ReadyForm(
             Text("Add ${edits.summary(scanned)}", maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
-    Spacer(Modifier.height(4.dp))
+}
+
+/** Stays in view under the scrolling form, so the main action never has to be hunted for. */
+@Composable
+private fun ConfirmFooter(error: String?, buttons: @Composable RowScope.() -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        HorizontalDivider(Modifier.padding(top = 4.dp))
+        error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+        Row(
+            Modifier.padding(bottom = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            content = buttons,
+        )
+    }
 }
 
 /** A picture with a caption underneath. */
@@ -391,10 +405,13 @@ private fun QuantityStepper(quantity: Int, onChange: (Int) -> Unit) {
 
 /** For a card that can't be added yet: say why, and offer the way forward. */
 @Composable
-private fun NeedsAttention(entry: ScanEntry, serverUrl: String, onRetry: () -> Unit, onSkip: () -> Unit) {
+private fun ColumnScope.AttentionContent(entry: ScanEntry, serverUrl: String, onRetry: () -> Unit, onSkip: () -> Unit) {
     val state = entry.tileState()
     val busyState = state == TileState.SENDING || state == TileState.READING || state == TileState.WAITING
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(
+        Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()).padding(bottom = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         YourPhoto(entry, serverUrl, Modifier.size(width = 84.dp, height = 117.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
@@ -419,8 +436,7 @@ private fun NeedsAttention(entry: ScanEntry, serverUrl: String, onRetry: () -> U
             if (busyState) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         }
     }
-    entry.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    ConfirmFooter(error = entry.error) {
         if (state == TileState.FAILED || state == TileState.SEND_FAILED) {
             Button(onClick = onRetry, enabled = !entry.busy) { Text(if (state == TileState.FAILED) "Try again" else "Send again") }
         }
@@ -428,5 +444,4 @@ private fun NeedsAttention(entry: ScanEntry, serverUrl: String, onRetry: () -> U
             Text(if (state == TileState.SEND_FAILED) "Discard" else "Skip")
         }
     }
-    Spacer(Modifier.height(4.dp))
 }
