@@ -1,0 +1,18 @@
+# Gradle / Android Studio
+.gradle/
+.idea/
+*.iml
+local.properties
+/build/
+/app/build/
+/captures/
+.externalNativeBuild/
+.cxx/
+
+# Signing material and build outputs: never commit these
+*.jks
+*.keystore
+*.apk
+*.aab
+
+.DS_Store
