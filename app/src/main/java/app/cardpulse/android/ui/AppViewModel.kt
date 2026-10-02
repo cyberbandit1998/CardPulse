@@ -13,8 +13,10 @@ import app.cardpulse.android.core.PortfolioRange
 import app.cardpulse.android.core.ServerUrl
 import app.cardpulse.android.core.UserDto
 import app.cardpulse.android.core.attempt
+import app.cardpulse.android.core.replacing
 import app.cardpulse.android.core.toChartPoints
 import app.cardpulse.android.core.userMessage
+import app.cardpulse.android.core.without
 import coil3.SingletonImageLoader
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -24,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
 
 data class AppState(
     val booting: Boolean = true,
@@ -255,11 +258,52 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val without = state.collection.filterNot { it.id == item.id }
             state.copy(collection = listOf(item) + without)
         }
-        // The portfolio total changed. Wait for a quiet moment so adding a whole batch triggers one refetch.
+        refreshDashboardSoon()
+    }
+
+    /** The portfolio total changed. Waits for a quiet moment so a whole batch of changes triggers one refetch. */
+    private fun refreshDashboardSoon() {
         dashboardRefresh?.cancel()
         dashboardRefresh = viewModelScope.launch {
             delay(DASHBOARD_REFRESH_DELAY_MS)
             refreshDashboardNow()
+        }
+    }
+
+    /**
+     * Takes a card out of the collection: every copy in the row when [wholeRow] is set (or when there is only one),
+     * otherwise just one copy. [done] gets null when it worked, or the server's reason when it didn't (a card that is
+     * in a deck or a product can't be removed, for instance).
+     */
+    fun removeFromCollection(item: CollectionItemDto, wholeRow: Boolean, done: (String?) -> Unit) {
+        viewModelScope.launch {
+            val removeRow = wholeRow || item.quantity <= 1
+            attempt {
+                if (removeRow) {
+                    repo.removeFromCollection(item.id)
+                    null
+                } else {
+                    repo.setCollectionQuantity(item.id, item.quantity - 1)
+                }
+            }
+                .onSuccess { updated ->
+                    when {
+                        removeRow -> _state.update { it.copy(collection = it.collection.without(item.id)) }
+                        updated != null -> _state.update { it.copy(collection = it.collection.replacing(updated)) }
+                        else -> refreshCollectionNow() // it went through, but the server's reply couldn't be read
+                    }
+                    refreshDashboardSoon()
+                    done(null)
+                }
+                .onFailure { error ->
+                    if (removeRow && error is HttpException && error.code() == 404) {
+                        // Already gone (removed somewhere else): that is what was wanted.
+                        _state.update { it.copy(collection = it.collection.without(item.id)) }
+                        done(null)
+                    } else {
+                        done(error.userMessage())
+                    }
+                }
         }
     }
 

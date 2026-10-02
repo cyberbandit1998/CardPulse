@@ -9,12 +9,14 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.unit.dp
 import app.cardpulse.android.camera.CardGuide
 import app.cardpulse.android.core.AddEdits
 import app.cardpulse.android.core.CollectionIndex
@@ -42,6 +44,7 @@ import app.cardpulse.android.ui.screens.PasswordScreen
 import app.cardpulse.android.ui.screens.PortfolioScreen
 import app.cardpulse.android.ui.screens.RapidActions
 import app.cardpulse.android.ui.screens.RapidScreenContent
+import app.cardpulse.android.ui.screens.RemoveChoices
 import app.cardpulse.android.ui.screens.ScanHomeContent
 import app.cardpulse.android.ui.screens.SettingsScreen
 import app.cardpulse.android.ui.theme.CardPulseTheme
@@ -217,7 +220,37 @@ class ScreensScreenshotTest {
 
     @Test
     fun collectionTab() = shoot("11-collection") {
-        CollectionScreen(state = signedIn, onRefresh = {})
+        CollectionScreen(state = signedIn, onRefresh = {}, onRemove = { _, _, _ -> })
+    }
+
+    // --- taking a card out of the collection -------------------------------------------------------
+
+    private val oneCopy = collection.first { it.quantity == 1 && it.card != null }
+    private val severalCopies = collection.first { it.quantity > 1 && it.card != null }
+
+    @Test
+    fun removeOneCard() = shoot("14-remove-one") {
+        Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            RemoveChoices(oneCopy, photoGoesToo = true, busy = false, problem = null, onRemove = {})
+        }
+    }
+
+    @Test
+    fun removeFromSeveralCopies() = shoot("15-remove-several") {
+        Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            RemoveChoices(severalCopies, photoGoesToo = false, busy = false, problem = null, onRemove = {})
+        }
+    }
+
+    @Test
+    fun removeRefusedByTheServer() = shoot("16-remove-refused") {
+        Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            RemoveChoices(
+                severalCopies, photoGoesToo = false, busy = true,
+                problem = "This collection item has 1 copy allocated to Card Lists. Release that copy first.",
+                onRemove = {},
+            )
+        }
     }
 
     @Test

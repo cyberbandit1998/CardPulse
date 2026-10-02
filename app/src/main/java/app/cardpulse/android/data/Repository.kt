@@ -4,6 +4,7 @@ import app.cardpulse.android.api.PokeApi
 import app.cardpulse.android.api.SessionHolder
 import app.cardpulse.android.core.AppJson
 import app.cardpulse.android.core.CollectionItemDto
+import app.cardpulse.android.core.CollectionQuantityRequest
 import app.cardpulse.android.core.DashboardDto
 import app.cardpulse.android.core.DisplayPrefs
 import app.cardpulse.android.core.ForcePasswordRequest
@@ -99,6 +100,17 @@ class Repository(
 
     suspend fun loadMovers(priceField: String): List<MoverDto> =
         api.topMovers(days = 7, priceField = priceField, sortBy = "percentage")
+
+    /** Removes the whole row: every copy of this exact card. The server refuses for cards in a deck or product. */
+    suspend fun removeFromCollection(itemId: Int) {
+        api.deleteCollectionItem(itemId)
+    }
+
+    /** Sets how many copies a row holds. Returns the row as the server now has it, or null if that reply can't be read. */
+    suspend fun setCollectionQuantity(itemId: Int, quantity: Int): CollectionItemDto? {
+        val updated = api.updateCollectionItem(itemId, CollectionQuantityRequest(quantity))
+        return runCatching { json.decodeFromJsonElement(CollectionItemDto.serializer(), updated) }.getOrNull()
+    }
 
     // --- scanning ------------------------------------------------------------------------------
 

@@ -187,6 +187,50 @@ class HttpStackTest {
     }
 
     @Test
+    fun `removing a card deletes its collection row`() = runBlocking {
+        server.enqueue(json("""{"message": "Removed from collection"}"""))
+        repo.removeFromCollection(7)
+        val request = next()
+        assertEquals("DELETE", request.method)
+        assertEquals("/api/collection/7", request.path)
+    }
+
+    @Test
+    fun `a removal counts as done whatever the server answers with`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(204))
+        repo.removeFromCollection(7)
+        assertEquals("/api/collection/7", next().path)
+    }
+
+    @Test
+    fun `a card that cannot be removed shows the server's reason`() = runBlocking {
+        val reason = "This collection item has 1 copy allocated to Card Lists. Release that copy first."
+        server.enqueue(json("""{"detail": "$reason"}""", code = 409))
+        val error = runCatching { repo.removeFromCollection(7) }.exceptionOrNull()
+        assertTrue(error is HttpException)
+        assertEquals(reason, error!!.userMessage())
+    }
+
+    @Test
+    fun `changing the number of copies puts only the quantity and returns the new row`() = runBlocking {
+        server.enqueue(json("""{"id": 3, "card_id": "sv3-125_en", "quantity": 2, "condition": "NM", "variant": "Holo", "lang": "en"}"""))
+        val updated = repo.setCollectionQuantity(3, 2)
+        val request = next()
+        assertEquals("PUT", request.method)
+        assertEquals("/api/collection/3", request.path)
+        assertEquals("""{"quantity":2}""", request.bodyText())
+        assertEquals(2, updated?.quantity)
+        assertEquals("Holo", updated?.variant)
+    }
+
+    @Test
+    fun `a quantity change whose reply cannot be read still went through`() = runBlocking {
+        server.enqueue(json("""{"id": "not a number"}"""))
+        assertNull(repo.setCollectionQuantity(3, 2))
+        assertEquals("/api/collection/3", next().path)
+    }
+
+    @Test
     fun `one unreadable row is reported and does not hide the rest`() = runBlocking {
         val rows = Fixtures.text("collection").trimEnd().removeSuffix("]") + """,{"card_id":"x","quantity":"many"}]"""
         server.enqueue(json(rows))

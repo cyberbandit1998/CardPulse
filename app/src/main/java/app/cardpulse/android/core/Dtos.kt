@@ -117,6 +117,10 @@ data class CollectionItemDto(
         }
 }
 
+/** The body of `PUT /api/collection/{id}` when only the number of copies changes. */
+@Serializable
+data class CollectionQuantityRequest(val quantity: Int)
+
 // ---------------------------------------------------------------------------------------------
 // Portfolio
 // ---------------------------------------------------------------------------------------------

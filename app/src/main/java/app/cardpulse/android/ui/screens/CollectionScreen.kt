@@ -19,12 +19,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +44,7 @@ import app.cardpulse.android.core.MoneyFormatter
 import app.cardpulse.android.core.defaultArtSource
 import app.cardpulse.android.core.hasCatalogueImage
 import app.cardpulse.android.core.parseServerInstant
+import app.cardpulse.android.core.takesItsPhotoWhenRemoved
 import app.cardpulse.android.ui.AccentTextButton
 import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.Banner
@@ -67,6 +70,7 @@ private fun CollectionItemDto.matches(query: String): Boolean {
 fun CollectionScreen(
     state: AppState,
     onRefresh: () -> Unit,
+    onRemove: (item: CollectionItemDto, wholeRow: Boolean, done: (String?) -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
@@ -129,7 +133,7 @@ fun CollectionScreen(
         }
     }
 
-    openItem?.let { entry -> ItemDialog(entry, state, onClose = { openItem = null }) }
+    openItem?.let { entry -> ItemDialog(entry, state, onRemove = onRemove, onClose = { openItem = null }) }
 }
 
 @Composable
@@ -174,14 +178,36 @@ private fun CollectionTile(entry: CollectionItemDto, state: AppState, onClick: (
 private fun Modifier.cardAspect(): Modifier = this.aspectRatio(CARD_ASPECT)
 
 @Composable
-private fun ItemDialog(entry: CollectionItemDto, state: AppState, onClose: () -> Unit) {
+private fun ItemDialog(
+    entry: CollectionItemDto,
+    state: AppState,
+    onRemove: (item: CollectionItemDto, wholeRow: Boolean, done: (String?) -> Unit) -> Unit,
+    onClose: () -> Unit,
+) {
     val money = remember(state.prefs.currency, state.prefs.rateFromEur) { MoneyFormatter(state.prefs.currency, state.prefs.rateFromEur) }
     val hasOfficial = entry.card.hasCatalogueImage()
     var source by remember { mutableStateOf(defaultArtSource(entry, state.prefs.preferOwnPhotos)) }
+    var askToRemove by remember { mutableStateOf(false) }
+
+    if (askToRemove) {
+        RemoveDialog(
+            entry = entry,
+            photoGoesToo = entry.takesItsPhotoWhenRemoved(state.collection),
+            onRemove = { wholeRow, done -> onRemove(entry, wholeRow, done) },
+            onRemoved = onClose, // the card (or its count) has changed, so close the details too
+            onDismiss = { askToRemove = false },
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onClose,
         confirmButton = { AccentTextButton(onClick = onClose) { Text("Close") } },
+        dismissButton = {
+            TextButton(
+                onClick = { askToRemove = true },
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            ) { Text("Remove…") }
+        },
         title = { Text(entry.card?.name.orEmpty()) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {

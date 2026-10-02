@@ -1,6 +1,7 @@
 package app.cardpulse.android.api
 
 import app.cardpulse.android.core.AuthModeDto
+import app.cardpulse.android.core.CollectionQuantityRequest
 import app.cardpulse.android.core.DashboardDto
 import app.cardpulse.android.core.ExchangeRateDto
 import app.cardpulse.android.core.ForcePasswordRequest
@@ -16,6 +17,7 @@ import app.cardpulse.android.core.ScanJobListDto
 import app.cardpulse.android.core.SnapshotDto
 import app.cardpulse.android.core.UserDto
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import okhttp3.MultipartBody
 import okhttp3.ResponseBody
@@ -73,6 +75,14 @@ interface PokeApi {
     /** The whole collection in one response; the server does not paginate. Decoded item by item. */
     @GET("api/collection/")
     suspend fun collection(): JsonArray
+
+    /** Removes a collection row with every copy it holds. Any success answer will do, so nothing is parsed. */
+    @DELETE("api/collection/{id}")
+    suspend fun deleteCollectionItem(@Path("id") itemId: Int)
+
+    /** Changes how many copies a row holds. The answer is the row as the server now has it. */
+    @PUT("api/collection/{id}")
+    suspend fun updateCollectionItem(@Path("id") itemId: Int, @Body body: CollectionQuantityRequest): JsonElement
 
     @GET("api/dashboard/")
     suspend fun dashboard(@Query("price_field") priceField: String): DashboardDto

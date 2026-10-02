@@ -119,7 +119,12 @@ fun CardPulseApp(
                             modifier = contentModifier,
                         )
                         Tab.SCAN -> ScanScreen(app, scanVm, contentModifier)
-                        Tab.COLLECTION -> CollectionScreen(app, onRefresh = appVm::refreshCollection, modifier = contentModifier)
+                        Tab.COLLECTION -> CollectionScreen(
+                            app,
+                            onRefresh = appVm::refreshCollection,
+                            onRemove = appVm::removeFromCollection,
+                            modifier = contentModifier,
+                        )
                         Tab.PORTFOLIO -> PortfolioScreen(
                             state = app,
                             onShowHistory = { range, force -> appVm.showHistory(range, force) },

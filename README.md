@@ -58,7 +58,8 @@ The app warns you if it connects to a server in single-user mode.
 - **Duplicates:** every result says whether the card is new to your collection or how many copies you already own, and
   in which conditions, variants and languages. Until the collection has loaded it says nothing rather than guess.
 - **Collection:** search and sort your whole collection, with official artwork or your own photos (following the
-  "prefer my own photos" setting of your PokéCollector account).
+  "prefer my own photos" setting of your PokéCollector account). Open a card to see its details or remove it: one
+  copy or all of them, after a confirmation.
 - **Portfolio:** total value, gain or loss, a history chart (1W to All), a breakdown, and the week's biggest movers.
   Amounts are shown in the currency chosen in your PokéCollector account.
 

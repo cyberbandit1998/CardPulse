@@ -1,7 +1,3 @@
-**Cancel a scan that keeps spinning.** Tap the spinning card in the tray and press "Cancel scan" (or "Cancel all" if several are stuck). The photo is dropped from the list and its scan is deleted on your server, so you no longer have to remove it in the PokéCollector web app. A card that has shown no progress for two minutes gets a warning mark, and its panel says it may be stuck.
+**Remove a card from your collection.** Open a card in the Collection tab and tap "Remove…". If you own several copies of that exact card you can remove one copy or all of them; with a single copy it is a plain yes or no. Nothing is removed until you confirm, and it can't be undone. If your server refuses (for example, the card is in a deck or a product) the dialog shows its reason. Removing the last row of a card also removes the photo you saved of it, because your server does that.
 
-**Clearer waiting.** The panel now says what a spinning card is waiting for: being sent, waiting its turn on your server, being read, or waiting out a scanner limit (with the time it will try again).
-
-**Fix.** Skipping a card the server was still reading used to fail with "This scan is still being processed". It now cancels it.
-
-This build has the same app ID as build 39, so it installs straight over it.
+This build has the same app ID as the last one, so it installs straight over it.
