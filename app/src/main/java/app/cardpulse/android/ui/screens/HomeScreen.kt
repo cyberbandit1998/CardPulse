@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
@@ -48,14 +47,16 @@ fun HomeScreen(
     val dashboard = state.dashboard
     val byId = remember(state.collection) { state.collection.associateBy { it.id } }
     val coverage = remember(state.collection) { state.collection.costCoverage() }
+    // Everything sits 16 dp in from the edges except the carousel, which runs to them so the next card can peek in.
+    val inset = Modifier.padding(horizontal = 16.dp)
 
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(inset.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("CardPulse", style = MaterialTheme.typography.headlineMedium)
                     Text(
@@ -68,7 +69,7 @@ fun HomeScreen(
                 IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, contentDescription = "Settings") }
             }
             if (state.dashboardLoading || state.collectionLoading) {
-                LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 4.dp))
+                LinearProgressIndicator(inset.fillMaxWidth().padding(top = 4.dp))
             }
         }
 
@@ -77,13 +78,14 @@ fun HomeScreen(
                 Banner(
                     "This server has no sign-in (single-user mode): anyone who can reach it is the administrator. " +
                         "Turn on Multi-User Mode in PokéCollector before exposing it to the internet.",
+                    modifier = inset,
                     isError = true,
                 )
             }
         }
 
         item {
-            ElevatedCard(Modifier.fillMaxWidth()) {
+            ElevatedCard(inset.fillMaxWidth()) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Total value", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
@@ -104,7 +106,7 @@ fun HomeScreen(
 
         if (dashboard != null) {
             item {
-                ElevatedCard(Modifier.fillMaxWidth()) {
+                ElevatedCard(inset.fillMaxWidth()) {
                     Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("Gain or loss against what you paid", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
@@ -134,31 +136,16 @@ fun HomeScreen(
 
         val recents = dashboard?.recentAdditions.orEmpty().mapNotNull { recent -> byId[recent.collectionItemId] }
         if (recents.isNotEmpty()) {
-            item { Text("Recently added", style = MaterialTheme.typography.titleMedium) }
-            item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(recents, key = { it.id }) { entry ->
-                        Column(Modifier.width(96.dp)) {
-                            CardArt(entry, state.serverUrl, state.prefs, Modifier.fillMaxWidth().height((96 / CARD_ASPECT).dp))
-                            Text(
-                                entry.card?.name.orEmpty(),
-                                style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                        }
-                    }
-                }
-            }
+            item { Text("Recently added", style = MaterialTheme.typography.titleMedium, modifier = inset) }
+            item { RecentCarousel(recents, state) }
         }
 
         val tops = dashboard?.topCards.orEmpty()
         if (tops.isNotEmpty()) {
-            item { Text("Most valuable", style = MaterialTheme.typography.titleMedium) }
+            item { Text("Most valuable", style = MaterialTheme.typography.titleMedium, modifier = inset) }
             items(tops, key = { it.collectionItemId }) { top ->
                 val entry = byId[top.collectionItemId]
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(inset.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (entry != null) {
                         CardArt(entry, state.serverUrl, state.prefs, Modifier.width(48.dp).height((48 / CARD_ASPECT).dp))
                     }
@@ -181,6 +168,7 @@ fun HomeScreen(
                     "Nothing loaded yet. Tap the refresh button at the top.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = inset,
                 )
             }
         }

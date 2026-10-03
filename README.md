@@ -47,6 +47,8 @@ The app warns you if it connects to a server in single-user mode.
 
 ## What it does
 
+- **Home:** your total value, gain or loss, the cards worth the most, and the cards you added lately as a carousel of
+  large pictures (1.5 inches wide, true card shape) that swipes sideways one card at a time.
 - **Rapid scan:** the camera stays open while you work through a pile. Each photo is sent to your server the moment
   it is taken and read in the background (up to three at once), so you can photograph the next card straight away.
   Results collect in a tray along the bottom. Photos are kept on the phone until they upload, so a dropped connection or
