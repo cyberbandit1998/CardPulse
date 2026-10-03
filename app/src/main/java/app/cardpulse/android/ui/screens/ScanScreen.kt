@@ -392,7 +392,9 @@ fun RapidScreenContent(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 // The two sides share what the shutter leaves, so it stays in the middle whatever the labels need.
-                // A fixed 96 dp button cut "Review" short, and its count off, once the phone's text size was larger.
+                // A fixed 96 dp button cut "Review" short once the phone's text size was larger. The number waiting is
+                // in the badge at the top, so the button only says what it does: a count squeezed in here would be
+                // cut off on a small phone, and a wrong number is worse than none.
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                     TextButton(onClick = actions.done) { Text("Done", color = Color.White, maxLines = 1) }
                 }
@@ -403,7 +405,7 @@ fun RapidScreenContent(
                         enabled = toReview > 0,
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     ) {
-                        Text(if (toReview > 0) "Review $toReview" else "Review", maxLines = 1, softWrap = false)
+                        Text("Review", maxLines = 1, softWrap = false)
                     }
                 }
             }

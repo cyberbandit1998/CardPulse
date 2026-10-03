@@ -317,7 +317,7 @@ class ScreensScreenshotTest {
 
     @Test
     fun rapidScanWithManyCardsToReview() {
-        // The button's label has to fit "Review 12", not only "Review".
+        // The badge at the top counts them; the button only says what it does.
         val ready = (1L..12L).map { id -> entry(id, item = done(id.toInt(), match("sv3-125_en", "Charizard ex"))) }
         rapid(ready)
         capture("3d-rapid-many-to-review")

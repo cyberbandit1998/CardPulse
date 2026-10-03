@@ -1,3 +1,3 @@
-**Recently added cards are now a carousel.** On the Home tab the cards you added lately are shown large, 1.5 inches wide, and swipe sideways one at a time with the next card peeking in at the edge; dots below show where you are. Each card keeps its real shape, so nothing is cropped or stretched (at that width a card is about 2.1 inches tall). Under each one: its name, set and number, rarity, condition, variant and language, and the day you added it. A badge shows how many copies you have when it is more than one.
+**Fix: the "Review" button on the camera screen was cut off.** On some phones it read "Revie". The button is now as wide as its label needs, including with a larger text size, and the shutter button stays in the middle. The button no longer carries a number (it was always cut off); the badge at the top still says how many cards are waiting.
 
 This build has the same app ID as the last one, so it installs straight over it.
