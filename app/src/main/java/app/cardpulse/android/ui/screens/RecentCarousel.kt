@@ -58,7 +58,9 @@ private const val MAX_DOTS = 12
 @Composable
 fun RecentCarousel(cards: List<CollectionItemDto>, state: AppState, modifier: Modifier = Modifier) {
     BoxWithConstraints(modifier.fillMaxWidth()) {
-        val cardWidth = minOf(CAROUSEL_CARD_WIDTH, maxWidth * MAX_CARD_SHARE)
+        // Kept in a local: inside the Column below, the box's own scope can no longer be reached for maxWidth.
+        val available = maxWidth
+        val cardWidth = minOf(CAROUSEL_CARD_WIDTH, available * MAX_CARD_SHARE)
         val side = 16.dp
         val gap = 12.dp
         val listState = rememberLazyListState()
@@ -75,7 +77,7 @@ fun RecentCarousel(cards: List<CollectionItemDto>, state: AppState, modifier: Mo
             LazyRow(
                 state = listState,
                 // Room after the last card, so that card can come to the start edge like every other.
-                contentPadding = PaddingValues(start = side, end = maxOf(side, maxWidth - cardWidth - side)),
+                contentPadding = PaddingValues(start = side, end = maxOf(side, available - cardWidth - side)),
                 horizontalArrangement = Arrangement.spacedBy(gap),
                 flingBehavior = rememberSnapFlingBehavior(listState),
             ) {
