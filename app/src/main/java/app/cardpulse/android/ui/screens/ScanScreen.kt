@@ -390,12 +390,21 @@ fun RapidScreenContent(
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                TextButton(onClick = actions.done, modifier = Modifier.width(96.dp)) { Text("Done", color = Color.White) }
+                // The two sides share what the shutter leaves, so it stays in the middle whatever the labels need.
+                // A fixed 96 dp button cut "Review" short, and its count off, once the phone's text size was larger.
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                    TextButton(onClick = actions.done) { Text("Done", color = Color.White, maxLines = 1) }
+                }
                 ShutterButton(enabled = canShoot && !capturing, onClick = actions.shutter)
-                Button(onClick = actions.review, enabled = toReview > 0, modifier = Modifier.width(96.dp)) {
-                    Text(if (toReview > 0) "Review $toReview" else "Review", maxLines = 1)
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                    Button(
+                        onClick = actions.review,
+                        enabled = toReview > 0,
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    ) {
+                        Text(if (toReview > 0) "Review $toReview" else "Review", maxLines = 1, softWrap = false)
+                    }
                 }
             }
         }

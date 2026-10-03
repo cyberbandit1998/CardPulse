@@ -12,10 +12,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import app.cardpulse.android.camera.CardGuide
 import app.cardpulse.android.core.AddEdits
@@ -172,22 +175,32 @@ class ScreensScreenshotTest {
 
     private fun ownership(entry: ScanEntry): Ownership = entry.match?.let { index.ownershipOf(it) } ?: Ownership.Unknown
 
-    private fun rapid(entries: List<ScanEntry>, openId: Long? = null, message: String? = null, currency: String = "USD") {
+    /** [fontScale] above 1 is a phone set to a larger text size. */
+    private fun rapid(
+        entries: List<ScanEntry>,
+        openId: Long? = null,
+        message: String? = null,
+        currency: String = "USD",
+        fontScale: Float = 1f,
+    ) {
         compose.setContent {
             CardPulseTheme {
-                RapidScreenContent(
-                    entries = entries,
-                    openId = openId,
-                    message = message,
-                    serverUrl = "https://cards.example.com/",
-                    currency = currency,
-                    rateFromEur = 1.1,
-                    ownership = { ownership(it) },
-                    capturing = false,
-                    canShoot = true,
-                    preview = { CameraStandIn() },
-                    actions = RapidActions(),
-                )
+                val density = LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
+                    RapidScreenContent(
+                        entries = entries,
+                        openId = openId,
+                        message = message,
+                        serverUrl = "https://cards.example.com/",
+                        currency = currency,
+                        rateFromEur = 1.1,
+                        ownership = { ownership(it) },
+                        capturing = false,
+                        canShoot = true,
+                        preview = { CameraStandIn() },
+                        actions = RapidActions(),
+                    )
+                }
             }
         }
         compose.waitForIdle()
@@ -300,6 +313,29 @@ class ScreensScreenshotTest {
     fun rapidScanBeforeTheFirstPhoto() {
         rapid(emptyList())
         capture("30-rapid-empty")
+    }
+
+    @Test
+    fun rapidScanWithManyCardsToReview() {
+        // The button's label has to fit "Review 12", not only "Review".
+        val ready = (1L..12L).map { id -> entry(id, item = done(id.toInt(), match("sv3-125_en", "Charizard ex"))) }
+        rapid(ready)
+        capture("3d-rapid-many-to-review")
+    }
+
+    @Test
+    fun rapidScanWithLargeText() {
+        // A phone set to a bigger text size: the labels at the bottom must still be read in full.
+        rapid(trayEntries, fontScale = 1.5f)
+        capture("3e-rapid-large-text")
+    }
+
+    @Test
+    @Config(qualifiers = "w320dp-h640dp-xhdpi")
+    fun rapidScanWithLargeTextOnASmallPhone() {
+        val ready = (1L..12L).map { id -> entry(id, item = done(id.toInt(), match("sv3-125_en", "Charizard ex"))) }
+        rapid(ready, fontScale = 1.3f)
+        capture("3f-rapid-large-text-small-phone")
     }
 
     @Test
