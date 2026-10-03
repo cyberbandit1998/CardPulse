@@ -662,11 +662,16 @@ class ScanSessionTest {
 
     @Test
     fun `photos left over from an earlier run are sent, once each`() = runBlocking {
+        // Uploads wait, so the second call below is really made while the photos are still unsent. Without this a
+        // fast upload could finish in between and rename its file, and the same photo would no longer be recognised.
+        val gate = CompletableDeferred<Unit>()
+        backend.enqueueGate = gate
         val first = photo("a")
         val second = photo("b")
         session.resumeLocal(listOf(second, first))
         session.resumeLocal(listOf(first, second)) // asking again adds nothing
         assertEquals(2, session.state.value.entries.size)
+        gate.complete(Unit)
 
         val state = await { s -> s.entries.all { it.upload == Upload.SENT } }
         assertEquals(listOf("sent-b.jpg", "sent-a.jpg"), state.entries.map { it.photo!!.name })
