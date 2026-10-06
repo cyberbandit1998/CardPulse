@@ -7,19 +7,29 @@ import android.os.Looper
 import android.view.PixelCopy
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -27,6 +37,9 @@ import app.cardpulse.android.camera.CardGuide
 import app.cardpulse.android.core.AddEdits
 import app.cardpulse.android.core.AddedNote
 import app.cardpulse.android.core.CardDto
+import app.cardpulse.android.core.ChartPoint
+import app.cardpulse.android.core.ChecklistCardDto
+import app.cardpulse.android.core.CollectionFilter
 import app.cardpulse.android.core.CollectionIndex
 import app.cardpulse.android.core.CollectionItemDto
 import app.cardpulse.android.core.CustomCardForm
@@ -35,6 +48,7 @@ import app.cardpulse.android.core.DisplayPrefs
 import app.cardpulse.android.core.Fixtures
 import app.cardpulse.android.core.ManualAddState
 import app.cardpulse.android.core.ManualMode
+import app.cardpulse.android.core.MoneyFormatter
 import app.cardpulse.android.core.MoverDto
 import app.cardpulse.android.core.Ownership
 import app.cardpulse.android.core.ScanEntry
@@ -42,15 +56,18 @@ import app.cardpulse.android.core.ScanItemDto
 import app.cardpulse.android.core.ScanJobDto
 import app.cardpulse.android.core.ScanMatchDto
 import app.cardpulse.android.core.ScanOutcome
+import app.cardpulse.android.core.SetChecklistDto
 import app.cardpulse.android.core.SetDto
 import app.cardpulse.android.core.SnapshotDto
 import app.cardpulse.android.core.ThemeMode
 import app.cardpulse.android.core.Upload
 import app.cardpulse.android.core.UserDto
+import app.cardpulse.android.core.filterOptions
 import app.cardpulse.android.core.lookup
 import app.cardpulse.android.core.ownershipOf
 import app.cardpulse.android.core.toChartPoints
 import app.cardpulse.android.data.ScanPrefs
+import app.cardpulse.android.ui.screens.CollectionFilterContent
 import app.cardpulse.android.ui.screens.CollectionScreen
 import app.cardpulse.android.ui.screens.HomeScreen
 import app.cardpulse.android.ui.screens.LoginScreen
@@ -62,6 +79,7 @@ import app.cardpulse.android.ui.screens.PortfolioScreen
 import app.cardpulse.android.ui.screens.RapidActions
 import app.cardpulse.android.ui.screens.RapidScreenContent
 import app.cardpulse.android.ui.screens.RemoveChoices
+import app.cardpulse.android.ui.screens.SetChecklistScreen
 import app.cardpulse.android.ui.screens.SettingsScreen
 import app.cardpulse.android.ui.screens.SetsScreen
 import app.cardpulse.android.ui.theme.CardPulseTheme
@@ -77,6 +95,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 /**
  * Draws every screen with realistic fake data and saves a picture of each, so layout and colour problems can be
@@ -263,13 +283,41 @@ class ScreensScreenshotTest {
 
     private val homeState = signedIn.copy(collection = richCollection)
 
-    // For the Sets tab: one set whose name needs two lines, and one that is complete (its bar turns green).
-    private val paldea = SetDto(id = "sv2_en", tcgSetId = "sv2", name = "Scarlet & Violet—Paldea Evolved", total = 279, printedTotal = 193)
+    // For the Sets tab: the server's list of sets (seven English ones), one more whose name needs two lines, and one that is
+    // complete (its bar turns green). The collection owns cards from several of them, and from the German Obsidian Flames,
+    // the 30th Celebration and Journey Together, which the list does not have.
+    private val paldeaLong = SetDto(
+        id = "sv2pe_en", tcgSetId = "sv2pe", name = "Scarlet & Violet—Paldea Evolved Elite", series = "Scarlet & Violet",
+        total = 279, printedTotal = 193, releaseDate = "2023-06-10",
+    )
     private val trickOrTrade = SetDto(id = "tot_en", tcgSetId = "tot", name = "Trick or Trade", total = 6, printedTotal = 6)
+    private val catalogue: List<SetDto> = Fixtures.decode<List<SetDto>>("sets") + paldeaLong + trickOrTrade
     private val setsState = homeState.copy(
         collection = richCollection +
-            (1..40).map { owned(300 + it, "sv2-$it", "Card $it", paldea, "%03d".format(it)) } +
+            (1..40).map { owned(300 + it, "sv2pe-$it", "Card $it", paldeaLong, "%03d".format(it)) } +
             (1..6).map { owned(400 + it, "tot-$it", "Card $it", trickOrTrade, "%03d".format(it)) },
+        sets = catalogue,
+        setsLoaded = true,
+    )
+
+    // For the checklist: the real one for Obsidian Flames (six cards, two owned), the real one for a set with none owned, and
+    // a longer one made up so the grid has a mix: every other card of the 30th Celebration is one the collection holds.
+    private val flamesChecklist = Fixtures.decode<SetChecklistDto>("set_checklist")
+    private val paldeaChecklist = Fixtures.decode<SetChecklistDto>("set_checklist_unowned_set")
+    private val celebrationChecklist = SetChecklistDto(
+        set = celebration,
+        cards = (1..36).map { number ->
+            val held = number % 2 == 1 // cel-1 to cel-18 are in the collection
+            ChecklistCardDto(
+                id = if (held) "cel-${(number + 1) / 2}" else "cel-gap-$number",
+                name = "Card $number",
+                number = "%03d".format(number),
+                imagesSmall = "https://img.example/cel-$number.png",
+            )
+        },
+    )
+    private val checklistState = setsState.copy(
+        checklists = mapOf("sv3_en" to flamesChecklist, "sv2_en" to paldeaChecklist, "cel_en" to celebrationChecklist),
     )
 
     @Composable
@@ -283,6 +331,16 @@ class ScreensScreenshotTest {
     private fun SetsWithBar(state: AppState) {
         Scaffold(bottomBar = { CardPulseBottomBar(selected = MainTab.SETS, onSelect = {}, onScanNow = {}) }) { padding ->
             SetsScreen(state = state, onOpenSet = {}, modifier = Modifier.padding(padding))
+        }
+    }
+
+    @Composable
+    private fun Checklist(state: AppState, setId: String) {
+        Scaffold { padding ->
+            SetChecklistScreen(
+                setId = setId, state = state, onBack = {}, onLoad = {}, onRemove = { _, _, _ -> },
+                modifier = Modifier.padding(padding), onShowInCollection = {},
+            )
         }
     }
 
@@ -357,16 +415,87 @@ class ScreensScreenshotTest {
     // --- the Sets tab ----------------------------------------------------------------------------------------
 
     @Test
-    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    @Config(qualifiers = "w360dp-h900dp-xxhdpi")
     fun setsTab() = shoot("1e-sets") { SetsWithBar(setsState) }
 
     @Test
-    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    @Config(qualifiers = "w360dp-h900dp-xxhdpi")
     fun setsTabLight() = shoot("1e-sets-light", dark = false) { SetsWithBar(setsState) }
 
     @Test
-    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
-    fun setsTabBeforeAnythingIsOwned() = shoot("1e-sets-empty") { SetsWithBar(homeState.copy(collection = emptyList())) }
+    @Config(qualifiers = "w360dp-h900dp-xxhdpi")
+    fun setsTabOnlyTheCompleteSets() {
+        compose.setContent { CardPulseTheme { SetsWithBar(setsState) } }
+        compose.onNode(hasText("Complete (", substring = true)).performClick()
+        capture("1e-sets-complete")
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h900dp-xxhdpi")
+    fun setsTabOnlyTheSetsYouOwnInTheLightTheme() {
+        compose.setContent { CardPulseTheme(darkTheme = false) { SetsWithBar(setsState) } }
+        compose.onNode(hasText("Owned (", substring = true)).performClick()
+        capture("1e-sets-owned-light")
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h900dp-xxhdpi")
+    fun setsTabBeforeAnythingIsOwned() = shoot("1e-sets-nothing-owned") { SetsWithBar(setsState.copy(collection = emptyList())) }
+
+    @Test
+    @Config(qualifiers = "w360dp-h900dp-xxhdpi")
+    fun setsTabWhileTheListIsOnItsWay() = shoot("1e-sets-loading") {
+        SetsWithBar(homeState.copy(sets = emptyList(), setsLoaded = false, setsLoading = true))
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h900dp-xxhdpi")
+    fun setsTabWhenTheListCannotBeHad() = shoot("1e-sets-error") {
+        SetsWithBar(
+            homeState.copy(
+                sets = emptyList(), setsLoaded = false,
+                setsError = "Can't connect to the server. Check the address and that it is running.",
+            ),
+        )
+    }
+
+    // --- a set's checklist ------------------------------------------------------------------------------------
+
+    @Test
+    @Config(qualifiers = "w360dp-h1300dp-xxhdpi")
+    fun checklist() = shoot("1h-checklist") { Checklist(checklistState, "cel_en") }
+
+    @Test
+    @Config(qualifiers = "w360dp-h1300dp-xxhdpi")
+    fun checklistLight() = shoot("1h-checklist-light", dark = false) { Checklist(checklistState, "cel_en") }
+
+    @Test
+    @Config(qualifiers = "w360dp-h1300dp-xxhdpi")
+    fun checklistOnlyWhatIsMissing() {
+        compose.setContent { CardPulseTheme { Checklist(checklistState, "cel_en") } }
+        compose.onNode(hasText("Missing (", substring = true)).performClick()
+        capture("1h-checklist-missing")
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h900dp-xxhdpi")
+    fun checklistOfTheRealServerData() = shoot("1h-checklist-obsidian-flames") { Checklist(checklistState, "sv3_en") }
+
+    @Test
+    @Config(qualifiers = "w360dp-h900dp-xxhdpi")
+    fun checklistOfASetNothingIsOwnedFrom() = shoot("1h-checklist-none-owned") { Checklist(checklistState, "sv2_en") }
+
+    @Test
+    @Config(qualifiers = "w360dp-h900dp-xxhdpi")
+    fun checklistWhileTheCardsComeIn() = shoot("1h-checklist-loading") {
+        Checklist(checklistState.copy(checklists = emptyMap(), checklistsLoading = setOf("sv3_en")), "sv3_en")
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h900dp-xxhdpi")
+    fun checklistWhenTheCardsCannotBeHad() = shoot("1h-checklist-error") {
+        Checklist(checklistState.copy(checklists = emptyMap(), checklistErrors = mapOf("sv3_en" to "Set not found")), "sv3_en")
+    }
 
     @Test
     fun collectionTab() = shoot("11-collection") {
@@ -376,6 +505,48 @@ class ScreensScreenshotTest {
     @Test
     fun collectionTabLight() = shoot("11-collection-light", dark = false) {
         CollectionScreen(state = signedIn, onRefresh = {}, onRemove = { _, _, _ -> }, onAddCard = {})
+    }
+
+    /** What the Filter dialog holds, drawn on its own: the dialog is a window of its own, which the pictures cannot see. */
+    @Composable
+    private fun FilterSheet(filter: CollectionFilter) {
+        val options = collection.filterOptions("price_trend", 1.1)
+        val money = MoneyFormatter("USD", 1.1)
+        Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Surface(shape = RoundedCornerShape(28.dp), tonalElevation = 6.dp) {
+                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text("Filter", style = MaterialTheme.typography.headlineSmall)
+                    CollectionFilterContent(options, filter, money, onChange = {})
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = {}, enabled = filter.isActive) { Text("Clear all") }
+                        AccentTextButton(onClick = {}) { Text("Show entries") }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h900dp-xxhdpi")
+    fun collectionFilterNothingChosen() = shoot("11-collection-filter") { FilterSheet(CollectionFilter()) }
+
+    @Test
+    @Config(qualifiers = "w360dp-h900dp-xxhdpi")
+    fun collectionFilterWithChoicesInTheLightTheme() = shoot("11-collection-filter-light", dark = false) {
+        FilterSheet(CollectionFilter(rarities = setOf("Double Rare"), variants = setOf("Holo"), minValue = 5.0, missingPrice = true))
+    }
+
+    @Test
+    fun collectionWhileAFilterIsOn() {
+        compose.setContent {
+            CardPulseTheme {
+                CollectionScreen(state = signedIn, onRefresh = {}, onRemove = { _, _, _ -> }, onAddCard = {})
+            }
+        }
+        compose.onNodeWithText("Filter").performClick()
+        compose.onNodeWithText("Double Rare").performClick()
+        compose.onNode(hasText("Show ", substring = true)).performClick()
+        capture("11-collection-filtered")
     }
 
     // --- taking a card out of the collection -------------------------------------------------------
@@ -418,6 +589,15 @@ class ScreensScreenshotTest {
     @Config(qualifiers = "w360dp-h1300dp-xxhdpi")
     fun portfolioLight() = shoot("12-portfolio-light", dark = false) {
         PortfolioScreen(state = signedIn, onShowHistory = { _, _ -> })
+    }
+
+    /** A collection that went from 17 cents to 115 euros in a month: the amount, and no "+68246.7%". */
+    @Test
+    @Config(qualifiers = "w360dp-h1300dp-xxhdpi")
+    fun portfolioThatStartedFromAlmostNothing() = shoot("12-portfolio-tiny-start") {
+        val first = Instant.parse("2026-09-06T00:00:00Z")
+        val grown = (0..10).map { step -> ChartPoint(first.plus(step * 3L, ChronoUnit.DAYS), 0.1685 + 115.02 * (step / 10.0) * (step / 10.0)) }
+        PortfolioScreen(state = signedIn.copy(history = grown), onShowHistory = { _, _ -> })
     }
 
     @Test

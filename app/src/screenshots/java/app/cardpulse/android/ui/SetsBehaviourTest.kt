@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -23,8 +24,10 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
- * Uses the Sets tab the way a person would: looks at the list, searches it, puts it in another order and taps a set. The
- * screen is tall so every row is on it at once. Like the screen pictures it only runs when asked for (`-Pscreenshots`).
+ * Uses the Sets tab the way a person would: looks at the list of every set, narrows it with the chips and the search, puts
+ * it in another order and taps a set. The data is what the server really sent: its list of sets (seven English ones) and a
+ * collection that owns cards from four sets, one of them the German Obsidian Flames, which is not on the list. The screen is
+ * tall so every row is on it at once. Like the screen pictures it only runs when asked for (`-Pscreenshots`).
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -33,18 +36,16 @@ class SetsBehaviourTest {
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
 
-    private val celebration = SetDto(id = "cel_en", tcgSetId = "cel", name = "30th Celebration", total = 132, printedTotal = 132)
+    private val catalogue = Fixtures.decode<List<SetDto>>("sets")
+    private val collection = Fixtures.decode<List<CollectionItemDto>>("collection")
 
-    // The fixture owns Obsidian Flames (2 cards of 230), Obsidian-Flammen (1 of 230), Scarlet & Violet (1 of 258) and Promo Set
-    // (1 of 10); the 30th Celebration is added here: 18 of 132.
-    private val collection: List<CollectionItemDto> =
-        Fixtures.decode<List<CollectionItemDto>>("collection") +
-            (1..18).map { n ->
-                CollectionItemDto(
-                    id = 100 + n, cardId = "cel-$n",
-                    card = CardDto(id = "cel-$n", name = "Card $n", number = "$n", setId = "cel", setRef = celebration),
-                )
-            }
+    /** Nine more Promo Set cards: with the one the fixture owns that is all ten, so the set is complete. */
+    private val restOfPromoSet: List<CollectionItemDto> = (1..9).map { n ->
+        CollectionItemDto(
+            id = 900 + n, cardId = "sv9-$n",
+            card = CardDto(id = "sv9-$n", name = "Promo $n", setRef = catalogue.first { it.id == "sv9_en" }),
+        )
+    }
 
     private val state = AppState(
         booting = false,
@@ -53,12 +54,17 @@ class SetsBehaviourTest {
         prefs = DisplayPrefs(currency = "USD", rateFromEur = 1.1),
         collection = collection,
         collectionLoaded = true,
+        sets = catalogue,
+        setsLoaded = true,
     )
 
-    private val everySet = listOf("30th Celebration", "Obsidian Flames", "Obsidian-Flammen", "Promo Set", "Scarlet & Violet")
+    private val everySet = listOf(
+        "Promo Set", "Obsidian Flames", "Obsidian-Flammen", "Scarlet & Violet",
+        "Newly Announced Set", "Paldea Evolved", "Silver Tempest", "Base Set",
+    )
 
-    private fun show(shown: AppState = state, onOpenSet: (String) -> Unit = {}) {
-        compose.setContent { CardPulseTheme { SetsScreen(state = shown, onOpenSet = onOpenSet) } }
+    private fun show(shown: AppState = state, onOpenSet: (String) -> Unit = {}, onLoadSets: (Boolean) -> Unit = {}) {
+        compose.setContent { CardPulseTheme { SetsScreen(state = shown, onOpenSet = onOpenSet, onLoadSets = onLoadSets) } }
     }
 
     /** The sets that are on the screen, top to bottom. */
@@ -70,53 +76,115 @@ class SetsBehaviourTest {
         compose.onNode(hasSetTextAction()).performTextInput(text)
     }
 
+    // --- every set -----------------------------------------------------------------------------------
+
     @Test
-    fun listsEverySetTheCollectionHasACardFrom() {
+    fun listsEverySetTheServerHasAndTheOnesYouOwnThatItDoesNot() {
         show()
+        // Seven sets on the server's list, and the German Obsidian Flames, which only your collection knows about.
         assertEquals(everySet.toSet(), shownSets().toSet())
-        compose.onNodeWithText("5 sets · 23 different cards").assertExists()
     }
 
     @Test
-    fun startsWithTheSetsClosestToFinished() {
+    fun showsHowMuchOfEachSetIsOwnedAndZeroForTheRest() {
         show()
-        assertEquals(
-            listOf("30th Celebration", "Promo Set", "Obsidian Flames", "Obsidian-Flammen", "Scarlet & Violet"),
-            shownSets(),
-        )
+        for (count in listOf("1 / 10", "2 / 230", "1 / 230", "1 / 258", "0 / —", "0 / 279", "0 / 245", "0 / 102")) {
+            compose.onNodeWithText(count).assertExists()
+        }
+    }
+
+    @Test
+    fun startsWithTheSetsYouOwnClosestToFinishedThenTheNewestSets() {
+        show()
+        assertEquals(everySet, shownSets()) // Promo Set 10%, Flames, Flammen, Scarlet & Violet, then by release date
+    }
+
+    @Test
+    fun theSubtitleSaysHowManySetsAreStarted() {
+        show()
+        compose.onNodeWithText("4 of 8 sets started · 5 cards").assertExists()
+    }
+
+    // --- the filters --------------------------------------------------------------------------------
+
+    @Test
+    fun theFiltersCarryTheirCounts() {
+        show()
+        for (chip in listOf("All (8)", "Owned (4)", "Incomplete (4)", "Complete (0)")) compose.onNodeWithText(chip).assertExists()
+    }
+
+    @Test
+    fun ownedShowsOnlySetsWithCards() {
+        show()
+        compose.onNodeWithText("Owned (4)").performClick()
+        assertEquals(listOf("Promo Set", "Obsidian Flames", "Obsidian-Flammen", "Scarlet & Violet"), shownSets())
+        compose.onNodeWithText("All (8)").performClick()
+        assertEquals(everySet, shownSets())
+    }
+
+    @Test
+    fun incompleteAndCompleteTellStartedFromFinished() {
+        show(state.copy(collection = collection + restOfPromoSet))
+        for (chip in listOf("Owned (4)", "Incomplete (3)", "Complete (1)")) compose.onNodeWithText(chip).assertExists()
+        compose.onNodeWithText("Complete (1)").performClick()
+        assertEquals(listOf("Promo Set"), shownSets())
+        compose.onNodeWithText("Incomplete (3)").performClick()
+        assertEquals(listOf("Obsidian Flames", "Obsidian-Flammen", "Scarlet & Violet"), shownSets())
+    }
+
+    @Test
+    fun saysSoWhenNoSetIsComplete() {
+        show()
+        compose.onNodeWithText("Complete (0)").performClick()
+        assertEquals(emptyList<String>(), shownSets())
+        compose.onNodeWithText("No set is complete yet.").assertExists()
+    }
+
+    @Test
+    fun theCountsFollowTheSearchAndAFilterCanLeaveNothing() {
+        show()
+        search("obsidian")
+        assertEquals(listOf("Obsidian Flames", "Obsidian-Flammen"), shownSets())
+        for (chip in listOf("All (2)", "Owned (2)", "Incomplete (2)", "Complete (0)")) compose.onNodeWithText(chip).assertExists()
+        search(" zzz")
+        compose.onNodeWithText("No set matches “obsidian zzz”.").assertExists()
+    }
+
+    @Test
+    fun aFilterAndASearchTogetherSayWhichLeftNothing() {
+        show()
+        search("paldea")
+        compose.onNodeWithText("Owned (0)").performClick()
+        compose.onNodeWithText("No owned set matches “paldea”.").assertExists()
+    }
+
+    // --- searching and ordering ---------------------------------------------------------------
+
+    @Test
+    fun searchFindsASetByItsPrintedCodeOrItsSeries() {
+        show()
+        search("obf")
+        assertEquals(listOf("Obsidian Flames", "Obsidian-Flammen"), shownSets())
     }
 
     @Test
     fun canBePutInOrderOfName() {
         show()
         compose.onNodeWithText("Name").performClick()
-        assertEquals(listOf("30th Celebration", "Obsidian Flames", "Obsidian-Flammen", "Promo Set", "Scarlet & Violet"), shownSets())
+        assertEquals(
+            listOf("Base Set", "Newly Announced Set", "Obsidian Flames", "Obsidian-Flammen", "Paldea Evolved", "Promo Set", "Scarlet & Violet", "Silver Tempest"),
+            shownSets(),
+        )
     }
 
     @Test
     fun canBePutInOrderOfHowManyCardsAreOwned() {
         show()
         compose.onNodeWithText("Cards").performClick()
-        assertEquals(listOf("30th Celebration", "Obsidian Flames", "Promo Set", "Obsidian-Flammen", "Scarlet & Violet"), shownSets())
-        // And back again.
-        compose.onNodeWithText("Progress").performClick()
-        assertEquals(listOf("30th Celebration", "Promo Set", "Obsidian Flames", "Obsidian-Flammen", "Scarlet & Violet"), shownSets())
-    }
-
-    @Test
-    fun searchNarrowsTheListAsYouType() {
-        show()
-        search("obsidian")
-        assertEquals(listOf("Obsidian Flames", "Obsidian-Flammen"), shownSets())
-        search(" flames")
-        assertEquals(listOf("Obsidian Flames"), shownSets())
-    }
-
-    @Test
-    fun searchAlsoKnowsASetsCode() {
-        show()
-        search("sv3") // Obsidian Flames, in English and in German
-        assertEquals(listOf("Obsidian Flames", "Obsidian-Flammen"), shownSets())
+        assertEquals(
+            listOf("Obsidian Flames", "Promo Set", "Obsidian-Flammen", "Scarlet & Violet", "Base Set", "Newly Announced Set", "Paldea Evolved", "Silver Tempest"),
+            shownSets(),
+        )
     }
 
     @Test
@@ -127,33 +195,61 @@ class SetsBehaviourTest {
         compose.onNodeWithText("No set matches “zzz”.").assertExists()
     }
 
+    // --- opening a set -------------------------------------------------------------------------------
+
     @Test
-    fun tappingASetPassesItsName() {
-        var opened: String? = null
-        show(onOpenSet = { opened = it })
+    fun tappingASetPassesItsIdWhetherOrNotYouOwnItsCards() {
+        val opened = mutableListOf<String>()
+        show(onOpenSet = { opened += it })
         compose.onNodeWithText("Promo Set").performClick()
-        assertEquals("Promo Set", opened)
+        compose.onNodeWithText("Paldea Evolved").performClick()
+        compose.onNodeWithText("Obsidian-Flammen").performClick()
+        assertEquals(listOf("sv9_en", "sv2_en", "sv3_de"), opened)
+    }
+
+    // --- loading the list --------------------------------------------------------------------------
+
+    @Test
+    fun asksForTheListWhenOpenedAndAgainOnRefresh() {
+        val asked = mutableListOf<Boolean>()
+        show(onLoadSets = { asked += it })
+        compose.waitForIdle()
+        assertEquals(listOf(false), asked)
+        compose.onNodeWithContentDescription("Refresh the sets").performClick()
+        assertEquals(listOf(false, true), asked)
     }
 
     @Test
-    fun aSetFoundBySearchCanBeTappedToo() {
-        var opened: String? = null
-        show(onOpenSet = { opened = it })
-        search("celebration")
-        compose.onNodeWithText("30th Celebration").performClick()
-        assertEquals("30th Celebration", opened)
+    fun untilTheListArrivesItShowsTheSetsYouOwn() {
+        show(state.copy(sets = emptyList(), setsLoaded = false, setsLoading = true))
+        assertEquals(listOf("Promo Set", "Obsidian Flames", "Obsidian-Flammen", "Scarlet & Violet"), shownSets())
+        compose.onNodeWithText("Loading every set…").assertExists()
     }
 
     @Test
-    fun saysSoBeforeAnyCardIsOwned() {
-        show(state.copy(collection = emptyList()))
-        compose.onNodeWithText("No sets yet", substring = true).assertExists()
+    fun ifTheListCannotBeHadItSaysWhyAndOffersToTryAgain() {
+        val asked = mutableListOf<Boolean>()
+        show(
+            state.copy(sets = emptyList(), setsLoaded = false, setsError = "Can't connect to the server. Check the address and that it is running."),
+            onLoadSets = { asked += it },
+        )
+        compose.onNodeWithText("Couldn't load every set. Can't connect to the server. Check the address and that it is running.").assertExists()
+        compose.onNodeWithText("Showing only the sets you have cards from").assertExists()
+        assertEquals(listOf("Promo Set", "Obsidian Flames", "Obsidian-Flammen", "Scarlet & Violet"), shownSets()) // not empty for no reason
+        compose.onNodeWithText("Try again").performClick()
+        assertEquals(listOf(false, true), asked)
     }
 
     @Test
-    fun saysItIsLoadingWhileTheCollectionIsOnItsWay() {
-        show(state.copy(collection = emptyList(), collectionLoaded = false, collectionLoading = true))
-        compose.onNodeWithText("Loading your sets…").assertExists()
-        compose.onNodeWithText("No sets yet", substring = true).assertDoesNotExist()
+    fun aFailedRefreshKeepsTheListItHas() {
+        show(state.copy(setsError = "The server took too long to answer. Try again."))
+        assertEquals(everySet, shownSets())
+        compose.onNodeWithText("Couldn't refresh the sets. The server took too long to answer. Try again.").assertExists()
+    }
+
+    @Test
+    fun saysSoWhenTheServerListsNoSets() {
+        show(state.copy(sets = emptyList(), collection = emptyList()))
+        compose.onNodeWithText("The server lists no sets yet.").assertExists()
     }
 }
