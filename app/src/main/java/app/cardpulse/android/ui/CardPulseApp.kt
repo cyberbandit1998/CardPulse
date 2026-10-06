@@ -26,16 +26,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.cardpulse.android.core.toReview
 import app.cardpulse.android.ui.screens.CollectionScreen
-import app.cardpulse.android.ui.screens.HomeList
-import app.cardpulse.android.ui.screens.HomeListScreen
 import app.cardpulse.android.ui.screens.HomeScreen
 import app.cardpulse.android.ui.screens.LoginScreen
 import app.cardpulse.android.ui.screens.ManualAddScreen
+import app.cardpulse.android.ui.screens.MostValuableScreen
 import app.cardpulse.android.ui.screens.PasswordScreen
 import app.cardpulse.android.ui.screens.PortfolioScreen
 import app.cardpulse.android.ui.screens.ScanScreen
 import app.cardpulse.android.ui.screens.SettingsScreen
+import app.cardpulse.android.ui.screens.SetsScreen
 import app.cardpulse.android.ui.theme.LocalDarkTheme
 import app.cardpulse.android.ui.theme.SystemBarIcons
 
@@ -46,19 +47,25 @@ fun CardPulseApp(
 ) {
     val app by appVm.state.collectAsState()
     val scan by scanVm.state.collectAsState()
+    val session by scanVm.session.state.collectAsState()
     var tab by rememberSaveable { mutableIntStateOf(MainTab.HOME.ordinal) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showManualAdd by rememberSaveable { mutableStateOf(false) }
-    /** Which of Home's full lists is open (an index into [HomeList.entries]), or -1 when none is. */
-    var homeList by rememberSaveable { mutableIntStateOf(-1) }
+    /** The full list that "See all" under Most valuable opens. */
+    var showMostValuable by rememberSaveable { mutableStateOf(false) }
     /** What the Collection tab's search box starts with: a set's name, when the user came from that set's progress. */
     var collectionSearch by rememberSaveable { mutableStateOf("") }
     // Signing out (or the session ending) must not leave this screen waiting behind the next sign-in.
     LaunchedEffect(app.signedIn) {
         if (!app.signedIn) {
             showManualAdd = false
-            homeList = -1
+            showMostValuable = false
         }
+    }
+    // Scans the server still holds from before are looked up once the user is in, so the round camera button can say how
+    // many are waiting. Quietly: nobody asked, so an unreachable server is not worth a message.
+    LaunchedEffect(app.signedIn, app.mustChangePassword) {
+        if (app.signedIn && !app.mustChangePassword) scanVm.refreshQuietly()
     }
     val openManualAdd = { showManualAdd = true }
     val openCollection = { search: String ->
@@ -66,9 +73,10 @@ fun CardPulseApp(
         tab = MainTab.COLLECTION.ordinal
     }
 
-    // The open camera uses the whole screen on black: no tab bar, and it shows its own messages.
-    val cameraOpen = app.signedIn && !app.mustChangePassword && !showSettings && !showManualAdd && homeList < 0 &&
-        tab == MainTab.SCAN.ordinal && scan.stage == ScanStage.RAPID
+    // The open camera uses the whole screen on black, over whichever tab is showing: no tab bar, and it shows its own
+    // messages. Closing it goes back to that tab.
+    val cameraOpen = app.signedIn && !app.mustChangePassword && !showSettings && !showManualAdd && !showMostValuable &&
+        scan.stage == ScanStage.RAPID
     // Light icons on the status and navigation bars wherever the screen behind them is dark.
     SystemBarIcons(lightIcons = LocalDarkTheme.current || cameraOpen)
 
@@ -117,17 +125,12 @@ fun CardPulseApp(
             }
         }
 
-        homeList >= 0 -> {
-            BackHandler { homeList = -1 }
+        showMostValuable -> {
+            BackHandler { showMostValuable = false }
             Scaffold { padding ->
-                HomeListScreen(
-                    kind = HomeList.entries[homeList.coerceIn(0, HomeList.entries.lastIndex)],
+                MostValuableScreen(
                     state = app,
-                    onBack = { homeList = -1 },
-                    onOpenSet = { name ->
-                        homeList = -1
-                        openCollection(name)
-                    },
+                    onBack = { showMostValuable = false },
                     onRemove = appVm::removeFromCollection,
                     modifier = Modifier.padding(padding),
                 )
@@ -135,7 +138,6 @@ fun CardPulseApp(
         }
 
         else -> {
-            val inCameraOrReview = cameraOpen
             Scaffold(
                 bottomBar = {
                     // The camera and the review screen use the whole screen.
@@ -146,24 +148,23 @@ fun CardPulseApp(
                                 collectionSearch = ""
                                 tab = chosen.ordinal
                             },
-                            // The round button goes straight to the camera, from any tab.
-                            onScanNow = {
-                                collectionSearch = ""
-                                tab = MainTab.SCAN.ordinal
-                                scanVm.startRapid()
-                            },
+                            // The round button is the way to the camera, from any tab.
+                            onScanNow = { scanVm.startRapid() },
+                            waiting = session.toReview.size,
                         )
                     }
                 },
             ) { padding ->
                 Column(Modifier.fillMaxSize().then(if (cameraOpen) Modifier else Modifier.padding(padding))) {
-                    // Errors from background loads show above whichever tab is open (the scanner shows its own).
-                    if (!inCameraOrReview) {
+                    // Errors from background loads show above whichever tab is open (the camera shows its own).
+                    if (!cameraOpen) {
                         app.message?.let { Banner(it, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), isError = true, onDismiss = appVm::dismissMessage) }
                     }
-                    if (!inCameraOrReview && app.lookingUpPrices) PricesNote()
+                    if (!cameraOpen && app.lookingUpPrices) PricesNote()
                     val contentModifier = Modifier.weight(1f)
-                    when (MainTab.entries[tab]) {
+                    if (cameraOpen) {
+                        ScanScreen(app, scanVm, onAddManually = openManualAdd, modifier = contentModifier)
+                    } else when (MainTab.entries[tab]) {
                         MainTab.HOME -> HomeScreen(
                             state = app,
                             onRefresh = appVm::refreshAll,
@@ -171,12 +172,16 @@ fun CardPulseApp(
                             modifier = contentModifier,
                             onOpenPortfolio = { tab = MainTab.PORTFOLIO.ordinal },
                             onOpenCollection = { openCollection("") },
-                            onSeeAllValuable = { homeList = HomeList.VALUABLE.ordinal },
-                            onSeeAllSets = { homeList = HomeList.SETS.ordinal },
+                            onSeeAllValuable = { showMostValuable = true },
+                            onOpenSets = { tab = MainTab.SETS.ordinal },
                             onOpenSet = { name -> openCollection(name) },
                             onRemove = appVm::removeFromCollection,
                         )
-                        MainTab.SCAN -> ScanScreen(app, scanVm, onAddManually = openManualAdd, modifier = contentModifier)
+                        MainTab.SETS -> SetsScreen(
+                            state = app,
+                            onOpenSet = { name -> openCollection(name) },
+                            modifier = contentModifier,
+                        )
                         MainTab.COLLECTION -> CollectionScreen(
                             app,
                             onRefresh = appVm::refreshCollection,

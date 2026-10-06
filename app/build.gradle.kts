@@ -87,13 +87,15 @@ kotlin {
 // CI shows the build log rather than the HTML report, so print why a test failed right there.
 tasks.withType<Test>().configureEach {
     if (screenshots) {
-        // Only the screenshot tests: the ordinary ones already ran in the step before.
+        // Only the screen pictures and the tests that press the screens: the ordinary ones already ran in the step before.
         filter.includeTestsMatching("*ScreenshotTest")
+        filter.includeTestsMatching("*BehaviourTest")
         systemProperty("screens.dir", layout.buildDirectory.dir("screens").get().asFile.path)
         maxHeapSize = "2g"
     }
     testLogging {
-        events("failed")
+        // The run that draws the screens also names the tests that passed, so the log shows the pressing tests really ran.
+        if (screenshots) events("passed", "failed") else events("failed")
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
         showCauses = true
         showStackTraces = true

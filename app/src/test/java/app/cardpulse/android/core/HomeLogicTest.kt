@@ -2,6 +2,7 @@ package app.cardpulse.android.core
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -221,5 +222,107 @@ class MonogramTest {
     @Test
     fun `other scripts are kept as they are`() {
         assertEquals("ポカ", "ポケモン カード".monogram())
+    }
+}
+
+class SetListTest {
+    private val sets = listOf(
+        SetProgress("sv3_en", "Obsidian Flames", owned = 2, total = 230),
+        SetProgress("cel_en", "30th Celebration", owned = 18, total = 132),
+        SetProgress("sv9_en", "Journey Together", owned = 7, total = 190),
+        SetProgress("promo_en", "Promo Set", owned = 1, total = 10),
+    )
+
+    @Test
+    fun `progress puts the set closest to finished first`() {
+        // 18 of 132 is further on than 1 of 10 (13.6% against 10%), then 7 of 190, then 2 of 230.
+        assertEquals(listOf("30th Celebration", "Promo Set", "Journey Together", "Obsidian Flames"), sets.ordered(SetOrder.PROGRESS).map { it.name })
+    }
+
+    @Test
+    fun `name is alphabetical whatever the case`() {
+        val mixed = sets + SetProgress("x", "base set", owned = 1, total = 102)
+        assertEquals("30th Celebration", mixed.ordered(SetOrder.NAME).first().name)
+        assertEquals(listOf("base set", "Journey Together"), mixed.ordered(SetOrder.NAME).map { it.name }.filter { it == "base set" || it == "Journey Together" })
+    }
+
+    @Test
+    fun `cards puts the most owned first`() {
+        assertEquals(listOf("30th Celebration", "Journey Together", "Obsidian Flames", "Promo Set"), sets.ordered(SetOrder.CARDS).map { it.name })
+    }
+
+    @Test
+    fun `a tie is settled by name so the order is the same every time`() {
+        val tied = listOf(
+            SetProgress("b", "Zeta", owned = 1, total = 10),
+            SetProgress("a", "alpha", owned = 1, total = 10),
+        )
+        for (order in SetOrder.entries) assertEquals(listOf("alpha", "Zeta"), tied.ordered(order).map { it.name })
+    }
+
+    @Test
+    fun `ordering never loses or adds a set`() {
+        for (order in SetOrder.entries) assertEquals(sets.toSet(), sets.ordered(order).toSet())
+        assertTrue(emptyList<SetProgress>().ordered(SetOrder.PROGRESS).isEmpty())
+    }
+
+    @Test
+    fun `a blank search keeps everything`() {
+        assertEquals(sets, sets.matching(""))
+        assertEquals(sets, sets.matching("   "))
+    }
+
+    @Test
+    fun `search finds part of a name whatever the case`() {
+        assertEquals(listOf("Obsidian Flames"), sets.matching("obsidian fl").map { it.name })
+        assertEquals(listOf("30th Celebration"), sets.matching("CELEBR").map { it.name })
+    }
+
+    @Test
+    fun `every word must be found, in any order`() {
+        assertEquals(listOf("Journey Together"), sets.matching("together journey").map { it.name })
+        assertTrue(sets.matching("journey flames").isEmpty())
+    }
+
+    @Test
+    fun `search also finds a set by its code`() {
+        assertEquals(listOf("Obsidian Flames"), sets.matching("sv3").map { it.name })
+        assertEquals(listOf("Journey Together"), sets.matching("sv9_en").map { it.name })
+    }
+
+    @Test
+    fun `nothing matches nonsense`() {
+        assertTrue(sets.matching("zzz").isEmpty())
+    }
+}
+
+class TopCardTest {
+    private fun top(id: Int, value: Double) = TopCardDto(collectionItemId = id, name = "Card $id", totalValue = value)
+
+    @Test
+    fun `the entry worth the most, even when the server did not list it first`() {
+        val dashboard = DashboardDto(topCards = listOf(top(1, 4.0), top(2, 55.75), top(3, 9.0)))
+        assertEquals(2, dashboard.topCard()!!.collectionItemId)
+    }
+
+    @Test
+    fun `a tie goes to the one the server listed first`() {
+        val dashboard = DashboardDto(topCards = listOf(top(7, 5.0), top(8, 5.0)))
+        assertEquals(7, dashboard.topCard()!!.collectionItemId)
+    }
+
+    @Test
+    fun `nothing listed is no top card`() {
+        assertNull(DashboardDto().topCard())
+    }
+
+    @Test
+    fun `the real dashboard`() {
+        val dashboard = Fixtures.decode<DashboardDto>("dashboard")
+        val best = dashboard.topCard()!!
+        assertEquals(dashboard.topCards.maxOf { it.totalValue }, best.totalValue, 0.0)
+        // It is one of the collection rows, so the details can be opened.
+        val rows = Fixtures.decode<List<CollectionItemDto>>("collection")
+        assertTrue(rows.any { it.id == best.collectionItemId })
     }
 }

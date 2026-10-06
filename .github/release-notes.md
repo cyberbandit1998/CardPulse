@@ -1,7 +1,7 @@
-**A new Home screen, a light and dark switch, and a round camera button.**
+**A Sets tab, and Home's three tiles can now be pressed.**
 
-- **Home is now a dashboard.** What your collection is worth, with how much it has gained and a small chart of how it moved; how many cards and sets you have; the cards you added lately; the cards worth the most; and how far along each of your sets is. Tap a card to see its details, tap a set to see your cards from it, and "See all" opens the whole list. The long paragraph about cards with no purchase price is now one line: tap it to read what it means. Next to the app's name, "Connected" turns into a red "Offline" when your server can't be reached.
-- **Light or dark.** Settings, then Appearance: Light, Dark, or the same as your phone. It starts in dark, as before, and remembers your choice.
-- **A round camera button** in the middle of the bottom bar opens the camera at once, from any tab. The Scan tab is still there.
+- **The bottom bar is now Home | Sets | camera | Collection | Portfolio.** The Scan tab is gone: the round camera button in the middle is the one way to scan, and it opens the camera over whichever tab you are on. A small number on it says how many scanned cards are waiting to be checked. Closing the camera takes you back to where you were.
+- **A Sets tab.** Every set you own a card from, with its logo and how far along you are. Search by name or code, put the list in order of progress, name, or cards owned, and tap a set to see your cards from it. "See all" under Set progress on Home opens it.
+- **Home's three tiles answer to a press.** They sink a little and ripple under your finger. **Cards** opens your whole collection, **Sets** opens the Sets tab, and **Top Card** opens the details of the card worth the most right now, worked out from your server's figures each time, not a fixed card. "See all" under Most valuable now opens its own list with a back arrow.
 
 If anything looks wrong on your phone, tell me which screen it was.

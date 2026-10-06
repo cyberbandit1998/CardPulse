@@ -44,6 +44,32 @@ fun List<CollectionItemDto>.setProgress(): List<SetProgress> {
         .sortedWith(compareByDescending<SetProgress> { it.fraction }.thenByDescending { it.owned }.thenBy { it.name.lowercase() })
 }
 
+/** How the Sets screen orders the sets. */
+enum class SetOrder(val label: String) {
+    /** Closest to finished first. */
+    PROGRESS("Progress"),
+    NAME("Name"),
+    /** The most cards owned first. */
+    CARDS("Cards"),
+}
+
+/** The sets in [order]; ties are settled by name, so the order never jumps about between two looks. */
+fun List<SetProgress>.ordered(order: SetOrder): List<SetProgress> = when (order) {
+    SetOrder.PROGRESS -> sortedWith(compareByDescending<SetProgress> { it.fraction }.thenByDescending { it.owned }.thenBy { it.name.lowercase() })
+    SetOrder.NAME -> sortedBy { it.name.lowercase() }
+    SetOrder.CARDS -> sortedWith(compareByDescending<SetProgress> { it.owned }.thenByDescending { it.fraction }.thenBy { it.name.lowercase() })
+}
+
+/**
+ * The sets whose name or code (such as "sv3") holds every word of [query], whatever the case; all of them when the query
+ * is blank. "obsidian fl" finds Obsidian Flames, and so does "sv3".
+ */
+fun List<SetProgress>.matching(query: String): List<SetProgress> {
+    val words = query.trim().split(' ').filter { it.isNotEmpty() }
+    if (words.isEmpty()) return this
+    return filter { set -> words.all { word -> set.name.contains(word, ignoreCase = true) || set.id.contains(word, ignoreCase = true) } }
+}
+
 /**
  * Up to two characters that stand for a set's name where its logo is missing: the first letters of its first two words
  * ("Journey Together" is "JT", "30th Celebration" is "3C"), or the first two of a single word ("Base" is "BA").

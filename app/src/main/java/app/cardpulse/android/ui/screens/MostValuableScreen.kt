@@ -25,23 +25,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.cardpulse.android.core.CollectionItemDto
 import app.cardpulse.android.core.MoneyFormatter
-import app.cardpulse.android.core.setProgress
 import app.cardpulse.android.ui.AppState
 
-/** The lists that the "See all" links on Home open. */
-enum class HomeList(val title: String, val empty: String) {
-    VALUABLE("Most valuable", "Nothing to show yet. Add a few cards and refresh."),
-    SETS("Set progress", "No sets yet. Cards you add will show up here with how much of their set you own."),
-}
-
-/** A whole list from Home, one card to a row, under a back arrow. */
+/** Every card the server lists as most valuable, one to a row, under a back arrow: what "See all" on Home opens. */
 @Composable
-fun HomeListScreen(
-    kind: HomeList,
+fun MostValuableScreen(
     state: AppState,
     onBack: () -> Unit,
-    /** A set was tapped: show the cards of it. Gets the set's name. */
-    onOpenSet: (String) -> Unit,
     onRemove: (item: CollectionItemDto, wholeRow: Boolean, done: (String?) -> Unit) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -49,36 +39,30 @@ fun HomeListScreen(
         MoneyFormatter(state.prefs.currency, state.prefs.rateFromEur)
     }
     val byId = remember(state.collection) { state.collection.associateBy { it.id } }
-    val sets = remember(state.collection) { state.collection.setProgress() }
     val tops = state.dashboard?.topCards.orEmpty()
     var openItem by remember { mutableStateOf<CollectionItemDto?>(null) }
 
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
-            Text(kind.title, style = MaterialTheme.typography.titleLarge)
+            Text("Most valuable", style = MaterialTheme.typography.titleLarge)
         }
         LazyColumn(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            val nothing = when (kind) {
-                HomeList.VALUABLE -> tops.isEmpty()
-                HomeList.SETS -> sets.isEmpty()
-            }
-            if (nothing) {
+            if (tops.isEmpty()) {
                 item {
-                    Text(kind.empty, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "Nothing to show yet. Add a few cards and refresh.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
-            when (kind) {
-                HomeList.VALUABLE -> items(tops, key = { it.collectionItemId }) { top ->
-                    val entry = byId[top.collectionItemId]
-                    ListCard { ValuableRow(top, entry, state, money, onClick = entry?.let { found -> { openItem = found } }) }
-                }
-                HomeList.SETS -> items(sets, key = { it.id }) { set ->
-                    ListCard { SetProgressRow(set, state.serverUrl, onClick = { onOpenSet(set.name) }) }
-                }
+            items(tops, key = { it.collectionItemId }) { top ->
+                val entry = byId[top.collectionItemId]
+                ListCard { ValuableRow(top, entry, state, money, onClick = entry?.let { found -> { openItem = found } }) }
             }
         }
     }

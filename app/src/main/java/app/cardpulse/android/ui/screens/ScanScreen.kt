@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,21 +23,14 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.Button
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -65,145 +57,24 @@ import app.cardpulse.android.core.Ownership
 import app.cardpulse.android.core.ScanEntry
 import app.cardpulse.android.core.SessionState
 import app.cardpulse.android.core.TileState
-import app.cardpulse.android.core.inFlight
 import app.cardpulse.android.core.isInFlight
 import app.cardpulse.android.core.ownershipOf
 import app.cardpulse.android.core.tileState
 import app.cardpulse.android.core.toReview
 import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.Banner
-import app.cardpulse.android.ui.BottomBarOverhang
-import app.cardpulse.android.ui.ScanStage
 import app.cardpulse.android.ui.ScanState
 import app.cardpulse.android.ui.ScanViewModel
 
+/**
+ * The camera, over whichever tab is showing. It is opened by the round button in the bottom bar, and when it closes the
+ * tab underneath is there again.
+ */
 @Composable
 fun ScanScreen(app: AppState, vm: ScanViewModel, onAddManually: () -> Unit, modifier: Modifier = Modifier) {
     val scan by vm.state.collectAsState()
     val session by vm.session.state.collectAsState()
-    when (scan.stage) {
-        ScanStage.HOME -> ScanHome(scan, session, vm, onAddManually, modifier)
-        ScanStage.RAPID -> RapidScreen(app, scan, session, vm, onAddManually, modifier)
-    }
-}
-
-// ---------------------------------------------------------------------------------------------
-// Home: start scanning, pick up what is waiting
-// ---------------------------------------------------------------------------------------------
-
-@Composable
-private fun ScanHome(scan: ScanState, session: SessionState, vm: ScanViewModel, onAddManually: () -> Unit, modifier: Modifier) {
-    LaunchedEffect(Unit) { vm.refresh() }
-    val ready = session.toReview.size
-    ScanHomeContent(
-        ready = ready,
-        reading = session.inFlight,
-        attention = session.entries.count {
-            when (it.tileState()) {
-                TileState.NO_MATCH, TileState.FAILED, TileState.SEND_FAILED -> true
-                else -> false
-            }
-        },
-        message = session.message ?: scan.message,
-        savePhotos = scan.prefs.savePhotos,
-        onStart = { vm.startRapid() },
-        onAddManually = onAddManually,
-        onReview = { vm.startRapid(reviewFirst = ready > 0) },
-        onSavePhotos = vm::setSavePhotos,
-        onDismissMessage = vm::dismissMessage,
-        modifier = modifier,
-    )
-}
-
-/** What the scan tab shows before the camera is open: start, pick up what is waiting, and the options. */
-@Composable
-fun ScanHomeContent(
-    ready: Int,
-    reading: Int,
-    attention: Int,
-    message: String?,
-    savePhotos: Boolean,
-    onStart: () -> Unit,
-    onAddManually: () -> Unit,
-    onReview: () -> Unit,
-    onSavePhotos: (Boolean) -> Unit,
-    onDismissMessage: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    LazyColumn(
-        modifier = modifier,
-        contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 16.dp + BottomBarOverhang),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item { Text("Scan cards", style = MaterialTheme.typography.headlineMedium) }
-        message?.let { item { Banner(it, isError = true, onDismiss = onDismissMessage) } }
-
-        item {
-            Button(onClick = onStart, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.PhotoCamera, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Start rapid scan")
-            }
-        }
-
-        item {
-            OutlinedButton(onClick = onAddManually, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Edit, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Add a card manually")
-            }
-        }
-
-        if (ready + reading + attention > 0) {
-            item {
-                ElevatedCard(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Waiting for you", style = MaterialTheme.typography.titleMedium)
-                        if (ready > 0) Text(if (ready == 1) "1 card is ready to add" else "$ready cards are ready to add")
-                        if (reading > 0) Text("$reading still being read", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        if (attention > 0) Text("$attention need a look", color = MaterialTheme.colorScheme.error)
-                        OutlinedButton(onClick = onReview) {
-                            Text(if (ready > 0) "Review $ready" else "Open results")
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            ElevatedCard(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Options", style = MaterialTheme.typography.titleMedium)
-                    OptionRow(
-                        title = "Keep my photo with every card",
-                        detail = "Otherwise your photo is kept only for cards that have no official artwork, as in the PokéCollector web app.",
-                        checked = savePhotos,
-                        onChange = onSavePhotos,
-                    )
-                }
-            }
-        }
-
-        item {
-            Text(
-                "Keep the camera open and photograph card after card. Your server reads each photo while you take the next. " +
-                    "Results appear along the bottom: tap one to check the details and add it.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun OptionRow(title: String, detail: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Switch(checked = checked, onCheckedChange = onChange)
-    }
+    RapidScreen(app, scan, session, vm, onAddManually, modifier)
 }
 
 // ---------------------------------------------------------------------------------------------

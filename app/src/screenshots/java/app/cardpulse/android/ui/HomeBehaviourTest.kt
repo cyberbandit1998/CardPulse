@@ -1,6 +1,10 @@
 package app.cardpulse.android.ui
 
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.assertHasNoClickAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
@@ -12,11 +16,11 @@ import app.cardpulse.android.core.CollectionItemDto
 import app.cardpulse.android.core.DashboardDto
 import app.cardpulse.android.core.DisplayPrefs
 import app.cardpulse.android.core.Fixtures
+import app.cardpulse.android.core.MoneyFormatter
 import app.cardpulse.android.core.SetDto
 import app.cardpulse.android.core.cardsMissingCost
-import app.cardpulse.android.ui.screens.HomeList
-import app.cardpulse.android.ui.screens.HomeListScreen
 import app.cardpulse.android.ui.screens.HomeScreen
+import app.cardpulse.android.ui.screens.MostValuableScreen
 import app.cardpulse.android.ui.theme.CardPulseTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -65,7 +69,7 @@ class HomeBehaviourTest {
         onOpenPortfolio: () -> Unit = {},
         onOpenCollection: () -> Unit = {},
         onSeeAllValuable: () -> Unit = {},
-        onSeeAllSets: () -> Unit = {},
+        onOpenSets: () -> Unit = {},
         onOpenSet: (String) -> Unit = {},
     ) {
         compose.setContent {
@@ -77,12 +81,14 @@ class HomeBehaviourTest {
                     onOpenPortfolio = onOpenPortfolio,
                     onOpenCollection = onOpenCollection,
                     onSeeAllValuable = onSeeAllValuable,
-                    onSeeAllSets = onSeeAllSets,
+                    onOpenSets = onOpenSets,
                     onOpenSet = onOpenSet,
                 )
             }
         }
     }
+
+    private fun countOf(text: String) = compose.onAllNodesWithText(text).fetchSemanticsNodes().size
 
     @Test
     fun theWarningAboutMissingPricesExplainsItself() {
@@ -112,7 +118,7 @@ class HomeBehaviourTest {
         var recent = 0
         var valuable = 0
         var sets = 0
-        show(onOpenCollection = { recent++ }, onSeeAllValuable = { valuable++ }, onSeeAllSets = { sets++ })
+        show(onOpenCollection = { recent++ }, onSeeAllValuable = { valuable++ }, onOpenSets = { sets++ })
         val links = compose.onAllNodesWithText("See all")
         links[0].performClick()
         links[1].performClick()
@@ -136,6 +142,77 @@ class HomeBehaviourTest {
         compose.onNodeWithText("Remove…").assertExists()
         compose.onNodeWithText("Close").performClick()
         compose.onNodeWithText("Remove…").assertDoesNotExist()
+    }
+
+    // --- the three tiles --------------------------------------------------------------------------------
+
+    @Test
+    fun theCardsTileOpensTheWholeCollection() {
+        var collectionOpened = 0
+        var setsOpened = 0
+        show(onOpenCollection = { collectionOpened++ }, onOpenSets = { setsOpened++ })
+        compose.onNodeWithText("Cards").performClick()
+        assertEquals(listOf(1, 0), listOf(collectionOpened, setsOpened))
+    }
+
+    @Test
+    fun theSetsTileOpensTheSets() {
+        var collectionOpened = 0
+        var setsOpened = 0
+        show(onOpenCollection = { collectionOpened++ }, onOpenSets = { setsOpened++ })
+        compose.onNodeWithText("Sets").performClick()
+        assertEquals(listOf(0, 1), listOf(collectionOpened, setsOpened))
+    }
+
+    @Test
+    fun theTopCardTileOpensTheCardThatIsWorthTheMost() {
+        // The server lists Oddish first here, but Miraidon ex is the one worth the most, so that is the one to open.
+        val dashboard = state.dashboard!!
+        val oddish = dashboard.topCards.first { it.name == "Oddish" }
+        val miraidon = dashboard.topCards.first { it.name == "Miraidon ex" }.copy(totalValue = 99.0)
+        show(state.copy(dashboard = dashboard.copy(topCards = listOf(oddish, miraidon))))
+
+        val price = MoneyFormatter("USD", 1.1).format(99.0)
+        compose.onNode(hasText("Top Card") and hasText(price)).assertExists() // the tile shows that card's value
+        val miraidonBefore = countOf("Miraidon ex")
+        val oddishBefore = countOf("Oddish")
+        compose.onNodeWithText("Remove…").assertDoesNotExist()
+
+        compose.onNodeWithText("Top Card").performClick()
+
+        compose.onNodeWithText("Remove…").assertExists() // the details of one card are open
+        assertEquals(miraidonBefore + 1, countOf("Miraidon ex")) // and it is Miraidon ex's: its name is the dialog's title
+        assertEquals(oddishBefore, countOf("Oddish"))
+        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithText("Remove…").assertDoesNotExist()
+    }
+
+    @Test
+    fun theTopCardTileHasNothingToOpenWhenTheServerListsNoCard() {
+        show(state.copy(dashboard = state.dashboard!!.copy(topCards = emptyList())))
+        compose.onNode(hasText("Top Card") and hasText("—")).assertExists()
+        compose.onNodeWithText("Top Card").assertHasNoClickAction()
+        compose.onNodeWithText("Cards").assertHasClickAction()
+        compose.onNodeWithText("Sets").assertHasClickAction()
+    }
+
+    @Test
+    fun theTopCardTileWaitsForTheCollectionBeforeItCanBePressed() {
+        // The dashboard has arrived but the card it names has not been loaded yet: nothing to open.
+        show(state.copy(collection = emptyList(), collectionLoaded = false))
+        compose.onNodeWithText("Top Card").assertHasNoClickAction()
+        compose.onNodeWithText("Remove…").assertDoesNotExist()
+    }
+
+    @Test
+    fun theTilesAreButtonsThatSayWhatTheyDo() {
+        show()
+        fun label(tile: String) =
+            compose.onNodeWithText(tile).fetchSemanticsNode().config[SemanticsActions.OnClick].label
+        assertEquals("Show all cards", label("Cards"))
+        assertEquals("Show your sets", label("Sets"))
+        assertEquals("Show the most valuable card", label("Top Card"))
+        for (tile in listOf("Cards", "Sets", "Top Card")) compose.onNodeWithText(tile).assertHasClickAction()
     }
 
     @Test
@@ -186,16 +263,33 @@ class HomeBehaviourTest {
         compose.onNodeWithText("Collection value").assertDoesNotExist()
     }
 
+    // --- what "See all" under Most valuable opens ------------------------------------------------------------
+
     @Test
-    fun theFullListsShowEverythingTheyHave() {
+    fun theFullMostValuableListShowsEveryCardTheServerListed() {
+        var back = 0
         compose.setContent {
             CardPulseTheme {
-                HomeListScreen(HomeList.SETS, state, onBack = {}, onOpenSet = {}, onRemove = { _, _, _ -> })
+                MostValuableScreen(state, onBack = { back++ }, onRemove = { _, _, _ -> })
             }
         }
-        // The fixture's own sets and the 30th Celebration added above.
-        compose.onNodeWithText("30th Celebration").assertExists()
-        compose.onNodeWithText("Promo Set").assertExists()
-        compose.onNodeWithText("Scarlet & Violet").assertExists()
+        compose.onNodeWithText("Most valuable").assertExists()
+        // Home shows four; these two are further down the server's list.
+        compose.onNodeWithText("Oddish").assertExists()
+        compose.onNodeWithText("Promo Without Art").assertExists()
+        compose.onNodeWithContentDescription("Back").performClick()
+        assertEquals(1, back)
+    }
+
+    @Test
+    fun aCardInTheFullListOpensItsDetails() {
+        compose.setContent {
+            CardPulseTheme {
+                MostValuableScreen(state, onBack = {}, onRemove = { _, _, _ -> })
+            }
+        }
+        compose.onNodeWithText("Remove…").assertDoesNotExist()
+        compose.onNodeWithText("Oddish").performClick()
+        compose.onNodeWithText("Remove…").assertExists()
     }
 }

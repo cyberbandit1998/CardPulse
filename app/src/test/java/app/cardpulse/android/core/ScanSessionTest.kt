@@ -100,8 +100,13 @@ private class FakeBackend : ScanBackend {
         return ScanJobDto(id = id, total = 1, active = 1) // like the real server: progress only, no items yet
     }
 
-    override suspend fun scanJobs(): List<ScanJobDto> =
-        jobs.keys.sortedDescending().filter { !jobs.getValue(it).resolved }.map { jobOf(it).copy(items = emptyList()) }
+    /** While set, asking for the list of scans fails, like a server that can't be reached. */
+    @Volatile var listError: Throwable? = null
+
+    override suspend fun scanJobs(): List<ScanJobDto> {
+        listError?.let { throw it }
+        return jobs.keys.sortedDescending().filter { !jobs.getValue(it).resolved }.map { jobOf(it).copy(items = emptyList()) }
+    }
 
     override suspend fun scanJob(jobId: Int): ScanJobDto {
         scanJobCalls.incrementAndGet()
@@ -638,6 +643,33 @@ class ScanSessionTest {
 
         finishReading(busy, charizard)
         assertEquals(2, await { it.toReview.size == 2 }.toReview.size)
+    }
+
+    @Test
+    fun `a failed look for waiting scans says so`() = runBlocking {
+        backend.listError = IOException("offline")
+        session.resumeServer()
+        assertTrue(session.state.value.message != null)
+        assertFalse(session.state.value.loading)
+    }
+
+    @Test
+    fun `a failed look the user did not ask for says nothing`() = runBlocking {
+        backend.listError = IOException("offline")
+        session.resumeServer(report = false)
+        assertNull(session.state.value.message)
+        assertFalse(session.state.value.loading)
+    }
+
+    @Test
+    fun `a quiet look leaves a message that was already showing alone`() = runBlocking {
+        backend.listError = IOException("offline")
+        session.resumeServer() // says so
+        val said = session.state.value.message
+        assertTrue(said != null)
+
+        session.resumeServer(report = false) // fails again, quietly
+        assertEquals(said, session.state.value.message)
     }
 
     @Test

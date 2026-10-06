@@ -47,11 +47,19 @@ The app warns you if it connects to a server in single-user mode.
 
 ## What it does
 
+- **Bottom bar:** Home, Sets, a round camera button in the middle, Collection and Portfolio. The camera button is the
+  only way to the scanner and opens it from any tab; a small number on it says how many scanned cards are waiting to be
+  checked. Closing the camera returns to the tab you were on.
 - **Home:** a dashboard. Your collection's value with its gain or loss and a small chart of how it has moved, the number
   of cards and sets, the cards you added lately in a row that swipes sideways, the cards worth the most, and how far
-  along each of your sets is, as pictures, names and slim progress bars. Every list has a "See all", and tapping a card
+  along each of your sets is, as pictures, names and slim progress bars. The three tiles can be pressed: Cards opens
+  the whole collection, Sets opens the Sets tab, and Top Card opens the details of the card worth the most (found from
+  the server's own list of your most valuable cards, never a fixed one). Every list has a "See all", and tapping a card
   opens its details. A one-line warning says when some cards have no purchase price, which makes the gain look larger
-  than it is. The round camera button in the bottom bar opens the camera from any tab.
+  than it is.
+- **Sets:** every set you own a card from, with how far along it is. Search by name or set code, put the list in order
+  of progress, name or cards owned, and tap a set to see your cards from it. Progress counts different cards, so two
+  copies of one card count once.
 - **Light or dark:** Settings, Appearance: light, dark, or whatever your phone is set to. The choice stays on the phone.
 - **Rapid scan:** the camera stays open while you work through a pile. Each photo is sent to your server the moment
   it is taken and read in the background (up to three at once), so you can photograph the next card straight away.

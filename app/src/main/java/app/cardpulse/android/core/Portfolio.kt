@@ -42,3 +42,9 @@ fun List<CollectionItemDto>.costCoverage(): CostCoverage =
 /** Copies, not entries, in the rows that carry no purchase price: the cards a gain figure is not honest about. */
 fun List<CollectionItemDto>.cardsMissingCost(): Int =
     filter { it.purchasePrice == null }.sumOf { it.quantity.coerceAtLeast(0) }
+
+/**
+ * The entry the server values highest, or null when it lists none. The server sends them best first, but this does not
+ * rely on that; when two are worth the same, the one the server listed first wins.
+ */
+fun DashboardDto.topCard(): TopCardDto? = topCards.maxByOrNull { it.totalValue }

@@ -27,6 +27,7 @@ import app.cardpulse.android.core.MoneyFormatter
 import app.cardpulse.android.core.cardsMissingCost
 import app.cardpulse.android.core.costCoverage
 import app.cardpulse.android.core.setProgress
+import app.cardpulse.android.core.topCard
 import app.cardpulse.android.core.toChartPoints
 import app.cardpulse.android.ui.AccentTextButton
 import app.cardpulse.android.ui.AppState
@@ -53,10 +54,11 @@ fun HomeScreen(
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
     onOpenPortfolio: () -> Unit = {},
-    /** "See all" under Recently added: the whole collection, newest first. */
+    /** "See all" under Recently added, and the Cards tile: the whole collection, newest first. */
     onOpenCollection: () -> Unit = {},
     onSeeAllValuable: () -> Unit = {},
-    onSeeAllSets: () -> Unit = {},
+    /** "See all" under Set progress, and the Sets tile: the Sets tab. */
+    onOpenSets: () -> Unit = {},
     /** A set was tapped: show the cards of it. Gets the set's name. */
     onOpenSet: (String) -> Unit = {},
     onRemove: (item: CollectionItemDto, wholeRow: Boolean, done: (String?) -> Unit) -> Unit = { _, _, done -> done(null) },
@@ -70,6 +72,10 @@ fun HomeScreen(
     val cardsMissingCost = remember(state.collection) { state.collection.cardsMissingCost() }
     val sets = remember(state.collection) { state.collection.setProgress() }
     val history = remember(dashboard) { dashboard?.valueHistory.orEmpty().toChartPoints() }
+    // The card worth the most, found in the collection from what the server says. Until the collection has loaded there is
+    // nothing to open, and the tile is not pressable.
+    val best = remember(dashboard) { dashboard?.topCard() }
+    val topEntry = best?.let { byId[it.collectionItemId] }
     var openItem by remember { mutableStateOf<CollectionItemDto?>(null) }
     var explainCost by remember { mutableStateOf(false) }
     // Everything sits 16 dp in from the edges except the carousel, which runs to them so cards slide out under them.
@@ -121,13 +127,17 @@ fun HomeScreen(
 
             item {
                 Row(inset.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    HomeStat(Icons.Default.Style, count(dashboard.totalCards), "Cards", Modifier.weight(1f))
-                    HomeStat(Icons.Default.Layers, count(dashboard.ownedSets), "Sets", Modifier.weight(1f))
                     HomeStat(
-                        Icons.Default.EmojiEvents,
-                        dashboard.topCards.maxOfOrNull { it.totalValue }?.let { money.format(it) } ?: "—",
-                        "Top Card",
-                        Modifier.weight(1f),
+                        Icons.Default.Style, count(dashboard.totalCards), "Cards", Modifier.weight(1f),
+                        onClick = onOpenCollection, actionLabel = "Show all cards",
+                    )
+                    HomeStat(
+                        Icons.Default.Layers, count(dashboard.ownedSets), "Sets", Modifier.weight(1f),
+                        onClick = onOpenSets, actionLabel = "Show your sets",
+                    )
+                    HomeStat(
+                        Icons.Default.EmojiEvents, best?.let { money.format(it.totalValue) } ?: "—", "Top Card", Modifier.weight(1f),
+                        onClick = topEntry?.let { entry -> { openItem = entry } }, actionLabel = "Show the most valuable card",
                     )
                 }
             }
@@ -162,7 +172,7 @@ fun HomeScreen(
             if (shownSets.isNotEmpty()) {
                 item {
                     Column(inset, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SectionHeader("Set progress", onSeeAll = onSeeAllSets)
+                        SectionHeader("Set progress", onSeeAll = onOpenSets)
                         ListCard {
                             shownSets.forEachIndexed { index, set ->
                                 if (index > 0) RowDivider(startIndent = 76.dp)

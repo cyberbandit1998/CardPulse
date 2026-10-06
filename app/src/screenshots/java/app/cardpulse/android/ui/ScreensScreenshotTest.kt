@@ -19,6 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import app.cardpulse.android.camera.CardGuide
@@ -50,19 +52,18 @@ import app.cardpulse.android.core.ownershipOf
 import app.cardpulse.android.core.toChartPoints
 import app.cardpulse.android.data.ScanPrefs
 import app.cardpulse.android.ui.screens.CollectionScreen
-import app.cardpulse.android.ui.screens.HomeList
-import app.cardpulse.android.ui.screens.HomeListScreen
 import app.cardpulse.android.ui.screens.HomeScreen
 import app.cardpulse.android.ui.screens.LoginScreen
 import app.cardpulse.android.ui.screens.ManualAddActions
 import app.cardpulse.android.ui.screens.ManualAddContent
+import app.cardpulse.android.ui.screens.MostValuableScreen
 import app.cardpulse.android.ui.screens.PasswordScreen
 import app.cardpulse.android.ui.screens.PortfolioScreen
 import app.cardpulse.android.ui.screens.RapidActions
 import app.cardpulse.android.ui.screens.RapidScreenContent
 import app.cardpulse.android.ui.screens.RemoveChoices
-import app.cardpulse.android.ui.screens.ScanHomeContent
 import app.cardpulse.android.ui.screens.SettingsScreen
+import app.cardpulse.android.ui.screens.SetsScreen
 import app.cardpulse.android.ui.theme.CardPulseTheme
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -263,9 +264,16 @@ class ScreensScreenshotTest {
     private val homeState = signedIn.copy(collection = richCollection)
 
     @Composable
-    private fun HomeWithBar(state: AppState) {
-        Scaffold(bottomBar = { CardPulseBottomBar(selected = MainTab.HOME, onSelect = {}, onScanNow = {}) }) { padding ->
+    private fun HomeWithBar(state: AppState, waiting: Int = 0) {
+        Scaffold(bottomBar = { CardPulseBottomBar(selected = MainTab.HOME, onSelect = {}, onScanNow = {}, waiting = waiting) }) { padding ->
             HomeScreen(state = state, onRefresh = {}, onOpenSettings = {}, modifier = Modifier.padding(padding))
+        }
+    }
+
+    @Composable
+    private fun SetsWithBar(state: AppState) {
+        Scaffold(bottomBar = { CardPulseBottomBar(selected = MainTab.SETS, onSelect = {}, onScanNow = {}) }) { padding ->
+            SetsScreen(state = state, onOpenSet = {}, modifier = Modifier.padding(padding))
         }
     }
 
@@ -303,19 +311,53 @@ class ScreensScreenshotTest {
     }
 
     @Test
+    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    fun homeWithScannedCardsWaiting() = shoot("1f-home-cards-waiting") { HomeWithBar(homeState, waiting = 3) }
+
+    @Test
+    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    fun homeWithManyScannedCardsWaiting() = shoot("1f-home-many-waiting") { HomeWithBar(homeState, waiting = 12) }
+
+    /** A finger held down on the Top Card tile: it should sink a little and show the ripple. */
+    private fun pressedTile(name: String, dark: Boolean) {
+        compose.setContent { CardPulseTheme(darkTheme = dark) { HomeWithBar(homeState) } }
+        compose.onNodeWithText("Top Card").performTouchInput { down(center) }
+        compose.mainClock.advanceTimeBy(400)
+        capture(name)
+        compose.onNodeWithText("Top Card").performTouchInput { cancel() } // let go without pressing it
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    fun homeWhileATileIsPressed() = pressedTile("1g-home-tile-pressed", dark = true)
+
+    @Test
+    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    fun homeWhileATileIsPressedInTheLightTheme() = pressedTile("1g-home-tile-pressed-light", dark = false)
+
+    @Test
     fun mostValuableList() = shoot("1d-most-valuable") {
-        HomeListScreen(HomeList.VALUABLE, homeState, onBack = {}, onOpenSet = {}, onRemove = { _, _, _ -> })
+        MostValuableScreen(homeState, onBack = {}, onRemove = { _, _, _ -> })
     }
 
     @Test
-    fun setProgressList() = shoot("1e-set-progress-list") {
-        HomeListScreen(HomeList.SETS, homeState, onBack = {}, onOpenSet = {}, onRemove = { _, _, _ -> })
+    fun mostValuableListLight() = shoot("1d-most-valuable-light", dark = false) {
+        MostValuableScreen(homeState, onBack = {}, onRemove = { _, _, _ -> })
     }
 
+    // --- the Sets tab ----------------------------------------------------------------------------------------
+
     @Test
-    fun setProgressListLight() = shoot("1e-set-progress-list-light", dark = false) {
-        HomeListScreen(HomeList.SETS, homeState, onBack = {}, onOpenSet = {}, onRemove = { _, _, _ -> })
-    }
+    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    fun setsTab() = shoot("1e-sets") { SetsWithBar(homeState) }
+
+    @Test
+    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    fun setsTabLight() = shoot("1e-sets-light", dark = false) { SetsWithBar(homeState) }
+
+    @Test
+    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    fun setsTabBeforeAnythingIsOwned() = shoot("1e-sets-empty") { SetsWithBar(homeState.copy(collection = emptyList())) }
 
     @Test
     fun collectionTab() = shoot("11-collection") {
@@ -387,30 +429,6 @@ class ScreensScreenshotTest {
     }
 
     // --- scanning -----------------------------------------------------------------------------------------
-
-    @Test
-    fun scanHomeNothingWaiting() = shoot("20-scan-home") {
-        ScanHomeContent(
-            ready = 0, reading = 0, attention = 0, message = null, savePhotos = false,
-            onStart = {}, onAddManually = {}, onReview = {}, onSavePhotos = {}, onDismissMessage = {},
-        )
-    }
-
-    @Test
-    fun scanHomeWithResultsWaiting() = shoot("21-scan-home-waiting") {
-        ScanHomeContent(
-            ready = 3, reading = 2, attention = 1, message = "A scan is no longer on the server (scans expire after 14 days).",
-            savePhotos = true, onStart = {}, onAddManually = {}, onReview = {}, onSavePhotos = {}, onDismissMessage = {},
-        )
-    }
-
-    @Test
-    fun scanHomeLight() = shoot("20-scan-home-light", dark = false) {
-        ScanHomeContent(
-            ready = 3, reading = 2, attention = 1, message = null, savePhotos = true,
-            onStart = {}, onAddManually = {}, onReview = {}, onSavePhotos = {}, onDismissMessage = {},
-        )
-    }
 
     @Test
     fun rapidScanBeforeTheFirstPhoto() {

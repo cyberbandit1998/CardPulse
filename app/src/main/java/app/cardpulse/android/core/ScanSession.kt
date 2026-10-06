@@ -182,8 +182,12 @@ class ScanSession(
         files.filter { it !in known }.sortedBy { it.name }.forEach { capture(it) }
     }
 
-    /** Picks up scans the server still holds for this user (started earlier, or from the web app). */
-    suspend fun resumeServer() {
+    /**
+     * Picks up scans the server still holds for this user (started earlier, or from the web app). When the server can't
+     * be reached it says so, unless [report] is off: a look the user did not ask for, as when the app opens, should not
+     * leave a message waiting for them in the camera later.
+     */
+    suspend fun resumeServer(report: Boolean = true) {
         mutableState.update { it.copy(loading = true) }
         val result = attempt {
             val known = mutableState.value.entries.mapNotNull { it.jobId }.toSet()
@@ -203,7 +207,9 @@ class ScanSession(
                 mutableState.update { it.copy(entries = it.entries + found, loading = false) }
                 ensurePolling()
             }
-            .onFailure { error -> mutableState.update { it.copy(loading = false, message = describe(error)) } }
+            .onFailure { error ->
+                mutableState.update { it.copy(loading = false, message = if (report) describe(error) else it.message) }
+            }
     }
 
     fun resend(entryId: Long) {

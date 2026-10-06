@@ -1,9 +1,13 @@
 package app.cardpulse.android.ui.screens
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -48,6 +52,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -310,15 +315,48 @@ internal fun Sparkline(points: List<ChartPoint>, color: Color, modifier: Modifie
 // Numbers at a glance
 // ---------------------------------------------------------------------------------------------
 
-/** One of the three small tiles: an icon, a figure, and what it counts. */
+/**
+ * One of the three small tiles: an icon, a figure, and what it counts. With [onClick] it is a button: it ripples where it
+ * is pressed and sinks a little under the finger, so it plainly answers. [actionLabel] says what pressing does, for a
+ * screen reader ("Show all cards"). Without [onClick] it is just a tile.
+ */
 @Composable
-internal fun HomeStat(icon: ImageVector, value: String, label: String, modifier: Modifier = Modifier) {
+internal fun HomeStat(
+    icon: ImageVector,
+    value: String,
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    actionLabel: String? = null,
+) {
     val shape = RoundedCornerShape(18.dp)
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) 0.95f else 1f, label = "tile press")
     Row(
         modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            // The clip comes before the click so the ripple is held inside the rounded corners.
             .clip(shape)
             .background(MaterialTheme.colorScheme.surface)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+            .then(
+                if (onClick == null) {
+                    // Read out as one thing ("12 Cards"), the way it is when it can be pressed.
+                    Modifier.semantics(mergeDescendants = true) {}
+                } else {
+                    Modifier.clickable(
+                        interactionSource = interaction,
+                        indication = LocalIndication.current,
+                        role = Role.Button,
+                        onClickLabel = actionLabel,
+                        onClick = onClick,
+                    )
+                },
+            )
             .padding(horizontal = 10.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -474,7 +512,7 @@ internal fun SetProgressRow(
         SetLogo(ServerUrls.setLogo(serverUrl, set.id), set.name, Modifier.width(52.dp).height(34.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Text(set.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            SlimProgress(set.fraction)
+            SlimProgress(set.fraction, color = if (set.isComplete) MaterialTheme.extras.positive else MaterialTheme.colorScheme.secondary)
         }
         // A fixed width, so the bars of different rows end in the same place.
         Text(
@@ -522,8 +560,8 @@ private fun SetMonogram(name: String, modifier: Modifier = Modifier) {
 
 /** A bar 6 dp thick, filled from the start by [fraction] (0 to 1). A little is always shown once something is owned. */
 @Composable
-internal fun SlimProgress(fraction: Float, modifier: Modifier = Modifier) {
-    val accent = MaterialTheme.colorScheme.secondary
+internal fun SlimProgress(fraction: Float, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.secondary) {
+    val accent = color
     Box(modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.outlineVariant)) {
         if (fraction > 0f) {
             Box(

@@ -95,9 +95,10 @@ jobs:
           if-no-files-found: error
 
   # Draws every screen with fake data (src/screenshots) and keeps the pictures on the ci-screens branch, which is
-  # rewritten each time, so layout and colour problems can be looked at without a phone. Runs on pushes to claude/*
-  # branches or when asked for. It never decides whether the build is good: the APK doesn't wait for it, and a failure
-  # here doesn't fail the run.
+  # rewritten each time, so layout and colour problems can be looked at without a phone. The same run presses the
+  # controls of the Home screen, the Sets tab and the bottom bar (the *BehaviourTest classes) and logs which tests
+  # passed. Runs on pushes to claude/* branches or when asked for. It never decides whether the build is good: the APK
+  # doesn't wait for it, and a failure here doesn't fail the run.
   screenshots:
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/claude/')) || (github.event_name == 'workflow_dispatch' && inputs.screenshots)
     continue-on-error: true

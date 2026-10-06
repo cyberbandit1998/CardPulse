@@ -22,7 +22,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
-/** The scan tab is either its home screen or the open camera. */
+/** Whether the camera is open: it comes up over whichever tab the user is on, and closing it goes back there. */
 enum class ScanStage { HOME, RAPID }
 
 data class ScanState(
@@ -95,6 +95,15 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     /** Picks up scans the server still holds for this user. */
     fun refresh() {
         viewModelScope.launch { session.resumeServer() }
+    }
+
+    /**
+     * Like [refresh], but a server that can't be reached is not mentioned. It is for when the app opens, so the round
+     * camera button can say how many scanned cards are waiting: the user did not ask, and an error would be waiting for
+     * them in the camera later.
+     */
+    fun refreshQuietly() {
+        viewModelScope.launch { session.resumeServer(report = false) }
     }
 
     /** Where the camera should write the next photo. Names sort in the order the photos were taken. */
