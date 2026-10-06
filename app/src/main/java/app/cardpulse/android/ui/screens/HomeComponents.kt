@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -49,17 +50,20 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.cardpulse.android.core.ChartPoint
@@ -165,25 +169,32 @@ internal fun SummaryCard(
     val extras = MaterialTheme.extras
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val shape = RoundedCornerShape(24.dp)
-    Box(
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    val valueStyle = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.Bold)
+    // How wide the figure is, to know how much room is left to its right for the chart.
+    val valueWidth = remember(value, valueStyle, density) { with(density) { measurer.measure(value, valueStyle).size.width.toDp() } }
+    BoxWithConstraints(
         modifier
             .fillMaxWidth()
             .clip(shape)
             .background(Brush.linearGradient(listOf(extras.heroTop, extras.heroBottom)))
             .border(1.dp, extras.heroBorder, shape),
     ) {
-        // The chart sits to the right, under the arrow and above the gain line, so it never runs through the text.
-        if (history.size >= 2) {
+        // The chart sits to the right, under the arrow and above the gain line, in whatever room the figure leaves
+        // (none, on a narrow screen with a big number), so it never runs through the text.
+        val chartWidth = minOf(112.dp, maxWidth - 20.dp - valueWidth - 12.dp - 20.dp)
+        if (history.size >= 2 && chartWidth >= 56.dp) {
             Sparkline(
                 history,
                 MaterialTheme.colorScheme.secondary,
-                Modifier.align(Alignment.TopEnd).padding(top = 54.dp, end = 20.dp).width(112.dp).height(32.dp),
+                Modifier.align(Alignment.TopEnd).padding(top = 54.dp, end = 20.dp).width(chartWidth).height(32.dp),
             )
         }
         OpenPortfolioButton(onOpenPortfolio, Modifier.align(Alignment.TopEnd).padding(top = 14.dp, end = 14.dp))
         Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
             Text("Collection value", style = MaterialTheme.typography.bodyLarge, color = muted)
-            Text(value, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(value, style = valueStyle, maxLines = 1)
             Text(
                 buildAnnotatedString {
                     withStyle(SpanStyle(color = gainColor, fontWeight = FontWeight.SemiBold)) { append("$gain $gainLabel") }
@@ -315,13 +326,11 @@ internal fun HomeStat(icon: ImageVector, value: String, label: String, modifier:
         Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(20.dp))
         Column(Modifier.weight(1f)) {
             FitText(value, MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
-            Text(
+            FitText(
                 label,
-                style = MaterialTheme.typography.bodySmall,
+                MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis,
+                minSize = 9.sp,
             )
         }
     }
@@ -329,7 +338,13 @@ internal fun HomeStat(icon: ImageVector, value: String, label: String, modifier:
 
 /** One line of text that gets smaller, down to a limit, until it fits the room it has instead of being cut off. */
 @Composable
-internal fun FitText(text: String, style: TextStyle, modifier: Modifier = Modifier, color: Color = Color.Unspecified) {
+internal fun FitText(
+    text: String,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    minSize: TextUnit = MIN_FIT_SIZE,
+) {
     var size by remember(text, style.fontSize) { mutableStateOf(style.fontSize) }
     var settled by remember(text, style.fontSize) { mutableStateOf(false) }
     Text(
@@ -342,7 +357,7 @@ internal fun FitText(text: String, style: TextStyle, modifier: Modifier = Modifi
         softWrap = false,
         overflow = TextOverflow.Clip,
         onTextLayout = { result ->
-            if (result.didOverflowWidth && size > MIN_FIT_SIZE) size *= 0.92f else settled = true
+            if (result.didOverflowWidth && size > minSize) size *= 0.92f else settled = true
         },
     )
 }
