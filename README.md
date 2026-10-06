@@ -78,17 +78,19 @@ until prices are filled in. The app says so when that applies.
 
 ## Install
 
-Every successful build on GitHub produces a debug APK:
+Every successful build on GitHub produces an APK. It is a release build: the code and resources nobody uses are trimmed
+(R8), which makes it a fraction of the size of a debug build, and it starts and scrolls faster because it isn't a debug
+build.
 
-- **Easiest:** open the repository's **Releases** page on your phone, pick the newest *Debug build*, tap the `.apk`.
+- **Easiest:** open the repository's **Releases** page on your phone, pick the newest build, tap the `.apk`.
   (Releases are created on request; ask or run the *Android CI* workflow with "publish" ticked.)
-- Or open the **Actions** tab, pick the latest run, and download the `cardpulse-debug-apk` artifact.
+- Or open the **Actions** tab, pick the latest run, and download the `cardpulse-apk` artifact.
 
 Android will ask to allow "Install unknown apps" for the app you opened the file from.
 
 Each release page starts with what is new in that build.
 
-Until you set up a signing key (next section), debug builds from CI are signed with a throwaway key that changes on
+Until you set up a signing key (next section), builds from CI are signed with a throwaway key that changes on
 every build, so Android will not update one in place: **uninstall the old build first** (the saved server address and
 sign-in go with it).
 
@@ -135,6 +137,9 @@ Android Studio (current stable): open this folder, let Gradle sync, run on a dev
 ```
 ./gradlew :app:testDebugUnitTest :app:assembleDebug
 ```
+
+`:app:assembleRelease` makes the trimmed release build the same way CI does (it takes longer, as R8 runs); without the
+CI signing key it is signed with the debug key so it can still be installed.
 
 The unit tests decode real responses captured from PokéCollector's own API code
 (`app/src/test/resources/fixtures`) and run the HTTP stack against a local mock server, so a change in the server's

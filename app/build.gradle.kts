@@ -42,6 +42,17 @@ android {
         debug {
             if (fixedKeystore != null) signingConfig = signingConfigs.getByName("fixed")
         }
+        release {
+            // R8 drops the code and resources nobody uses. Most of a debug APK is libraries the app barely touches:
+            // the whole Material icon set for the sixteen icons it shows, for one. It also turns off debugging and
+            // lets Compose's own start-up profiles apply, which is most of why a release build starts and scrolls faster.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // The fixed key when CI has one, so the build installs over earlier ones; otherwise the usual debug key,
+            // which is enough to install a build made locally or in a fork.
+            signingConfig = signingConfigs.getByName(if (fixedKeystore != null) "fixed" else "debug")
+        }
     }
 
     buildFeatures {

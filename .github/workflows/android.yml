@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Also publish the debug APK as a GitHub pre-release (a link you can tap on a phone)"
+        description: "Also publish the APK as a GitHub pre-release (a link you can tap on a phone)"
         type: boolean
         default: false
       screenshots:
@@ -57,15 +57,20 @@ jobs:
           KEY_ALIAS: ${{ secrets.CARDPULSE_KEY_ALIAS }}
         run: bash .github/scripts/prepare-signing.sh
 
-      - name: Build debug APK
-        run: ./gradlew --no-daemon :app:assembleDebug
+      # The release build: R8 trims the code and resources that aren't used (see app/build.gradle.kts). The unit tests
+      # above run against the debug build, which R8 never touches.
+      - name: Build the APK
+        run: ./gradlew --no-daemon :app:assembleRelease
+
+      - name: Report what the APK is made of
+        run: python3 .github/scripts/apk-report.py "$(ls app/build/outputs/apk/release/*.apk)" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Record which key signed the APK
         id: cert
         env:
           FIXED_KEY: ${{ steps.signing.outputs.fixed_key }}
         run: |
-          apk=$(ls app/build/outputs/apk/debug/*.apk)
+          apk=$(ls app/build/outputs/apk/release/*.apk)
           apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1 || true)
           digest=""
           if [ -n "$apksigner" ]; then
@@ -81,8 +86,8 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: cardpulse-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: cardpulse-apk
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
   # Draws every screen with fake data (src/screenshots) and keeps the pictures on the ci-screens branch, which is
@@ -147,7 +152,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: cardpulse-debug-apk
+          name: cardpulse-apk
           path: dist
 
       - name: Publish pre-release
@@ -163,7 +168,7 @@ jobs:
           APP_ID=$(sed -n 's/^[[:space:]]*applicationId = "\(.*\)"$/\1/p' app/build.gradle.kts | head -1)
           if [ -z "$APP_ID" ]; then echo "::error::Could not read the applicationId from app/build.gradle.kts"; exit 1; fi
           {
-            echo "CardPulse debug build ${tag} of commit ${GITHUB_SHA::7}. Debug build, for sideloading only."
+            echo "CardPulse ${tag} of commit ${GITHUB_SHA::7}. Release build (unused code trimmed), for sideloading."
             echo
             echo "**Install:** download the .apk on your phone and open it. If Android asks, allow \"Install unknown apps\" for your browser or Files app."
             echo
@@ -190,7 +195,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --prerelease \
-            --title "CardPulse debug build ${tag}" \
+            --title "CardPulse ${tag}" \
             --notes-file notes.md
 
   # Started by hand with "notes_for" set to a tag: puts the current .github/release-notes.md into that release's
@@ -210,7 +215,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.notes_for }}
         run: |
-          # Only the debug builds this workflow publishes, the same rule the clean-up workflow follows.
+          # Only the builds this workflow publishes, the same rule the clean-up workflow follows.
           if ! [[ "$TAG" =~ ^build-[0-9]+$ ]]; then
             echo "::error::Only build-<number> releases can be edited here, not '$TAG'."
             exit 1
