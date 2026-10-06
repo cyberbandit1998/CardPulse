@@ -33,10 +33,14 @@ import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.Banner
 import app.cardpulse.android.ui.BottomBarOverhang
 import app.cardpulse.android.ui.gainColor
+import java.text.NumberFormat
 
 /** How many cards and sets the Home screen lists; "See all" opens the rest. */
 private const val HOME_VALUABLE_SHOWN = 4
 private const val HOME_SETS_SHOWN = 3
+
+/** 1,234 in the phone's own style. */
+private fun count(number: Int): String = NumberFormat.getIntegerInstance().format(number)
 
 /**
  * The collection at a glance: what it is worth and how that has moved, a few counts, and short lists of the cards you
@@ -117,8 +121,8 @@ fun HomeScreen(
 
             item {
                 Row(inset.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    HomeStat(Icons.Default.Style, "${dashboard.totalCards}", "Cards", Modifier.weight(1f))
-                    HomeStat(Icons.Default.Layers, "${dashboard.ownedSets}", "Sets", Modifier.weight(1f))
+                    HomeStat(Icons.Default.Style, count(dashboard.totalCards), "Cards", Modifier.weight(1f))
+                    HomeStat(Icons.Default.Layers, count(dashboard.ownedSets), "Sets", Modifier.weight(1f))
                     HomeStat(
                         Icons.Default.EmojiEvents,
                         dashboard.topCards.maxOfOrNull { it.totalValue }?.let { money.format(it) } ?: "—",

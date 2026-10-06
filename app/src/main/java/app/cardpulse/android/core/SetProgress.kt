@@ -44,6 +44,16 @@ fun List<CollectionItemDto>.setProgress(): List<SetProgress> {
         .sortedWith(compareByDescending<SetProgress> { it.fraction }.thenByDescending { it.owned }.thenBy { it.name.lowercase() })
 }
 
-/** "Obsidian Flames · #125": where a card is from, without its rarity. */
-fun CardDto.setAndNumber(): String =
-    listOfNotNull(setName(), number?.takeIf { it.isNotBlank() }?.let { "#$it" }).joinToString(" · ")
+/**
+ * Up to two characters that stand for a set's name where its logo is missing: the first letters of its first two words
+ * ("Journey Together" is "JT", "30th Celebration" is "3C"), or the first two of a single word ("Base" is "BA").
+ */
+fun String.monogram(): String {
+    val words = split(' ', '-', '–', '&', ':', '/').filter { it.isNotEmpty() && it.first().isLetterOrDigit() }
+    val letters = when {
+        words.size >= 2 -> "${words[0].first()}${words[1].first()}"
+        words.size == 1 -> words[0].filter { it.isLetterOrDigit() }.take(2)
+        else -> ""
+    }
+    return letters.uppercase().ifEmpty { "?" }
+}

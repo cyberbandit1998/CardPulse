@@ -24,6 +24,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import app.cardpulse.android.core.ArtSource
 import app.cardpulse.android.core.CollectionItemDto
@@ -88,11 +89,12 @@ fun CardArt(
     modifier: Modifier = Modifier,
     large: Boolean = false,
     source: ArtSource = defaultArtSource(item, prefs.preferOwnPhotos),
+    corner: Dp = 8.dp,
 ) {
     RemoteImage(
         url = artUrl(item, server, source, large),
         description = item.card?.name,
-        modifier = modifier.clip(RoundedCornerShape(8.dp)),
+        modifier = modifier.clip(RoundedCornerShape(corner)),
     )
 }
 
@@ -152,6 +154,6 @@ fun StatTile(label: String, value: String, modifier: Modifier = Modifier) {
 @Composable
 fun gainColor(amount: Double): Color = when {
     amount > 0.004 -> MaterialTheme.extras.positive
-    amount < -0.004 -> MaterialTheme.colorScheme.error
+    amount < -0.004 -> MaterialTheme.extras.negative
     else -> MaterialTheme.colorScheme.onSurfaceVariant
 }

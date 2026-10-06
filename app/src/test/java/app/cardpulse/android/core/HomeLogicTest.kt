@@ -190,22 +190,36 @@ class SetLogoUrlTest {
     }
 }
 
-class SetAndNumberTest {
+class MonogramTest {
     @Test
-    fun `the set and the number, with no rarity`() {
-        val card = CardDto(id = "sv3-125_en", name = "Charizard ex", number = "125", rarity = "Double Rare", setRef = SetDto(id = "sv3_en", name = "Obsidian Flames"))
-        assertEquals("Obsidian Flames · #125", card.setAndNumber())
+    fun `two words give the first letter of each`() {
+        assertEquals("JT", "Journey Together".monogram())
+        assertEquals("3C", "30th Celebration".monogram())
+        assertEquals("PS", "Promo Set".monogram())
+        assertEquals("OF", "Obsidian-Flammen".monogram())
     }
 
     @Test
-    fun `leaves out whatever is not known`() {
-        assertEquals("#125", CardDto(id = "x", name = "X", number = "125").setAndNumber())
-        assertEquals("Obsidian Flames", CardDto(id = "x", name = "X", setRef = SetDto(id = "sv3_en", name = "Obsidian Flames")).setAndNumber())
-        assertEquals("", CardDto(id = "x", name = "X", number = " ").setAndNumber())
+    fun `an ampersand or a colon is not a word`() {
+        assertEquals("SV", "Scarlet & Violet".monogram())
+        assertEquals("SM", "SV: Mega Evolution".monogram()) // "SV", "Mega": the colon only separates
     }
 
     @Test
-    fun `falls back to the set id when the set row is missing, as the collection list does`() {
-        assertEquals("sv3 · #001", CardDto(id = "x", name = "X", setId = "sv3", number = "001").setAndNumber())
+    fun `one word gives its first two letters`() {
+        assertEquals("BA", "Base".monogram())
+        assertEquals("X", "X".monogram())
+    }
+
+    @Test
+    fun `nothing to go on gives a question mark`() {
+        assertEquals("?", "".monogram())
+        assertEquals("?", "   ".monogram())
+        assertEquals("?", "&&".monogram())
+    }
+
+    @Test
+    fun `other scripts are kept as they are`() {
+        assertEquals("ポカ", "ポケモン カード".monogram())
     }
 }

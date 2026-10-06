@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -25,7 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.cardpulse.android.core.CollectionItemDto
-import app.cardpulse.android.core.setAndNumber
+import app.cardpulse.android.core.setName
 import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.CARD_ASPECT
 import app.cardpulse.android.ui.CardArt
@@ -62,9 +63,9 @@ fun RecentCarousel(
 
 @Composable
 private fun RecentCard(entry: CollectionItemDto, state: AppState, modifier: Modifier = Modifier, onClick: () -> Unit = {}) {
-    Column(modifier.clip(RoundedCornerShape(10.dp)).clickable(role = Role.Button, onClick = onClick)) {
+    Column(modifier.clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button, onClick = onClick)) {
         Box {
-            CardArt(entry, state.serverUrl, state.prefs, Modifier.fillMaxWidth().aspectRatio(CARD_ASPECT))
+            CardArt(entry, state.serverUrl, state.prefs, Modifier.fillMaxWidth().aspectRatio(CARD_ASPECT), corner = 12.dp)
             if (entry.quantity > 1) {
                 Text(
                     "×${entry.quantity}",
@@ -87,14 +88,33 @@ private fun RecentCard(entry: CollectionItemDto, state: AppState, modifier: Modi
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 8.dp),
         )
-        entry.card?.setAndNumber()?.takeIf { it.isNotBlank() }?.let { where ->
-            Text(
-                where,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+        entry.card?.let { card ->
+            val set = card.setName()?.takeIf { it.isNotBlank() }
+            val number = card.number?.takeIf { it.isNotBlank() }?.let { "#$it" }
+            if (set != null || number != null) {
+                // The set's name gives way first when the line is too long: the number is what tells two cards apart.
+                Row {
+                    if (set != null) {
+                        Text(
+                            set,
+                            Modifier.weight(1f, fill = false),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (number != null) {
+                        Text(
+                            if (set != null) " · $number" else number,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    }
+                }
+            }
         }
     }
 }

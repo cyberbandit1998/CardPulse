@@ -12,10 +12,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -54,6 +56,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
@@ -65,11 +68,12 @@ import app.cardpulse.android.core.MoneyFormatter
 import app.cardpulse.android.core.ServerUrls
 import app.cardpulse.android.core.SetProgress
 import app.cardpulse.android.core.TopCardDto
+import app.cardpulse.android.core.monogram
 import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.CARD_ASPECT
 import app.cardpulse.android.ui.CardArt
-import app.cardpulse.android.ui.RemoteImage
 import app.cardpulse.android.ui.theme.extras
+import coil3.compose.SubcomposeAsyncImage
 
 // The pieces the Home screen is made of. They hold no data of their own: everything is passed in.
 
@@ -119,7 +123,7 @@ internal fun HomeHeader(
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val status = if (connected) MaterialTheme.extras.positive else MaterialTheme.colorScheme.error
+    val status = if (connected) MaterialTheme.extras.positive else MaterialTheme.extras.negative
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         PulseMark(Modifier.size(width = 36.dp, height = 30.dp))
         Spacer(Modifier.width(10.dp))
@@ -168,21 +172,18 @@ internal fun SummaryCard(
             .background(Brush.linearGradient(listOf(extras.heroTop, extras.heroBottom)))
             .border(1.dp, extras.heroBorder, shape),
     ) {
+        // The chart sits to the right, under the arrow and above the gain line, so it never runs through the text.
         if (history.size >= 2) {
             Sparkline(
                 history,
                 MaterialTheme.colorScheme.secondary,
-                Modifier.align(Alignment.TopEnd).padding(top = 58.dp, end = 22.dp).fillMaxWidth(0.36f).height(54.dp),
+                Modifier.align(Alignment.TopEnd).padding(top = 54.dp, end = 20.dp).width(112.dp).height(32.dp),
             )
         }
+        OpenPortfolioButton(onOpenPortfolio, Modifier.align(Alignment.TopEnd).padding(top = 14.dp, end = 14.dp))
         Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                Column(Modifier.weight(1f)) {
-                    Text("Collection value", style = MaterialTheme.typography.bodyLarge, color = muted)
-                    Text(value, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, maxLines = 1)
-                }
-                OpenPortfolioButton(onOpenPortfolio)
-            }
+            Text("Collection value", style = MaterialTheme.typography.bodyLarge, color = muted)
+            Text(value, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold, maxLines = 1)
             Text(
                 buildAnnotatedString {
                     withStyle(SpanStyle(color = gainColor, fontWeight = FontWeight.SemiBold)) { append("$gain $gainLabel") }
@@ -201,11 +202,11 @@ internal fun SummaryCard(
 
 /** A thin outlined circle with an arrow that points up and to the right. */
 @Composable
-private fun OpenPortfolioButton(onClick: () -> Unit) {
+private fun OpenPortfolioButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val accent = MaterialTheme.colorScheme.secondary
     Box(
-        Modifier
-            .size(40.dp)
+        modifier
+            .size(38.dp)
             .clip(CircleShape)
             .border(1.5.dp, accent.copy(alpha = 0.6f), CircleShape)
             .semantics { contentDescription = "Open the portfolio" }
@@ -307,14 +308,21 @@ internal fun HomeStat(icon: ImageVector, value: String, label: String, modifier:
             .clip(shape)
             .background(MaterialTheme.colorScheme.surface)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
-            .padding(horizontal = 12.dp, vertical = 14.dp),
+            .padding(horizontal = 10.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(22.dp))
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(20.dp))
         Column(Modifier.weight(1f)) {
             FitText(value, MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
-            Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            Text(
+                label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -448,26 +456,52 @@ internal fun SetProgressRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        RemoteImage(
-            url = ServerUrls.setLogo(serverUrl, set.id),
-            description = null,
-            modifier = Modifier.width(52.dp).height(34.dp),
-            contentScale = ContentScale.Fit,
-            placeholderColor = Color.Transparent,
-        )
+        SetLogo(ServerUrls.setLogo(serverUrl, set.id), set.name, Modifier.width(52.dp).height(34.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Text(set.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             SlimProgress(set.fraction)
         }
+        // A fixed width, so the bars of different rows end in the same place.
         Text(
             buildAnnotatedString {
                 withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)) { append("${set.owned}") }
                 withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) { append(" / ${set.total}") }
             },
+            modifier = Modifier.widthIn(min = 64.dp),
             style = MaterialTheme.typography.titleSmall,
+            textAlign = TextAlign.End,
             maxLines = 1,
         )
         Chevron()
+    }
+}
+
+/** A set's logo from the server, or, while there is none to show (it loads, or the set has no logo), its initials. */
+@Composable
+private fun SetLogo(url: String, name: String, modifier: Modifier = Modifier) {
+    SubcomposeAsyncImage(
+        model = url,
+        contentDescription = null,
+        modifier = modifier,
+        contentScale = ContentScale.Fit,
+        loading = { Box(Modifier.fillMaxSize()) },
+        error = { SetMonogram(name, Modifier.fillMaxSize()) },
+    )
+}
+
+@Composable
+private fun SetMonogram(name: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier.clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            name.monogram(),
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
     }
 }
 

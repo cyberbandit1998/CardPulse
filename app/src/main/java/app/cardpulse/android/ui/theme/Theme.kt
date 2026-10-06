@@ -68,6 +68,8 @@ class CardPulseExtras(
     val heroRow: Color,
     /** Gains, and "connected". */
     val positive: Color,
+    /** Losses, and "offline". The Material error colour is a pale pink in the dark theme, too faint for this. */
+    val negative: Color,
 )
 
 private val DarkExtras = CardPulseExtras(
@@ -76,6 +78,7 @@ private val DarkExtras = CardPulseExtras(
     heroBorder = Color(0xFF5B2A2E),
     heroRow = Color(0x40000000),
     positive = Color(0xFF3DDC84),
+    negative = Color(0xFFFF6B6B),
 )
 
 private val LightExtras = CardPulseExtras(
@@ -84,6 +87,7 @@ private val LightExtras = CardPulseExtras(
     heroBorder = Color(0xFFF2BDB8),
     heroRow = Color(0x1AE3000B),
     positive = Color(0xFF1B8A3E),
+    negative = Color(0xFFC62828),
 )
 
 private val LocalExtras = staticCompositionLocalOf { DarkExtras }
