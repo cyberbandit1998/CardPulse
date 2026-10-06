@@ -263,6 +263,15 @@ class ScreensScreenshotTest {
 
     private val homeState = signedIn.copy(collection = richCollection)
 
+    // For the Sets tab: one set whose name needs two lines, and one that is complete (its bar turns green).
+    private val paldea = SetDto(id = "sv2_en", tcgSetId = "sv2", name = "Scarlet & Violet—Paldea Evolved", total = 279, printedTotal = 193)
+    private val trickOrTrade = SetDto(id = "tot_en", tcgSetId = "tot", name = "Trick or Trade", total = 6, printedTotal = 6)
+    private val setsState = homeState.copy(
+        collection = richCollection +
+            (1..40).map { owned(300 + it, "sv2-$it", "Card $it", paldea, "%03d".format(it)) } +
+            (1..6).map { owned(400 + it, "tot-$it", "Card $it", trickOrTrade, "%03d".format(it)) },
+    )
+
     @Composable
     private fun HomeWithBar(state: AppState, waiting: Int = 0) {
         Scaffold(bottomBar = { CardPulseBottomBar(selected = MainTab.HOME, onSelect = {}, onScanNow = {}, waiting = waiting) }) { padding ->
@@ -349,11 +358,11 @@ class ScreensScreenshotTest {
 
     @Test
     @Config(qualifiers = "w360dp-h780dp-xxhdpi")
-    fun setsTab() = shoot("1e-sets") { SetsWithBar(homeState) }
+    fun setsTab() = shoot("1e-sets") { SetsWithBar(setsState) }
 
     @Test
     @Config(qualifiers = "w360dp-h780dp-xxhdpi")
-    fun setsTabLight() = shoot("1e-sets-light", dark = false) { SetsWithBar(homeState) }
+    fun setsTabLight() = shoot("1e-sets-light", dark = false) { SetsWithBar(setsState) }
 
     @Test
     @Config(qualifiers = "w360dp-h780dp-xxhdpi")

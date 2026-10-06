@@ -496,12 +496,17 @@ internal fun ValuableRow(
     }
 }
 
-/** A set of the "set progress" list: its logo, its name over a slim bar, how many of its cards are owned, and a chevron. */
+/**
+ * A set of the "set progress" list: its logo, its name over a slim bar, how many of its cards are owned, and a chevron.
+ * The name keeps to [nameLines] lines and is cut with "…" after that; the Sets tab gives it two, so that sets whose names
+ * start alike can be told apart.
+ */
 @Composable
 internal fun SetProgressRow(
     set: SetProgress,
     serverUrl: String,
     modifier: Modifier = Modifier,
+    nameLines: Int = 1,
     onClick: (() -> Unit)? = null,
 ) {
     Row(
@@ -511,7 +516,7 @@ internal fun SetProgressRow(
     ) {
         SetLogo(ServerUrls.setLogo(serverUrl, set.id), set.name, Modifier.width(52.dp).height(34.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Text(set.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(set.name, style = MaterialTheme.typography.titleMedium, maxLines = nameLines, overflow = TextOverflow.Ellipsis)
             SlimProgress(set.fraction, color = if (set.isComplete) MaterialTheme.extras.positive else MaterialTheme.colorScheme.secondary)
         }
         // A fixed width, so the bars of different rows end in the same place.

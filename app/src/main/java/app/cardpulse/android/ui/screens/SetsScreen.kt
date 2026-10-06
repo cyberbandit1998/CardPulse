@@ -88,7 +88,7 @@ fun SetsScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(shown, key = { it.id }) { set ->
-                    ListCard { SetProgressRow(set, state.serverUrl, onClick = { onOpenSet(set.name) }) }
+                    ListCard { SetProgressRow(set, state.serverUrl, nameLines = 2, onClick = { onOpenSet(set.name) }) }
                 }
             }
         }
