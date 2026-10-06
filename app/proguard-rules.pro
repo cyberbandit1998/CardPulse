@@ -17,3 +17,9 @@
 # Coil finds its OkHttp network fetcher through a service file (META-INF/services), which is easy to lose when shrinking.
 -keep class * implements coil3.util.FetcherServiceLoaderTarget { *; }
 -keep class * implements coil3.util.DecoderServiceLoaderTarget { *; }
+
+# DataStore keeps the saved address and sign-in in a protocol-buffers file whose generated classes are read by field
+# name; its own rules should keep them, and this makes sure (a missing field only shows when something is first saved).
+-keepclassmembers class * extends androidx.datastore.preferences.protobuf.GeneratedMessageLite {
+    <fields>;
+}

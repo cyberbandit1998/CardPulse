@@ -1,3 +1,5 @@
-**Fix: the "Review" button on the camera screen was cut off.** On some phones it read "Revie". The button is now as wide as its label needs, including with a larger text size, and the shutter button stays in the middle. The button no longer carries a number (it was always cut off); the badge at the top still says how many cards are waiting.
+**This is the first optimised ("release") build.** It does the same things as the last build, but code and pictures the app never uses are trimmed out, so the file is about 3.4 MB instead of about 26 MB. It downloads and installs faster and should start and scroll more smoothly. No features changed.
 
-This build has the same app ID as the last one, so it installs straight over it.
+It has the same app ID and signing key as the earlier builds, so it installs straight over them and keeps your saved address and sign-in.
+
+Please try it on your phone: sign in, look through your collection, add a card by scanning and by typing it in. Trimming can, rarely, break something that only a real phone shows. Before this build was published it was installed on an emulator, where it started and read a first reply from a web server, but that does not cover everything. If something that used to work now fails, tell me what you were doing. (Android will not install an older build over this one; going back means uninstalling the app first.)
