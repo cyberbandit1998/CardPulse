@@ -14,6 +14,10 @@ on:
         description: "Also draw every screen to a picture (see the ci-screens branch)"
         type: boolean
         default: false
+      smoke:
+        description: "Also run the APK on an emulator to check that it starts and reads a server's reply (about 8 minutes; always done when publishing)"
+        type: boolean
+        default: false
       notes_for:
         description: "Only rewrite the What's new text of an existing release (for example build-34) from .github/release-notes.md. Nothing is built."
         type: string
@@ -138,10 +142,74 @@ jobs:
           git commit -q -m "Screens of ${GITHUB_SHA::7} (${GITHUB_REF_NAME})"
           git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-screens
 
+  # Runs the release APK on an emulator (.github/scripts/smoke-test.py). Shrinking the code with R8 can break things that
+  # only show when the app runs, which the unit tests cannot see because they run against the debug build. It runs
+  # for every publish, when asked for, and on pushes to main; a failed check stops the APK from being published.
+  smoke:
+    if: (github.event_name == 'workflow_dispatch' && (inputs.publish || inputs.smoke) && inputs.notes_for == '') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cardpulse-apk
+          path: dist
+
+      - name: Enable KVM, which makes the emulator fast enough
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Start the app on an emulator and use it
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: python3 .github/scripts/smoke-test.py dist/*.apk smoke-out
+
+      - name: Show what happened
+        if: always() && hashFiles('smoke-out/summary.txt') != ''
+        run: cat smoke-out/summary.txt | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the pictures with the run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke
+          path: smoke-out
+          if-no-files-found: ignore
+
+      # The same trick as the screenshots: the pictures and the log go to a branch that is rewritten each time.
+      - name: Put the pictures on the ci-smoke branch
+        if: always() && hashFiles('smoke-out/*') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          dir=$(mktemp -d)
+          cp smoke-out/* "$dir"/
+          cd "$dir"
+          git init -q -b ci-smoke
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -q -m "Smoke test of ${GITHUB_SHA::7} (${GITHUB_REF_NAME})"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-smoke
+
   # Only runs when started by hand with "publish" ticked. Pre-releases are public, so this is opt-in.
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.publish
-    needs: build
+    needs: [build, smoke]
     runs-on: ubuntu-latest
     permissions:
       contents: write
