@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -41,6 +42,7 @@ import app.cardpulse.android.core.ScanMatchDto
 import app.cardpulse.android.core.ScanOutcome
 import app.cardpulse.android.core.SetDto
 import app.cardpulse.android.core.SnapshotDto
+import app.cardpulse.android.core.ThemeMode
 import app.cardpulse.android.core.Upload
 import app.cardpulse.android.core.UserDto
 import app.cardpulse.android.core.lookup
@@ -48,6 +50,8 @@ import app.cardpulse.android.core.ownershipOf
 import app.cardpulse.android.core.toChartPoints
 import app.cardpulse.android.data.ScanPrefs
 import app.cardpulse.android.ui.screens.CollectionScreen
+import app.cardpulse.android.ui.screens.HomeList
+import app.cardpulse.android.ui.screens.HomeListScreen
 import app.cardpulse.android.ui.screens.HomeScreen
 import app.cardpulse.android.ui.screens.LoginScreen
 import app.cardpulse.android.ui.screens.ManualAddActions
@@ -84,8 +88,8 @@ class ScreensScreenshotTest {
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
 
-    private fun shoot(name: String, content: @Composable () -> Unit) {
-        compose.setContent { CardPulseTheme { content() } }
+    private fun shoot(name: String, dark: Boolean = true, content: @Composable () -> Unit) {
+        compose.setContent { CardPulseTheme(darkTheme = dark) { content() } }
         capture(name)
     }
 
@@ -182,9 +186,10 @@ class ScreensScreenshotTest {
         message: String? = null,
         currency: String = "USD",
         fontScale: Float = 1f,
+        dark: Boolean = true,
     ) {
         compose.setContent {
-            CardPulseTheme {
+            CardPulseTheme(darkTheme = dark) {
                 val density = LocalDensity.current
                 CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
                     RapidScreenContent(
@@ -222,6 +227,11 @@ class ScreensScreenshotTest {
     }
 
     @Test
+    fun loginLight() = shoot("01-login-light", dark = false) {
+        LoginScreen(state = signedOut, onTest = {}, onSignIn = { _, _, _ -> }, onDismissMessage = {})
+    }
+
+    @Test
     fun loginWithError() = shoot("02-login-error") {
         LoginScreen(
             state = signedOut.copy(serverUrl = "https://cards.example.com/", message = "Incorrect username or password"),
@@ -236,14 +246,84 @@ class ScreensScreenshotTest {
 
     // --- the tabs -----------------------------------------------------------------------------------------
 
+    // --- the Home screen, in both themes --------------------------------------------------------------------
+
+    private val celebration = SetDto(id = "cel_en", tcgSetId = "cel", name = "30th Celebration", total = 132, printedTotal = 132)
+    private val journey = SetDto(id = "jt_en", tcgSetId = "jt", name = "Journey Together", total = 190, printedTotal = 190)
+
+    private fun owned(id: Int, cardId: String, name: String, set: SetDto, number: String) = CollectionItemDto(
+        id = id, cardId = cardId, card = CardDto(id = cardId, name = name, number = number, setId = set.tcgSetId, setRef = set),
+    )
+
+    /** The fixture's rows plus two sets that are well under way, so the progress bars have something to show. */
+    private val richCollection: List<CollectionItemDto> = collection +
+        (1..18).map { owned(100 + it, "cel-$it", "Card $it", celebration, "%03d".format(it)) } +
+        (1..7).map { owned(200 + it, "jt-$it", "Card $it", journey, "%03d".format(it)) }
+
+    private val homeState = signedIn.copy(collection = richCollection)
+
+    @Composable
+    private fun HomeWithBar(state: AppState) {
+        Scaffold(bottomBar = { CardPulseBottomBar(selected = MainTab.HOME, onSelect = {}, onScanNow = {}) }) { padding ->
+            HomeScreen(state = state, onRefresh = {}, onOpenSettings = {}, modifier = Modifier.padding(padding))
+        }
+    }
+
     @Test
     @Config(qualifiers = "w360dp-h1300dp-xxhdpi")
     fun home() = shoot("10-home") {
-        HomeScreen(state = signedIn, onRefresh = {}, onOpenSettings = {})
+        HomeScreen(state = homeState, onRefresh = {}, onOpenSettings = {})
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h1300dp-xxhdpi")
+    fun homeLight() = shoot("10-home-light", dark = false) {
+        HomeScreen(state = homeState, onRefresh = {}, onOpenSettings = {})
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    fun homeOnAPhone() = shoot("1a-home-phone") { HomeWithBar(homeState) }
+
+    @Test
+    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    fun homeOnAPhoneLight() = shoot("1a-home-phone-light", dark = false) { HomeWithBar(homeState) }
+
+    @Test
+    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    fun homeOfflineAndLoading() = shoot("1b-home-offline") {
+        HomeWithBar(homeState.copy(offline = true, dashboardLoading = true))
+    }
+
+    @Test
+    @Config(qualifiers = "w320dp-h780dp-xxhdpi")
+    fun homeWithBigNumbersOnASmallPhone() = shoot("1c-home-big-numbers") {
+        val dashboard = homeState.dashboard!!.copy(totalValue = 12345.67, totalCost = 4321.0, unrealizedPnl = -321.5, totalCards = 1234, ownedSets = 87)
+        HomeWithBar(homeState.copy(dashboard = dashboard))
+    }
+
+    @Test
+    fun mostValuableList() = shoot("1d-most-valuable") {
+        HomeListScreen(HomeList.VALUABLE, homeState, onBack = {}, onOpenSet = {}, onRemove = { _, _, _ -> })
+    }
+
+    @Test
+    fun setProgressList() = shoot("1e-set-progress-list") {
+        HomeListScreen(HomeList.SETS, homeState, onBack = {}, onOpenSet = {}, onRemove = { _, _, _ -> })
+    }
+
+    @Test
+    fun setProgressListLight() = shoot("1e-set-progress-list-light", dark = false) {
+        HomeListScreen(HomeList.SETS, homeState, onBack = {}, onOpenSet = {}, onRemove = { _, _, _ -> })
     }
 
     @Test
     fun collectionTab() = shoot("11-collection") {
+        CollectionScreen(state = signedIn, onRefresh = {}, onRemove = { _, _, _ -> }, onAddCard = {})
+    }
+
+    @Test
+    fun collectionTabLight() = shoot("11-collection-light", dark = false) {
         CollectionScreen(state = signedIn, onRefresh = {}, onRemove = { _, _, _ -> }, onAddCard = {})
     }
 
@@ -284,10 +364,25 @@ class ScreensScreenshotTest {
     }
 
     @Test
-    @Config(qualifiers = "w360dp-h1000dp-xxhdpi")
+    @Config(qualifiers = "w360dp-h1300dp-xxhdpi")
+    fun portfolioLight() = shoot("12-portfolio-light", dark = false) {
+        PortfolioScreen(state = signedIn, onShowHistory = { _, _ -> })
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h1100dp-xxhdpi")
     fun settings() = shoot("13-settings") {
         SettingsScreen(
             app = signedIn, scan = ScanState(prefs = ScanPrefs()), onBack = {}, onSignOut = {}, onSavePhotos = {}, onLookUpPrices = {},
+        )
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h1100dp-xxhdpi")
+    fun settingsLight() = shoot("13-settings-light", dark = false) {
+        SettingsScreen(
+            app = signedIn.copy(themeMode = ThemeMode.LIGHT), scan = ScanState(prefs = ScanPrefs()),
+            onBack = {}, onSignOut = {}, onSavePhotos = {}, onLookUpPrices = {},
         )
     }
 
@@ -306,6 +401,14 @@ class ScreensScreenshotTest {
         ScanHomeContent(
             ready = 3, reading = 2, attention = 1, message = "A scan is no longer on the server (scans expire after 14 days).",
             savePhotos = true, onStart = {}, onAddManually = {}, onReview = {}, onSavePhotos = {}, onDismissMessage = {},
+        )
+    }
+
+    @Test
+    fun scanHomeLight() = shoot("20-scan-home-light", dark = false) {
+        ScanHomeContent(
+            ready = 3, reading = 2, attention = 1, message = null, savePhotos = true,
+            onStart = {}, onAddManually = {}, onReview = {}, onSavePhotos = {}, onDismissMessage = {},
         )
     }
 
@@ -342,6 +445,18 @@ class ScreensScreenshotTest {
     fun rapidScanTrayShowsEveryKindOfResult() {
         rapid(trayEntries)
         capture("31-rapid-tray")
+    }
+
+    @Test
+    fun rapidScanTrayInTheLightTheme() {
+        rapid(trayEntries, dark = false)
+        capture("31-rapid-tray-light")
+    }
+
+    @Test
+    fun confirmDuplicateCardInTheLightTheme() {
+        rapid(trayEntries, openId = 6, currency = "USD", dark = false)
+        capture("32-confirm-duplicate-light")
     }
 
     @Test
@@ -471,9 +586,9 @@ class ScreensScreenshotTest {
         id = "sv9-5_de", lang = "de", setRef = journeyTogether.copy(id = "sv9_de", name = "Reisegefährten", lang = "de"),
     )
 
-    private fun manual(state: ManualAddState, currency: String = "USD") {
+    private fun manual(state: ManualAddState, currency: String = "USD", dark: Boolean = true) {
         compose.setContent {
-            CardPulseTheme {
+            CardPulseTheme(darkTheme = dark) {
                 ManualAddContent(
                     state = state,
                     serverUrl = "https://cards.example.com/",
@@ -506,6 +621,15 @@ class ScreensScreenshotTest {
         // One match is picked by itself: its picture, set, rarity, type, hit points and artist are filled in.
         manual(typed("Charizard ex", "125/197", charizardEx, picked = charizardEx, edits = AddEdits(quantity = 2, condition = "LP", variant = "Holo")))
         capture("41-manual-found")
+    }
+
+    @Test
+    fun manualAddFindsTheCardInTheLightTheme() {
+        manual(
+            typed("Charizard ex", "125/197", charizardEx, picked = charizardEx, edits = AddEdits(quantity = 2, condition = "LP", variant = "Holo")),
+            dark = false,
+        )
+        capture("41-manual-found-light")
     }
 
     @Test

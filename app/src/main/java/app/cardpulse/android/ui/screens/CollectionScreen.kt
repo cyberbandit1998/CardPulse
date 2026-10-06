@@ -48,6 +48,7 @@ import app.cardpulse.android.core.takesItsPhotoWhenRemoved
 import app.cardpulse.android.ui.AccentTextButton
 import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.Banner
+import app.cardpulse.android.ui.BottomBarOverhang
 import app.cardpulse.android.ui.CARD_ASPECT
 import app.cardpulse.android.ui.CardArt
 import app.cardpulse.android.ui.formatDate
@@ -74,8 +75,10 @@ fun CollectionScreen(
     /** Opens the screen where a card is typed in. */
     onAddCard: () -> Unit,
     modifier: Modifier = Modifier,
+    /** What the search box starts with, such as a set's name when the user came from the set's progress on Home. */
+    initialQuery: String = "",
 ) {
-    var query by rememberSaveable { mutableStateOf("") }
+    var query by rememberSaveable(initialQuery) { mutableStateOf(initialQuery) }
     var sort by rememberSaveable { mutableStateOf(SortOrder.RECENT) }
     var openItem by remember { mutableStateOf<CollectionItemDto?>(null) }
 
@@ -128,7 +131,7 @@ fun CollectionScreen(
             shown.isEmpty() -> EmptyNote("Nothing matches “${query.trim()}”.")
             else -> LazyVerticalGrid(
                 columns = GridCells.Adaptive(112.dp),
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 12.dp + BottomBarOverhang),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -183,8 +186,9 @@ private fun CollectionTile(entry: CollectionItemDto, state: AppState, onClick: (
 
 private fun Modifier.cardAspect(): Modifier = this.aspectRatio(CARD_ASPECT)
 
+/** The details of one collection entry, with the way to remove it. Shared by the Collection tab and Home. */
 @Composable
-private fun ItemDialog(
+internal fun ItemDialog(
     entry: CollectionItemDto,
     state: AppState,
     onRemove: (item: CollectionItemDto, wholeRow: Boolean, done: (String?) -> Unit) -> Unit,

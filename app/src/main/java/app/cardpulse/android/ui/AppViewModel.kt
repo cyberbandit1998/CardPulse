@@ -9,9 +9,11 @@ import app.cardpulse.android.core.CollectionItemDto
 import app.cardpulse.android.core.DashboardDto
 import app.cardpulse.android.core.DisplayPrefs
 import app.cardpulse.android.core.MoverDto
+import app.cardpulse.android.core.NotPokeCollectorException
 import app.cardpulse.android.core.PortfolioRange
 import app.cardpulse.android.core.PriceLookup
 import app.cardpulse.android.core.ServerUrl
+import app.cardpulse.android.core.ThemeMode
 import app.cardpulse.android.core.UserDto
 import app.cardpulse.android.core.attempt
 import app.cardpulse.android.core.isCustomCard
@@ -30,6 +32,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+import java.io.IOException
 
 data class AppState(
     val booting: Boolean = true,
@@ -60,6 +63,10 @@ data class AppState(
     val movers: List<MoverDto> = emptyList(),
     /** The server is looking up prices for newly added cards. */
     val lookingUpPrices: Boolean = false,
+    /** The last attempt to reach the server failed for lack of a connection (not because it said no). */
+    val offline: Boolean = false,
+    /** Light, dark or the phone's setting. */
+    val themeMode: ThemeMode = ThemeMode.DEFAULT,
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -97,9 +104,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 serverUrl = saved.serverUrl,
                 signedIn = signedIn,
                 noLogin = saved.noLogin,
+                themeMode = saved.themeMode,
             )
         }
         if (signedIn) loadEverything()
+    }
+
+    /** Switches the colours at once and remembers the choice for next time. */
+    fun setThemeMode(mode: ThemeMode) {
+        _state.update { it.copy(themeMode = mode) }
+        viewModelScope.launch { attempt { store.saveThemeMode(mode) } }
     }
 
     /** Checks the address and, if the server asks for a login, signs in with the given credentials. */
@@ -179,7 +193,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             historyFetchedAt.clear()
             clearImageCaches()
             _state.update {
-                AppState(booting = false, serverUrl = it.serverUrl, message = message)
+                AppState(booting = false, serverUrl = it.serverUrl, message = message, themeMode = it.themeMode)
             }
         }
     }
@@ -232,16 +246,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun refreshPrefs() {
         attempt { repo.loadPrefs() }
-            .onSuccess { prefs -> _state.update { it.copy(prefs = prefs) } }
-            .onFailure { error -> _state.update { it.copy(message = error.userMessage()) } }
+            .onSuccess { prefs -> _state.update { it.copy(prefs = prefs, offline = false) } }
+            .onFailure { error -> _state.update { it.copy(message = error.userMessage(), offline = error.isNoConnection()) } }
     }
 
     private suspend fun refreshDashboardNow() {
         _state.update { it.copy(dashboardLoading = true) }
         val priceField = _state.value.prefs.priceField
         attempt { repo.loadDashboard(priceField) }
-            .onSuccess { dashboard -> _state.update { it.copy(dashboard = dashboard, dashboardLoading = false) } }
-            .onFailure { error -> _state.update { it.copy(dashboardLoading = false, message = error.userMessage()) } }
+            .onSuccess { dashboard -> _state.update { it.copy(dashboard = dashboard, dashboardLoading = false, offline = false) } }
+            .onFailure { error ->
+                _state.update { it.copy(dashboardLoading = false, message = error.userMessage(), offline = error.isNoConnection()) }
+            }
     }
 
     private suspend fun refreshCollectionNow() {
@@ -254,11 +270,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         collectionLoaded = true,
                         collectionLoading = false,
                         collectionUnreadable = result.unreadable,
+                        offline = false,
                     )
                 }
             }
-            .onFailure { error -> _state.update { it.copy(collectionLoading = false, message = error.userMessage()) } }
+            .onFailure { error ->
+                _state.update { it.copy(collectionLoading = false, message = error.userMessage(), offline = error.isNoConnection()) }
+            }
     }
+
+    /** The server could not be reached at all (no network, wrong address, timed out), as opposed to answering with an error. */
+    private fun Throwable.isNoConnection(): Boolean = this is IOException && this !is NotPokeCollectorException
 
     private fun upsertCollectionItem(item: CollectionItemDto) {
         // A card the collection hasn't had before may not have a price yet; one it already tracked has.

@@ -30,6 +30,7 @@ import app.cardpulse.android.core.CollectionItemDto
 import app.cardpulse.android.core.DisplayPrefs
 import app.cardpulse.android.core.ServerUrls
 import app.cardpulse.android.core.defaultArtSource
+import app.cardpulse.android.ui.theme.extras
 import coil3.compose.AsyncImage
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -44,17 +45,18 @@ private val shortDate: DateTimeFormatter = DateTimeFormatter.ofLocalizedDate(For
 fun formatDate(instant: Instant?): String =
     instant?.let { shortDate.format(it.atZone(ZoneId.systemDefault())) }.orEmpty()
 
-/** An image from a URL, or a flat placeholder while it loads, fails, or when there is no URL. */
+/** An image from a URL, or a flat placeholder (of [placeholderColor]) while it loads, fails, or when there is no URL. */
 @Composable
 fun RemoteImage(
     url: String?,
     description: String?,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
+    placeholderColor: Color = MaterialTheme.colorScheme.surfaceVariant,
 ) {
-    val placeholder = ColorPainter(MaterialTheme.colorScheme.surfaceVariant)
+    val placeholder = ColorPainter(placeholderColor)
     if (url.isNullOrBlank()) {
-        Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant))
+        Box(modifier.background(placeholderColor))
     } else {
         AsyncImage(
             model = url,
@@ -149,7 +151,7 @@ fun StatTile(label: String, value: String, modifier: Modifier = Modifier) {
 /** Green for gains and the error colour for losses, so a glance tells you which way it went. */
 @Composable
 fun gainColor(amount: Double): Color = when {
-    amount > 0.004 -> Color(0xFF4CAF50)
+    amount > 0.004 -> MaterialTheme.extras.positive
     amount < -0.004 -> MaterialTheme.colorScheme.error
     else -> MaterialTheme.colorScheme.onSurfaceVariant
 }

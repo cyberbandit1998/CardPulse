@@ -7,6 +7,9 @@ object ServerUrls {
     fun cardImage(base: String, cardId: String, large: Boolean = false): String =
         build(base, "api", "images", "card", cardId, if (large) "large" else "small")
 
+    /** A set's logo from the server's image cache; [setId] is the server's own id for the set, such as "sv3_en". */
+    fun setLogo(base: String, setId: String): String = build(base, "api", "images", "set", setId, "logo")
+
     fun ownPhoto(base: String, collectionItemId: Int): String =
         build(base, "api", "collection", collectionItemId.toString(), "photo")
 

@@ -47,8 +47,12 @@ The app warns you if it connects to a server in single-user mode.
 
 ## What it does
 
-- **Home:** your total value, gain or loss, the cards worth the most, and the cards you added lately as a carousel of
-  large pictures (1.5 inches wide, true card shape) that swipes sideways one card at a time.
+- **Home:** a dashboard. Your collection's value with its gain or loss and a small chart of how it has moved, the number
+  of cards and sets, the cards you added lately in a row that swipes sideways, the cards worth the most, and how far
+  along each of your sets is, as pictures, names and slim progress bars. Every list has a "See all", and tapping a card
+  opens its details. A one-line warning says when some cards have no purchase price, which makes the gain look larger
+  than it is. The round camera button in the bottom bar opens the camera from any tab.
+- **Light or dark:** Settings, Appearance: light, dark, or whatever your phone is set to. The choice stays on the phone.
 - **Rapid scan:** the camera stays open while you work through a pile. Each photo is sent to your server the moment
   it is taken and read in the background (up to three at once), so you can photograph the next card straight away.
   Results collect in a tray along the bottom. Photos are kept on the phone until they upload, so a dropped connection or

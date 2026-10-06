@@ -38,3 +38,7 @@ data class CostCoverage(val withCost: Int, val total: Int) {
 
 fun List<CollectionItemDto>.costCoverage(): CostCoverage =
     CostCoverage(withCost = count { it.purchasePrice != null }, total = size)
+
+/** Copies, not entries, in the rows that carry no purchase price: the cards a gain figure is not honest about. */
+fun List<CollectionItemDto>.cardsMissingCost(): Int =
+    filter { it.purchasePrice == null }.sumOf { it.quantity.coerceAtLeast(0) }

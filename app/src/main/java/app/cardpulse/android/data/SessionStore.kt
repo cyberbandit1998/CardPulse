@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import app.cardpulse.android.core.ThemeMode
 import kotlinx.coroutines.flow.first
 
 private val Context.dataStore by preferencesDataStore("cardpulse_settings")
@@ -16,6 +17,7 @@ data class StoredSession(
     val username: String? = null,
     /** The server is in single-user mode: there is no sign-in and no token. */
     val noLogin: Boolean = false,
+    val themeMode: ThemeMode = ThemeMode.DEFAULT,
 )
 
 /** Choices that carry over between scans and typed-in cards. */
@@ -39,6 +41,7 @@ class SessionStore(private val context: Context, private val cipher: TokenCipher
         val condition = stringPreferencesKey("scan_condition")
         val variant = stringPreferencesKey("scan_variant")
         val lookUpPrices = booleanPreferencesKey("look_up_prices")
+        val themeMode = stringPreferencesKey("theme_mode")
     }
 
     suspend fun load(): StoredSession {
@@ -48,7 +51,13 @@ class SessionStore(private val context: Context, private val cipher: TokenCipher
             token = prefs[Keys.token]?.let(cipher::decrypt),
             username = prefs[Keys.username],
             noLogin = prefs[Keys.noLogin] == true,
+            themeMode = ThemeMode.fromKey(prefs[Keys.themeMode]),
         )
+    }
+
+    /** Light, dark or the phone's setting. Kept when signing out: it is about this phone, not the account. */
+    suspend fun saveThemeMode(mode: ThemeMode) {
+        context.dataStore.edit { it[Keys.themeMode] = mode.key }
     }
 
     /** [serverUrl] must already be normalized with `ServerUrl.normalize`. */

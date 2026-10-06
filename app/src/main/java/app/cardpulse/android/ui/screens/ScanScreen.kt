@@ -72,6 +72,7 @@ import app.cardpulse.android.core.tileState
 import app.cardpulse.android.core.toReview
 import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.Banner
+import app.cardpulse.android.ui.BottomBarOverhang
 import app.cardpulse.android.ui.ScanStage
 import app.cardpulse.android.ui.ScanState
 import app.cardpulse.android.ui.ScanViewModel
@@ -131,7 +132,7 @@ fun ScanHomeContent(
 ) {
     LazyColumn(
         modifier = modifier,
-        contentPadding = PaddingValues(16.dp),
+        contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 16.dp + BottomBarOverhang),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item { Text("Scan cards", style = MaterialTheme.typography.headlineMedium) }

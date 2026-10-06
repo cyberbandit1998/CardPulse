@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -27,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.cardpulse.android.BuildConfig
+import app.cardpulse.android.core.ThemeMode
 import app.cardpulse.android.ui.AccentTextButton
 import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.ScanState
@@ -40,6 +42,7 @@ fun SettingsScreen(
     onSavePhotos: (Boolean) -> Unit,
     onLookUpPrices: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    onThemeMode: (ThemeMode) -> Unit = {},
 ) {
     var confirmSignOut by remember { mutableStateOf(false) }
 
@@ -52,6 +55,20 @@ fun SettingsScreen(
             Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            Section("Appearance") {
+                Text("Colours", style = MaterialTheme.typography.bodyLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ThemeMode.entries.forEach { mode ->
+                        FilterChip(selected = app.themeMode == mode, onClick = { onThemeMode(mode) }, label = { Text(mode.label) })
+                    }
+                }
+                Text(
+                    "“Same as phone” follows your phone's own light or dark setting. The choice stays on this phone.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
             Section("Server") {
                 Fact("Address", app.serverUrl)
                 Fact("Signed in as", app.user?.username ?: if (app.noLogin) "no sign-in (single-user server)" else "—")
