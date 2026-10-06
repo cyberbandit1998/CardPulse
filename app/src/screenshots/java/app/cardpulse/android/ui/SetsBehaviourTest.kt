@@ -119,6 +119,15 @@ class SetsBehaviourTest {
     }
 
     @Test
+    fun theFirstFilterLinesUpWithTheSearchBoxAboveIt() {
+        show()
+        val search = compose.onNode(hasSetTextAction()).fetchSemanticsNode().boundsInRoot
+        val all = compose.onNodeWithText("All").fetchSemanticsNode().boundsInRoot
+        // A chip under 48dp wide would be centred in a 48dp slot and sit a few dp in from the edge.
+        assertEquals("All is not in line with the search box: $all against $search", search.left, all.left, 1f)
+    }
+
+    @Test
     fun ownedShowsOnlySetsWithCards() {
         show()
         compose.onNodeWithText("Owned").performClick()

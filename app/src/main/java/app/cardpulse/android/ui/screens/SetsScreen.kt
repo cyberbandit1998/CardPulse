@@ -158,9 +158,15 @@ fun SetsScreen(
 private val SnugChipTrim = 4.dp
 
 /**
+ * A label narrower than this (just "All") keeps Material's padding: a chip under 48dp wide is centred in a 48dp slot, which
+ * would leave it a few dp in from the edge that the search box and the rows below line up on.
+ */
+private val SnugChipShortLabel = 24.dp
+
+/**
  * A filter chip 8dp narrower than Material's: the text sits [SnugChipTrim] nearer each edge. With Material's own padding the
  * four set filters (All, Owned, Incomplete, Complete) need about 343dp and a 360dp phone leaves 328dp, so the last one would
- * wrap onto a second line; like this they take about 311dp and sit on one row.
+ * wrap onto a second line; like this they take about 318dp and sit on one row.
  */
 @Composable
 private fun SnugChip(label: String, selected: Boolean, onClick: () -> Unit) {
@@ -172,7 +178,7 @@ private fun SnugChip(label: String, selected: Boolean, onClick: () -> Unit) {
                 label,
                 Modifier.layout { measurable, constraints ->
                     val text = measurable.measure(constraints)
-                    val trim = SnugChipTrim.roundToPx()
+                    val trim = if (text.width < SnugChipShortLabel.roundToPx()) 0 else SnugChipTrim.roundToPx()
                     layout(text.width - 2 * trim, text.height) { text.place(-trim, 0) }
                 },
             )
