@@ -59,7 +59,7 @@ The app warns you if it connects to a server in single-user mode.
   price, which makes the gain look larger than it is.
 - **Sets:** every set your server lists, each as "owned / total" (18 / 132, or 0 / 230 for a set you have no cards from
   yet), plus any set you own cards from that the list lacks (such as one in another language). Narrow it to All, Owned,
-  Incomplete (some of its cards owned) or Complete (every card owned), each with a count; search by name, series or the
+  Incomplete (some of its cards owned) or Complete (every card owned); search by name, series or the
   code printed on the cards ("OBF"); put it in order of progress, name or cards owned. Progress counts different cards, so
   two copies of one card count once. Tapping a set opens its **checklist**: every card of the set, in card-number order,
   the ones you own in full colour with a tick (and how many copies), the ones you are missing greyed out and marked

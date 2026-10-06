@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.dp
 import app.cardpulse.android.core.SetFilter
 import app.cardpulse.android.core.SetOrder
@@ -107,10 +108,11 @@ fun SetsScreen(
             )
         }
         item(key = "filters") {
-            // The four chips just fit across a phone; on a narrower one the last wraps to a second line rather than being cut off.
+            // The four chips fit across even a 360dp phone; with larger text, or a narrower one, the last wraps to a second
+            // line rather than being cut off.
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 SetFilter.entries.forEach { option ->
-                    FilterChip(selected = filter == option, onClick = { filter = option }, label = { Text(option.label) })
+                    SnugChip(label = option.label, selected = filter == option, onClick = { filter = option })
                 }
             }
         }
@@ -118,7 +120,7 @@ fun SetsScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Sort", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 SetOrder.entries.forEach { option ->
-                    FilterChip(selected = order == option, onClick = { order = option }, label = { Text(option.label) })
+                    SnugChip(label = option.label, selected = order == option, onClick = { order = option })
                 }
             }
         }
@@ -150,6 +152,32 @@ fun SetsScreen(
             }
         }
     }
+}
+
+/** How much nearer the edges of a [SnugChip] its text sits than in a Material chip. */
+private val SnugChipTrim = 4.dp
+
+/**
+ * A filter chip 8dp narrower than Material's: the text sits [SnugChipTrim] nearer each edge. With Material's own padding the
+ * four set filters (All, Owned, Incomplete, Complete) need about 343dp and a 360dp phone leaves 328dp, so the last one would
+ * wrap onto a second line; like this they take about 311dp and sit on one row.
+ */
+@Composable
+private fun SnugChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = {
+            Text(
+                label,
+                Modifier.layout { measurable, constraints ->
+                    val text = measurable.measure(constraints)
+                    val trim = SnugChipTrim.roundToPx()
+                    layout(text.width - 2 * trim, text.height) { text.place(-trim, 0) }
+                },
+            )
+        },
+    )
 }
 
 /** What to say when the search and the filter between them leave no set. */
