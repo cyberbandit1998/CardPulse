@@ -426,7 +426,7 @@ class ScreensScreenshotTest {
     @Config(qualifiers = "w360dp-h900dp-xxhdpi")
     fun setsTabOnlyTheCompleteSets() {
         compose.setContent { CardPulseTheme { SetsWithBar(setsState) } }
-        compose.onNode(hasText("Complete (", substring = true)).performClick()
+        compose.onNodeWithText("Complete").performClick()
         capture("1e-sets-complete")
     }
 
@@ -434,7 +434,7 @@ class ScreensScreenshotTest {
     @Config(qualifiers = "w360dp-h900dp-xxhdpi")
     fun setsTabOnlyTheSetsYouOwnInTheLightTheme() {
         compose.setContent { CardPulseTheme(darkTheme = false) { SetsWithBar(setsState) } }
-        compose.onNode(hasText("Owned (", substring = true)).performClick()
+        compose.onNodeWithText("Owned").performClick()
         capture("1e-sets-owned-light")
     }
 

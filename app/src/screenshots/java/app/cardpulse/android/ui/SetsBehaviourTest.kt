@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import app.cardpulse.android.core.CardDto
@@ -16,6 +17,7 @@ import app.cardpulse.android.core.SetDto
 import app.cardpulse.android.ui.screens.SetsScreen
 import app.cardpulse.android.ui.theme.CardPulseTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -108,53 +110,67 @@ class SetsBehaviourTest {
     // --- the filters --------------------------------------------------------------------------------
 
     @Test
-    fun theFiltersCarryTheirCounts() {
+    fun allFourFiltersAreOnTheScreenAtOnceAndOnOneRow() {
         show()
-        for (chip in listOf("All (8)", "Owned (4)", "Incomplete (4)", "Complete (0)")) compose.onNodeWithText(chip).assertExists()
+        val chips = listOf("All", "Owned", "Incomplete", "Complete").map { compose.onNodeWithText(it).fetchSemanticsNode().boundsInRoot }
+        val width = compose.onRoot().fetchSemanticsNode().boundsInRoot.width
+        assertTrue("A filter is cut off by the edge of the screen: $chips", chips.all { it.left >= 0f && it.right <= width })
+        assertEquals("The filters are not on one row: $chips", 1, chips.map { it.top }.distinct().size)
     }
 
     @Test
     fun ownedShowsOnlySetsWithCards() {
         show()
-        compose.onNodeWithText("Owned (4)").performClick()
+        compose.onNodeWithText("Owned").performClick()
         assertEquals(listOf("Promo Set", "Obsidian Flames", "Obsidian-Flammen", "Scarlet & Violet"), shownSets())
-        compose.onNodeWithText("All (8)").performClick()
+        compose.onNodeWithText("All").performClick()
         assertEquals(everySet, shownSets())
     }
 
     @Test
     fun incompleteAndCompleteTellStartedFromFinished() {
         show(state.copy(collection = collection + restOfPromoSet))
-        for (chip in listOf("Owned (4)", "Incomplete (3)", "Complete (1)")) compose.onNodeWithText(chip).assertExists()
-        compose.onNodeWithText("Complete (1)").performClick()
+        compose.onNodeWithText("Complete").performClick()
         assertEquals(listOf("Promo Set"), shownSets())
-        compose.onNodeWithText("Incomplete (3)").performClick()
+        compose.onNodeWithText("Incomplete").performClick()
         assertEquals(listOf("Obsidian Flames", "Obsidian-Flammen", "Scarlet & Violet"), shownSets())
+        compose.onNodeWithText("Owned").performClick()
+        assertEquals(listOf("Promo Set", "Obsidian Flames", "Obsidian-Flammen", "Scarlet & Violet"), shownSets())
     }
 
     @Test
     fun saysSoWhenNoSetIsComplete() {
         show()
-        compose.onNodeWithText("Complete (0)").performClick()
+        compose.onNodeWithText("Complete").performClick()
         assertEquals(emptyList<String>(), shownSets())
         compose.onNodeWithText("No set is complete yet.").assertExists()
     }
 
     @Test
-    fun theCountsFollowTheSearchAndAFilterCanLeaveNothing() {
+    fun saysSoWhenNoSetIsPartlyCollected() {
+        // Only the Promo Set, and all ten of its cards: it is complete, so nothing is partly collected.
+        val onlyThePromoSet = collection.filter { it.card?.setRef?.id == "sv9_en" } + restOfPromoSet
+        show(state.copy(collection = onlyThePromoSet, sets = catalogue.filter { it.id == "sv9_en" }))
+        compose.onNodeWithText("Incomplete").performClick()
+        compose.onNodeWithText("No set is partly collected yet.").assertExists()
+    }
+
+    @Test
+    fun theSearchAndAFilterWorkTogether() {
         show()
         search("obsidian")
         assertEquals(listOf("Obsidian Flames", "Obsidian-Flammen"), shownSets())
-        for (chip in listOf("All (2)", "Owned (2)", "Incomplete (2)", "Complete (0)")) compose.onNodeWithText(chip).assertExists()
-        search(" zzz")
-        compose.onNodeWithText("No set matches “obsidian zzz”.").assertExists()
+        compose.onNodeWithText("Owned").performClick()
+        assertEquals(listOf("Obsidian Flames", "Obsidian-Flammen"), shownSets())
+        compose.onNodeWithText("Complete").performClick()
+        compose.onNodeWithText("No complete set matches “obsidian”.").assertExists()
     }
 
     @Test
     fun aFilterAndASearchTogetherSayWhichLeftNothing() {
         show()
         search("paldea")
-        compose.onNodeWithText("Owned (0)").performClick()
+        compose.onNodeWithText("Owned").performClick()
         compose.onNodeWithText("No owned set matches “paldea”.").assertExists()
     }
 

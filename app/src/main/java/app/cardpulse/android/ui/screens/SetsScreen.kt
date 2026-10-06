@@ -1,9 +1,10 @@
 package app.cardpulse.android.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
@@ -36,7 +36,6 @@ import app.cardpulse.android.core.SetFilter
 import app.cardpulse.android.core.SetOrder
 import app.cardpulse.android.core.browseSets
 import app.cardpulse.android.core.filtered
-import app.cardpulse.android.core.matches
 import app.cardpulse.android.core.matching
 import app.cardpulse.android.core.ordered
 import app.cardpulse.android.core.setProgress
@@ -55,6 +54,7 @@ import app.cardpulse.android.ui.BottomBarOverhang
  *
  * The title, search and chips are the first rows of the list, so they scroll away and leave the room to the sets.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SetsScreen(
     state: AppState,
@@ -70,10 +70,7 @@ fun SetsScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableStateOf(SetFilter.ALL) }
     var order by rememberSaveable { mutableStateOf(SetOrder.PROGRESS) }
-    val searched = remember(all, query) { all.matching(query) }
-    val shown = remember(searched, filter, order) { searched.filtered(filter).ordered(order) }
-    // What each filter would show for what is searched for, so a chip never promises sets that are not there.
-    val counts = remember(searched) { SetFilter.entries.associateWith { option -> searched.count { it.matches(option) } } }
+    val shown = remember(all, query, filter, order) { all.matching(query).filtered(filter).ordered(order) }
     val started = remember(all) { all.count { it.owned > 0 } }
     val cards = remember(all) { all.sumOf { it.owned } }
 
@@ -110,18 +107,10 @@ fun SetsScreen(
             )
         }
         item(key = "filters") {
-            // Four chips with their counts can be wider than a small phone, so they scroll sideways rather than wrap.
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
+            // The four chips just fit across a phone; on a narrower one the last wraps to a second line rather than being cut off.
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 SetFilter.entries.forEach { option ->
-                    FilterChip(
-                        selected = filter == option,
-                        onClick = { filter = option },
-                        label = { Text("${option.label} (${counts.getValue(option)})") },
-                    )
+                    FilterChip(selected = filter == option, onClick = { filter = option }, label = { Text(option.label) })
                 }
             }
         }

@@ -516,7 +516,13 @@ internal fun SetProgressRow(
     ) {
         SetLogo(ServerUrls.setLogo(serverUrl, set.id), set.name, Modifier.width(52.dp).height(34.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Text(set.name, style = MaterialTheme.typography.titleMedium, maxLines = nameLines, overflow = TextOverflow.Ellipsis)
+            Text(
+                set.name,
+                // A name that may take several lines is set a little smaller, so that even a long German one fits on one.
+                style = if (nameLines > 1) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
+                maxLines = nameLines,
+                overflow = TextOverflow.Ellipsis,
+            )
             SlimProgress(set.fraction, color = if (set.isComplete) MaterialTheme.extras.positive else MaterialTheme.colorScheme.secondary)
         }
         // A fixed width, so the bars of different rows end in the same place.

@@ -54,12 +54,16 @@ The app warns you if it connects to a server in single-user mode.
   of cards and sets, the cards you added lately in a row that swipes sideways, the cards worth the most, and how far
   along each of your sets is, as pictures, names and slim progress bars. The three tiles can be pressed: Cards opens
   the whole collection, Sets opens the Sets tab, and Top Card opens the details of the card worth the most (found from
-  the server's own list of your most valuable cards, never a fixed one). Every list has a "See all", and tapping a card
-  opens its details. A one-line warning says when some cards have no purchase price, which makes the gain look larger
-  than it is.
-- **Sets:** every set you own a card from, with how far along it is. Search by name or set code, put the list in order
-  of progress, name or cards owned, and tap a set to see your cards from it. Progress counts different cards, so two
-  copies of one card count once.
+  the server's own list of your most valuable cards, never a fixed one). Every list has a "See all", tapping a card
+  opens its details, and tapping a set opens its checklist. A one-line warning says when some cards have no purchase
+  price, which makes the gain look larger than it is.
+- **Sets:** every set your server lists, each as "owned / total" (18 / 132, or 0 / 230 for a set you have no cards from
+  yet), plus any set you own cards from that the list lacks (such as one in another language). Narrow it to All, Owned,
+  Incomplete (some of its cards owned) or Complete (every card owned), each with a count; search by name, series or the
+  code printed on the cards ("OBF"); put it in order of progress, name or cards owned. Progress counts different cards, so
+  two copies of one card count once. Tapping a set opens its **checklist**: every card of the set, in card-number order,
+  the ones you own in full colour with a tick (and how many copies), the ones you are missing greyed out and marked
+  "Missing". All / Owned / Missing chips show only the cards you want, and an owned card opens its details.
 - **Light or dark:** Settings, Appearance: light, dark, or whatever your phone is set to. The choice stays on the phone.
 - **Rapid scan:** the camera stays open while you work through a pile. Each photo is sent to your server the moment
   it is taken and read in the background (up to three at once), so you can photograph the next card straight away.
@@ -80,10 +84,14 @@ The app warns you if it connects to a server in single-user mode.
   look up prices and then refreshes the Portfolio and Collection. That needs an admin account on the server, and it can
   be switched off in Settings.
 - **Collection:** search and sort your whole collection, with official artwork or your own photos (following the
-  "prefer my own photos" setting of your PokéCollector account). Open a card to see its details or remove it: one
-  copy or all of them, after a confirmation.
+  "prefer my own photos" setting of your PokéCollector account). A Filter chip beside Recent / Name / Set narrows it by
+  rarity, condition, variant (holo, reverse holo and the rest), how much a card is worth (per card, in your currency),
+  how many copies you hold, or to the entries that have no purchase price. Only values your collection has are offered.
+  Open a card to see its details or remove it: one copy or all of them, after a confirmation.
 - **Portfolio:** total value, gain or loss, a history chart (1W to All), a breakdown, and the week's biggest movers.
-  Amounts are shown in the currency chosen in your PokéCollector account.
+  Amounts are shown in the currency chosen in your PokéCollector account. The change over a range is shown as an amount,
+  with a percentage only when it means something: not when the range began with almost nothing (under 1 euro) or when the
+  gain is more than ten times the start.
 
 PokéCollector counts a card with no purchase price as zero cost, so its gain figures look larger than they are
 until prices are filled in. The app says so when that applies.
