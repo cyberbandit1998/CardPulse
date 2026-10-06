@@ -57,9 +57,9 @@ fun HomeScreen(
     /** "See all" under Recently added, and the Cards tile: the whole collection, newest first. */
     onOpenCollection: () -> Unit = {},
     onSeeAllValuable: () -> Unit = {},
-    /** "See all" under Set progress, and the Sets tile: the Sets tab. */
+    /** "See all" under Set progress, and the Sets tile: the Sets tab, which lists every set. */
     onOpenSets: () -> Unit = {},
-    /** A set was tapped: show the cards of it. Gets the set's name. */
+    /** A set was tapped: open its checklist. Gets the set's id (such as "sv3_en"). */
     onOpenSet: (String) -> Unit = {},
     onRemove: (item: CollectionItemDto, wholeRow: Boolean, done: (String?) -> Unit) -> Unit = { _, _, done -> done(null) },
 ) {
@@ -176,7 +176,7 @@ fun HomeScreen(
                         ListCard {
                             shownSets.forEachIndexed { index, set ->
                                 if (index > 0) RowDivider(startIndent = 76.dp)
-                                SetProgressRow(set, state.serverUrl, onClick = { onOpenSet(set.name) })
+                                SetProgressRow(set, state.serverUrl, onClick = { onOpenSet(set.id) })
                             }
                         }
                     }

@@ -523,7 +523,7 @@ internal fun SetProgressRow(
         Text(
             buildAnnotatedString {
                 withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)) { append("${set.owned}") }
-                withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) { append(" / ${set.total}") }
+                withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) { append(" / ${set.totalText}") }
             },
             modifier = Modifier.widthIn(min = 64.dp),
             style = MaterialTheme.typography.titleSmall,
@@ -536,7 +536,7 @@ internal fun SetProgressRow(
 
 /** A set's logo from the server, or, while there is none to show (it loads, or the set has no logo), its initials. */
 @Composable
-private fun SetLogo(url: String, name: String, modifier: Modifier = Modifier) {
+internal fun SetLogo(url: String, name: String, modifier: Modifier = Modifier) {
     SubcomposeAsyncImage(
         model = url,
         contentDescription = null,

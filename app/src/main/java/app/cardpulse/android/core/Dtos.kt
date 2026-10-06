@@ -71,6 +71,48 @@ data class SetDto(
     val total: Int = 0,
     @SerialName("printed_total") val printedTotal: Int = 0,
     val lang: String = "en",
+    /** When the set came out, as text that sorts in date order ("2023-08-11"); the server leaves it out for some sets. */
+    @SerialName("release_date") val releaseDate: String? = null,
+    /**
+     * How many different cards of this set the user owns. Only the list of sets (`GET /api/sets/`) fills it in; a set that
+     * comes inside a card says 0.
+     */
+    @SerialName("owned_count") val ownedCount: Int = 0,
+)
+
+/** One owned row of a card in a set's checklist (a condition and variant of it). */
+@Serializable
+data class ChecklistOwnedDto(
+    val id: Int = 0,
+    val quantity: Int = 0,
+    val condition: String = "NM",
+    val variant: String = "Normal",
+    val lang: String = "en",
+)
+
+/** One card of a set's checklist: the card, and whether the user owns it. */
+@Serializable
+data class ChecklistCardDto(
+    val id: String,
+    val name: String = "",
+    val number: String? = null,
+    val rarity: String? = null,
+    @SerialName("images_small") val imagesSmall: String? = null,
+    @SerialName("images_large") val imagesLarge: String? = null,
+    val lang: String = "en",
+    /** The server's own answer, as of when it was asked: whether any copy is owned, and how many in all. */
+    val owned: Boolean = false,
+    @SerialName("owned_quantity") val ownedQuantity: Int = 0,
+    @SerialName("owned_items") val ownedItems: List<ChecklistOwnedDto> = emptyList(),
+)
+
+/** `GET /api/sets/{id}/checklist`: every card the server has for a set, in card-number order, with ownership. */
+@Serializable
+data class SetChecklistDto(
+    val set: SetDto = SetDto(),
+    val cards: List<ChecklistCardDto> = emptyList(),
+    @SerialName("owned_count") val ownedCount: Int = 0,
+    @SerialName("total_count") val totalCount: Int = 0,
 )
 
 @Serializable
@@ -96,6 +138,20 @@ data class CardDto(
     val types: JsonElement? = null,
     val hp: String? = null,
     val artist: String? = null,
+    // The Cardmarket prices the server keeps for the card, in euros. Which one is "the price" is the user's choice (see
+    // DisplayPrefs.priceField) and Reverse Holo has its own: [priceFor] makes the choice as the server does.
+    @SerialName("price_market") val priceMarket: Double? = null,
+    @SerialName("price_low") val priceLow: Double? = null,
+    @SerialName("price_trend") val priceTrend: Double? = null,
+    @SerialName("price_avg1") val priceAvg1: Double? = null,
+    @SerialName("price_avg7") val priceAvg7: Double? = null,
+    @SerialName("price_avg30") val priceAvg30: Double? = null,
+    @SerialName("price_market_holo") val priceMarketHolo: Double? = null,
+    @SerialName("price_low_holo") val priceLowHolo: Double? = null,
+    @SerialName("price_trend_holo") val priceTrendHolo: Double? = null,
+    @SerialName("price_avg1_holo") val priceAvg1Holo: Double? = null,
+    @SerialName("price_avg7_holo") val priceAvg7Holo: Double? = null,
+    @SerialName("price_avg30_holo") val priceAvg30Holo: Double? = null,
 ) {
     /** "Fire", "Water": the types as text, whatever shape the server stored them in. */
     val typeNames: List<String>

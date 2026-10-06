@@ -22,6 +22,10 @@ class MoneyFormatter(
 
     fun format(eurAmount: Double): String = currencyFormat.format(eurAmount * rateFromEur)
 
+    /** An amount that is already in the display currency, without cents: "$5" rather than "$5.00". For round figures such as filter steps. */
+    fun wholeDisplayAmount(amount: Double): String =
+        (currencyFormat.clone() as NumberFormat).apply { minimumFractionDigits = 0; maximumFractionDigits = 0 }.format(amount)
+
     /** "+€1.23", "−€1.23", or just "€0.00" when the change rounds to nothing. */
     fun signed(eurAmount: Double): String {
         val converted = eurAmount * rateFromEur

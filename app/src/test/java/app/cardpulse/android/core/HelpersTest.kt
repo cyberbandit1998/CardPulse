@@ -116,6 +116,39 @@ class PortfolioTest {
     }
 
     @Test
+    fun `percent is left out when the start is extremely small, whatever the gain`() {
+        // 17 cents to 115 euros over the month: the amount is real, the percentage (+68246.7%) says nothing.
+        val change = listOf(point(1, 0.1685), point(2, 115.1885)).rangeChange()!!
+        assertEquals(115.02, change.absolute, 0.0001)
+        assertNull(change.percent)
+    }
+
+    @Test
+    fun `percent is shown from a start of one euro up`() {
+        assertEquals(50.0, listOf(point(1, 1.0), point(2, 1.5)).rangeChange()!!.percent!!, 0.0001)
+        assertNull(listOf(point(1, 0.99), point(2, 1.5)).rangeChange()!!.percent)
+    }
+
+    @Test
+    fun `percent is left out for a gain of more than ten times the start`() {
+        assertEquals(1000.0, listOf(point(1, 10.0), point(2, 110.0)).rangeChange()!!.percent!!, 0.0001) // eleven times: shown
+        assertNull(listOf(point(1, 10.0), point(2, 110.5)).rangeChange()!!.percent)
+        assertNull(listOf(point(1, 10.0), point(2, 150.0)).rangeChange()!!.percent)
+    }
+
+    @Test
+    fun `a loss always has a percentage, and it never passes minus one hundred`() {
+        assertEquals(-100.0, listOf(point(1, 100.0), point(2, 0.0)).rangeChange()!!.percent!!, 0.0001)
+        assertEquals(-25.0, listOf(point(1, 40.0), point(2, 30.0)).rangeChange()!!.percent!!, 0.0001)
+    }
+
+    @Test
+    fun `the amount is always there, with or without a percentage`() {
+        assertEquals(-0.1, listOf(point(1, 0.5), point(2, 0.4)).rangeChange()!!.absolute, 0.0001)
+        assertNull(listOf(point(1, 0.5), point(2, 0.4)).rangeChange()!!.percent)
+    }
+
+    @Test
     fun `needs two points`() {
         assertNull(emptyList<ChartPoint>().rangeChange())
         assertNull(listOf(point(1, 1.0)).rangeChange())

@@ -287,7 +287,13 @@ class SetListTest {
     @Test
     fun `search also finds a set by its code`() {
         assertEquals(listOf("Obsidian Flames"), sets.matching("sv3").map { it.name })
-        assertEquals(listOf("Journey Together"), sets.matching("sv9_en").map { it.name })
+        assertEquals(listOf("Journey Together"), sets.matching("sv9").map { it.name })
+    }
+
+    @Test
+    fun `the language ending of a set's id is not searched, or en would find every set`() {
+        assertTrue(sets.matching("en").isEmpty())
+        assertTrue(sets.matching("_en").isEmpty())
     }
 
     @Test

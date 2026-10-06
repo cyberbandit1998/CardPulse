@@ -24,6 +24,7 @@ import app.cardpulse.android.core.ResolveRequest
 import app.cardpulse.android.core.ScanBackend
 import app.cardpulse.android.core.ScanItemDto
 import app.cardpulse.android.core.ScanJobDto
+import app.cardpulse.android.core.SetChecklistDto
 import app.cardpulse.android.core.SetDto
 import app.cardpulse.android.core.SnapshotDto
 import app.cardpulse.android.core.SyncStatusDto
@@ -132,7 +133,11 @@ class Repository(
     override suspend fun searchCards(name: String, number: String?, pageSize: Int): CardSearchDto =
         api.searchCards(name, number, lang = "all", page = 1, pageSize = pageSize)
 
+    /** Every set the server lists, each with how many of its cards are owned: the catalogue the Sets tab browses. */
     override suspend fun sets(): List<SetDto> = api.sets()
+
+    /** One set's cards with ownership as the server counts it; the Sets tab opens it when a set is tapped. */
+    suspend fun loadChecklist(setId: String): SetChecklistDto = api.setChecklist(setId)
 
     override suspend fun createCustomCard(request: CustomCardRequest): CardDto = api.createCustomCard(request)
 
