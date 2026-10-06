@@ -9,6 +9,7 @@ service that answers any path with JSON, and taps "Test connection". What the ap
                                                  the app's own classes (Retrofit, OkHttp and kotlinx.serialization all
                                                  worked): the best result
   "...doesn't understand..." or a crash          shrinking broke something: fail
+  any other message the app does not usually     something unexpected: fail, so it gets looked at
   "Can't connect...", "took too long", ...       the public service could not be reached: nothing is learned, so the
                                                  next one is tried
 
@@ -26,17 +27,22 @@ PACKAGE = "app.cardpulse.android"
 ACTIVITY = f"{PACKAGE}/.MainActivity"
 # Web services that answer GET <anything>/api/health with JSON, so the app gets a reply it can read but not the right one.
 ECHO_SERVERS = ["https://httpbin.org/anything", "https://httpbingo.org/anything"]
+DUMP_FILE = "/data/local/tmp/cardpulse-ui.xml"
 
 PASS_TEXT = ["look like a pok"]  # "That address answered, but it doesn't look like a PokéCollector server."
 BROKEN_TEXT = ["doesn't understand", "doesn’t understand", "this app doesn"]
 UNREACHABLE_TEXT = [
     "can't find that server", "can't connect", "took too long", "https) connection failed", "unreachable",
-    "network error", "too many requests", "http 5", "wasn't found",
+    "network error", "too many requests", "http 5", "wasn't found", "unexpected response", "permission to do that",
 ]
+# Words on the sign-in screen that are not a message from the app, so a change on screen that only shows these is not news.
+CHROME_TEXT = ["ok", "dismiss", "close"]
 
 apk, out = Path(sys.argv[1]), Path(sys.argv[2])
 out.mkdir(parents=True, exist_ok=True)
 summary: list[str] = []
+started = time.time()
+screen_notes: list[str] = []  # what each failed attempt to read the screen said, shown when reading it keeps failing
 
 
 def say(line: str) -> None:
@@ -45,7 +51,8 @@ def say(line: str) -> None:
 
 
 def adb(*args: str, timeout: int = 120) -> subprocess.CompletedProcess:
-    return subprocess.run(["adb", *args], capture_output=True, text=True, timeout=timeout)
+    # The phone's log has bytes that are not text; they must not stop the check.
+    return subprocess.run(["adb", *args], capture_output=True, encoding="utf-8", errors="replace", timeout=timeout)
 
 
 def screenshot(name: str) -> None:
@@ -53,15 +60,29 @@ def screenshot(name: str) -> None:
         subprocess.run(["adb", "exec-out", "screencap", "-p"], stdout=handle, timeout=60)
 
 
+def note_screen(text: str) -> None:
+    if text not in screen_notes[-6:]:
+        screen_notes.append(text)
+
+
 def dump_ui(name: str | None = None) -> ET.Element | None:
     """The screen's accessibility tree, or None when the phone was too busy to give one."""
-    for _ in range(4):
-        adb("shell", "uiautomator", "dump", "/sdcard/ui.xml")
-        text = adb("exec-out", "cat", "/sdcard/ui.xml").stdout
+    for _ in range(3):
+        adb("shell", "rm", "-f", DUMP_FILE)
+        run = adb("shell", "uiautomator", "dump", DUMP_FILE)
+        text = adb("exec-out", "cat", DUMP_FILE).stdout
         if text.strip().startswith("<?xml"):
-            if name:
-                (out / f"{name}.xml").write_text(text)
-            return ET.fromstring(text)
+            try:
+                root = ET.fromstring(text)
+            except ET.ParseError as error:
+                note_screen(f"the dump was not valid XML ({error})")
+            else:
+                if name:
+                    (out / f"{name}.xml").write_text(text, encoding="utf-8")
+                return root
+        else:
+            said = (run.stdout + " " + run.stderr).strip()[:200]
+            note_screen(f"uiautomator dump: exit {run.returncode}, said {said!r}, the file held {len(text)} characters")
         time.sleep(1.5)
     return None
 
@@ -95,11 +116,13 @@ def tap(node: ET.Element) -> None:
     adb("shell", "input", "tap", str(x), str(y))
 
 
-def wait_for(wanted: str, seconds: int) -> ET.Element | None:
+def wait_for(wanted: list[str], seconds: int) -> ET.Element | None:
+    """The screen's tree as soon as any one of the wanted texts is on it."""
     end = time.time() + seconds
     while time.time() < end:
         root = dump_ui()
-        if root is not None and find(root, wanted):
+        # `is not None`: an XML element with no children counts as false, and a button has none.
+        if root is not None and any(find(root, text) is not None for text in wanted):
             return root
         time.sleep(1.5)
     return None
@@ -107,16 +130,47 @@ def wait_for(wanted: str, seconds: int) -> ET.Element | None:
 
 def crashed() -> str | None:
     log = adb("logcat", "-d", "-v", "brief").stdout
-    (out / "logcat.txt").write_text(log)
+    (out / "logcat.txt").write_text(log, encoding="utf-8")
     for line in log.splitlines():
-        if "FATAL EXCEPTION" in line or f"Process: {PACKAGE}" in line or "ANR in " + PACKAGE in line:
+        if "FATAL EXCEPTION" in line or f"Process: {PACKAGE}" in line or f"ANR in {PACKAGE}" in line:
             return line.strip()
     return None
 
 
+def explain_blank_screen() -> None:
+    """Says what the phone knows when the sign-in screen could not be read, so the next look has something to go on."""
+    say("What the phone says about the screen:")
+    for line in screen_notes[-8:]:
+        say(f"  {line}")
+    for command in (("dumpsys", "window"), ("dumpsys", "activity", "activities")):
+        for line in adb("shell", *command).stdout.splitlines():
+            if any(key in line for key in ("mCurrentFocus", "mFocusedApp", "ResumedActivity")):
+                say(f"  {line.strip()[:200]}")
+    # Other ways to get the same tree, to learn which one this phone gives.
+    compressed = adb("shell", "uiautomator", "dump", "--compressed", DUMP_FILE)
+    said = (compressed.stdout + " " + compressed.stderr).strip()[:160]
+    say(f"  uiautomator dump --compressed: exit {compressed.returncode}, said {said!r}")
+    direct = adb("exec-out", "uiautomator", "dump", "/dev/tty")
+    say(f"  uiautomator dump to the terminal: {len(direct.stdout)} characters, begins {direct.stdout[:100]!r}")
+    if direct.stdout.strip().startswith("<?xml") or "<hierarchy" in direct.stdout:
+        (out / "ui-from-terminal.xml").write_text(direct.stdout, encoding="utf-8")
+    root = dump_ui("ui-when-it-failed")
+    if root is not None:
+        say("  the screen reads as: " + " | ".join(texts(root))[:600])
+        for node in list(root.iter("node"))[:40]:
+            say(f"    {node.get('class')} text={node.get('text')!r} desc={node.get('content-desc')!r} {node.get('bounds')}")
+    crash = crashed()
+    if crash:
+        say(f"  {crash}")
+
+
 def finish(ok: bool) -> None:
-    (out / "summary.txt").write_text("\n".join(summary) + "\n")
+    (out / "summary.txt").write_text("\n".join(summary) + "\n", encoding="utf-8")
     sys.exit(0 if ok else 1)
+
+
+def elapsed() -> str:
+    return f"{time.time() - started:.0f} s"
 
 
 # --- install ----------------------------------------------------------------------------------------------------
@@ -140,36 +194,43 @@ verdict = "inconclusive"
 for server in ECHO_SERVERS:
     adb("shell", "pm", "clear", PACKAGE)
     adb("logcat", "-c")
+    screen_notes.clear()
     adb("shell", "am", "start", "-W", "-n", ACTIVITY)
-    # The button's own text is the surest thing to look for: a text field's label is not always in the tree.
-    login = wait_for("Test connection", 60)
+    # Any of the sign-in screen's own texts will do: a text field's label and a button's text are both in the tree.
+    login = wait_for(["Test connection", "Server address", "Sign in"], 60)
     if login is None:
         screenshot("00-did-not-start")
-        say("FAIL: the sign-in screen did not appear within a minute of starting the app.")
-        crash = crashed()
-        if crash:
-            say(f"      {crash}")
+        say(f"FAIL: the sign-in screen could not be read within a minute of starting the app ({elapsed()}).")
+        explain_blank_screen()
         finish(False)
     screenshot("01-sign-in-screen")
-    say("The sign-in screen appeared.")
+    say(f"The sign-in screen appeared ({elapsed()}).")
 
     fields = [n for n in login.iter("node") if n.get("class") == "android.widget.EditText"]
     if not fields:
         say("FAIL: the sign-in screen has no text field.")
+        explain_blank_screen()
         finish(False)
     tap(fields[0])
     time.sleep(1)
     adb("shell", "input", "text", server)
-    time.sleep(1)
+    time.sleep(1.5)
     screenshot("02-address-typed")
 
-    root = dump_ui("ui-before-test")
-    button = find(root, "Test connection") if root is not None else None
+    before = dump_ui("ui-before-test")
+    button = find(before, "Test connection") if before is not None else None
     if button is None:
-        say("FAIL: the Test connection button was not found.")
+        say("FAIL: the Test connection button was not found after typing the address.")
+        explain_blank_screen()
         finish(False)
+    if button.get("enabled") == "false":
+        say("FAIL: the Test connection button stayed greyed out, so the address was not typed in.")
+        explain_blank_screen()
+        finish(False)
+    already_there = set(texts(before))
+    typed_host = server.split("//", 1)[-1].lower()  # the field may show the address in other forms; that is not a message
     tap(button)
-    say(f"Tapped Test connection with {server}.")
+    say(f"Tapped Test connection with {server} ({elapsed()}).")
 
     outcome = "waiting"
     shown = ""
@@ -178,16 +239,22 @@ for server in ECHO_SERVERS:
         root = dump_ui()
         if root is None:
             continue
-        everything = " | ".join(texts(root)).lower()
+        news = [
+            t for t in texts(root)
+            if t not in already_there and t.strip().lower() not in CHROME_TEXT and typed_host not in t.lower()
+        ]
+        everything = " | ".join(news).lower()
         if any(t in everything for t in PASS_TEXT):
             outcome = "pass"
         elif any(t in everything for t in BROKEN_TEXT):
             outcome = "broken"
         elif any(t in everything for t in UNREACHABLE_TEXT):
             outcome = "unreachable"
+        elif news:
+            # Something new is on the screen that is not one of the messages this check knows. That is worth a look.
+            outcome = "unexpected"
         if outcome != "waiting":
-            banner = [t for t in texts(root) if any(k in t.lower() for k in PASS_TEXT + BROKEN_TEXT + UNREACHABLE_TEXT)]
-            shown = banner[0] if banner else ""
+            shown = max(news, key=len) if news else ""
             break
     screenshot("03-after-test-connection")
     dump_ui("ui-after-test")
@@ -202,8 +269,11 @@ for server in ECHO_SERVERS:
     if outcome == "broken":
         say(f"FAIL: the app could not read the server's JSON: {shown}")
         finish(False)
+    if outcome == "unexpected":
+        say(f"FAIL: the app said something this check does not know: {shown}")
+        finish(False)
     if outcome == "pass":
-        say(f"The reply was read into the app's own classes: \"{shown}\"")
+        say(f"The reply was read into the app's own classes: \"{shown}\" ({elapsed()}).")
         verdict = "verified"
         break
     say(f"No conclusion from {server} ({outcome}: {shown or 'no message'}); trying the next one.")
