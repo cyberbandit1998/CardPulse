@@ -1,5 +1,7 @@
-**This is the first optimised ("release") build.** It does the same things as the last build, but code and pictures the app never uses are trimmed out, so the file is about 3.4 MB instead of about 26 MB. It downloads and installs faster and should start and scroll more smoothly. No features changed.
+**A new Home screen, a light and dark switch, and a round camera button.**
 
-It has the same app ID and signing key as the earlier builds, so it installs straight over them and keeps your saved address and sign-in.
+- **Home is now a dashboard.** What your collection is worth, with how much it has gained and a small chart of how it moved; how many cards and sets you have; the cards you added lately; the cards worth the most; and how far along each of your sets is. Tap a card to see its details, tap a set to see your cards from it, and "See all" opens the whole list. The long paragraph about cards with no purchase price is now one line: tap it to read what it means. Next to the app's name, "Connected" turns into a red "Offline" when your server can't be reached.
+- **Light or dark.** Settings, then Appearance: Light, Dark, or the same as your phone. It starts in dark, as before, and remembers your choice.
+- **A round camera button** in the middle of the bottom bar opens the camera at once, from any tab. The Scan tab is still there.
 
-Please try it on your phone: sign in, look through your collection, add a card by scanning and by typing it in. Trimming can, rarely, break something that only a real phone shows. Before this build was published it was installed on an emulator, where it started and read a first reply from a web server, but that does not cover everything. If something that used to work now fails, tell me what you were doing. (Android will not install an older build over this one; going back means uninstalling the app first.)
+If anything looks wrong on your phone, tell me which screen it was.
