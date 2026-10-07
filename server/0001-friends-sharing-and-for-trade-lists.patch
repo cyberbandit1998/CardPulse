@@ -1,4 +1,4 @@
-From 2f09fd8f0c645f970bb0fa19c302a79634242181 Mon Sep 17 00:00:00 2001
+From 25711a45f7506c27d9575241f1a9626b189b5196 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 7 Oct 2026 18:33:09 +0000
 Subject: [PATCH] feat: friends, per-section sharing and For Trade lists
@@ -14,8 +14,9 @@ something gets 403 if they are a friend and 404 otherwise, so a private account 
 price alerts, photos and custom cards never leave their owner.
 
 The older endpoints that let any signed-in user read another user's whole collection now follow the same setting:
-GET /api/collection/user/{id}, and the social leaderboard, compare and achievements routes. Two upstream tests that
-relied on that are updated to share the collection first.
+GET /api/collection/user/{id}, and the social leaderboard, compare and achievements routes. What someone paid and when
+they added a card are left out of the first for everyone but the owner. Two upstream tests that relied on that are updated
+to share the collection first.
 
 Adds three tables (friend_settings, friend_links, trade_list), created on start-up; no existing table changes.
 Documented in docs/FRIENDS.md.
@@ -33,12 +34,12 @@ Claude-Session: https://claude.ai/code/session_01384BC8nHuYg1SpN4faoQoG
  backend/services/friends.py                  | 591 ++++++++++++++
  backend/tests/friends_world.py               | 185 +++++
  backend/tests/test_custom_card_ownership.py  |   8 +
- backend/tests/test_friends.py                | 772 +++++++++++++++++++
- backend/tests/test_friends_http.py           | 237 ++++++
+ backend/tests/test_friends.py                | 774 +++++++++++++++++++
+ backend/tests/test_friends_http.py           | 239 ++++++
  backend/tests/test_public_wishlists_decks.py |   8 +-
  docs/BACKEND.md                              |  31 +-
  docs/FRIENDS.md                              | 122 +++
- 15 files changed, 2565 insertions(+), 10 deletions(-)
+ 15 files changed, 2569 insertions(+), 10 deletions(-)
  create mode 100644 backend/api/friends.py
  create mode 100644 backend/services/friends.py
  create mode 100644 backend/tests/friends_world.py
@@ -113,7 +114,7 @@ index 9d88ed2..375f1c7 100644
      db.query(WishlistItem).filter(WishlistItem.user_id == user_id).delete()
      db.query(ProductPurchase).filter(ProductPurchase.user_id == user_id).delete()
 diff --git a/backend/api/collection.py b/backend/api/collection.py
-index b345598..17d3b9a 100644
+index b345598..653305f 100644
 --- a/backend/api/collection.py
 +++ b/backend/api/collection.py
 @@ -18,6 +18,7 @@ from services.card_fallbacks import apply_cross_language_fallbacks, build_missin
@@ -151,9 +152,9 @@ index b345598..17d3b9a 100644
 +    items = _annotate_standard_legality(query.all(), _collection_standard_legal_fingerprints(db))
 +    if own:
 +        return items
-+    # What someone paid is not part of what they share.
++    # What someone paid, and when they added a card, are not part of what they share.
 +    return [
-+        CollectionItemResponse.model_validate(item).model_copy(update={"purchase_price": None})
++        CollectionItemResponse.model_validate(item).model_copy(update={"purchase_price": None, "added_at": None})
 +        for item in items
 +    ]
  
@@ -1625,10 +1626,10 @@ index 0439d79..3d35ddc 100644
              current_user=self.other,
 diff --git a/backend/tests/test_friends.py b/backend/tests/test_friends.py
 new file mode 100644
-index 0000000..3aacdc9
+index 0000000..7583b83
 --- /dev/null
 +++ b/backend/tests/test_friends.py
-@@ -0,0 +1,772 @@
+@@ -0,0 +1,774 @@
 +import json
 +import unittest
 +from unittest.mock import patch
@@ -2337,14 +2338,16 @@ index 0000000..3aacdc9
 +        self.world.share(self.ash, collection="public")
 +        self.assertTrue(self.view_collection(self.ash, self.brock))
 +
-+    def test_what_someone_paid_is_not_shared_with_the_collection(self):
++    def test_what_someone_paid_and_when_they_added_it_is_not_shared_with_the_collection(self):
 +        self.world.share(self.ash, collection="friends")
 +        rows = self.view_collection(self.ash, self.misty)
 +        self.assertTrue(rows)
 +        self.assertEqual({row.purchase_price for row in rows}, {None})
++        self.assertEqual({row.added_at for row in rows}, {None})
 +        # The owner still sees their own.
 +        mine = self.view_collection(self.ash, self.ash)
 +        self.assertIn(0.2, {getattr(row, "purchase_price", None) for row in mine})
++        self.assertNotIn(None, {getattr(row, "added_at", None) for row in mine})
 +        # And nothing was changed in the database by taking it out of the answer.
 +        self.assertEqual(self.db.query(CollectionItem).filter(CollectionItem.id == self.world.ash_sprigatito.id).one().purchase_price, 0.2)
 +
@@ -2403,10 +2406,10 @@ index 0000000..3aacdc9
 +    unittest.main()
 diff --git a/backend/tests/test_friends_http.py b/backend/tests/test_friends_http.py
 new file mode 100644
-index 0000000..da6dba2
+index 0000000..ab556e4
 --- /dev/null
 +++ b/backend/tests/test_friends_http.py
-@@ -0,0 +1,237 @@
+@@ -0,0 +1,239 @@
 +import unittest
 +from unittest.mock import patch
 +
@@ -2629,9 +2632,11 @@ index 0000000..da6dba2
 +        self.assertEqual(shared.status_code, 200)
 +        self.assertTrue(shared.json())
 +        self.assertEqual({row["purchase_price"] for row in shared.json()}, {None})
++        self.assertEqual({row["added_at"] for row in shared.json()}, {None})
 +        self.assertEqual(self.get(f"/api/collection/user/{ash.id}", self.world.brock).status_code, 404)
 +        own = self.get(f"/api/collection/user/{ash.id}", ash).json()
 +        self.assertIn(0.2, {row["purchase_price"] for row in own})
++        self.assertNotIn(None, {row["added_at"] for row in own})
 +
 +    def test_the_leaderboard_lists_only_people_who_share_with_the_viewer(self):
 +        names = lambda viewer: {entry["username"] for entry in self.get("/api/social/leaderboard", viewer).json()}  # noqa: E731
@@ -2718,7 +2723,7 @@ index bb49a58..53618c0 100644
  | Method | Path | Notes |
 diff --git a/docs/FRIENDS.md b/docs/FRIENDS.md
 new file mode 100644
-index 0000000..12868aa
+index 0000000..dea5a0a
 --- /dev/null
 +++ b/docs/FRIENDS.md
 @@ -0,0 +1,122 @@
@@ -2799,7 +2804,7 @@ index 0000000..12868aa
 +
 +| Route | Now |
 +|-------|-----|
-+| `GET /api/collection/user/{user_id}` | `404` unless shared with the viewer. What the owner paid is left out for everyone but the owner. |
++| `GET /api/collection/user/{user_id}` | `404` unless shared with the viewer. What the owner paid and when they added each card are left out for everyone but the owner. |
 +| `GET /api/social/leaderboard` | Ranks the viewer and the people who share their collection with the viewer. |
 +| `GET /api/social/compare/{user_id}` | `404` unless that user's collection is shared with the viewer. |
 +| `GET /api/social/achievements/{user_id}` | `404` unless that user's collection is shared with the viewer (your own always works). |
