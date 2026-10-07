@@ -1,9 +1,11 @@
 package app.cardpulse.android.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,6 +14,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,7 +30,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -68,7 +71,6 @@ import app.cardpulse.android.core.counts
 import app.cardpulse.android.core.entries
 import app.cardpulse.android.core.filtered
 import app.cardpulse.android.core.ordered
-import app.cardpulse.android.ui.AccentTextButton
 import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.Banner
 import app.cardpulse.android.ui.CARD_ASPECT
@@ -110,6 +112,22 @@ fun WishlistScreen(
     // The open card is kept by id, so the dialog follows the row (a saved target shows at once) and goes when the card is taken off.
     var openCardId by remember { mutableStateOf<String?>(null) }
     val openEntry = openCardId?.let { id -> entries.firstOrNull { it.cardId == id } }
+
+    // A card that is open takes the screen, as a page: it has a text field, which a page deals with (and the keyboard) better
+    // than a dialog does. Back returns to the list.
+    if (openEntry != null) {
+        BackHandler { openCardId = null }
+        WishlistCardPage(
+            entry = openEntry,
+            state = state,
+            money = money,
+            onSetTarget = onSetTarget,
+            onSetPriority = onSetPriority,
+            onClose = { openCardId = null },
+            modifier = modifier,
+        )
+        return
+    }
 
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -195,17 +213,6 @@ fun WishlistScreen(
             }
         }
     }
-
-    openEntry?.let { entry ->
-        WishlistItemDialog(
-            entry = entry,
-            state = state,
-            money = money,
-            onSetTarget = onSetTarget,
-            onSetPriority = onSetPriority,
-            onClose = { openCardId = null },
-        )
-    }
 }
 
 /**
@@ -289,17 +296,19 @@ private fun Pill(text: String, background: Color, content: Color) {
 }
 
 /**
- * A wishlist card opened: its picture and facts, the target price and the priority to change, and the way to take the card off the
- * list. Save applies the target price (to the server, so the website has it too) and the priority (kept on this phone).
+ * A wishlist card opened, as a page under a back arrow: its picture and facts, the target price and the priority to change, and
+ * the way to take the card off the list. Save applies the target price (to the server, so the website has it too) and the
+ * priority (kept on this phone), and returns to the list.
  */
 @Composable
-private fun WishlistItemDialog(
+private fun WishlistCardPage(
     entry: WishlistEntry,
     state: AppState,
     money: MoneyFormatter,
     onSetTarget: (item: WishlistItemDto, targetEur: Double?, done: (String?) -> Unit) -> Unit,
     onSetPriority: (cardId: String, priority: WishlistPriority?) -> Unit,
     onClose: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val wishlist = LocalWishlist.current
     val rate = state.prefs.rateFromEur
@@ -329,15 +338,17 @@ private fun WishlistItemDialog(
         }
     }
 
-    AlertDialog(
-        onDismissRequest = onClose,
-        confirmButton = {
-            AccentTextButton(onClick = { save() }, enabled = !saving && !invalid && (targetChanged || priorityChanged)) { Text("Save") }
-        },
-        dismissButton = { AccentTextButton(onClick = onClose) { Text("Close") } },
-        title = { Text(entry.name) },
-        text = {
-            WishlistItemDetails(
+    Column(modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to the wishlist") }
+            Text(entry.name, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        // The keyboard's room comes off the page, so the field and the buttons stay in view while typing.
+        Column(
+            Modifier.weight(1f).imePadding().verticalScroll(rememberScrollState()).padding(start = 16.dp, top = 8.dp, end = 16.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            WishlistCardDetails(
                 entry = entry,
                 serverUrl = state.serverUrl,
                 currency = state.prefs.currency,
@@ -346,25 +357,24 @@ private fun WishlistItemDialog(
                 targetInvalid = invalid,
                 problem = problem,
                 priority = priority,
+                saveEnabled = !saving && !invalid && (targetChanged || priorityChanged),
                 onTargetText = { text ->
                     targetText = text
                     problem = null
                 },
                 onPriority = { priority = it },
+                onSave = { save() },
                 // Taking a card off is the user's own decision: owning a copy never does it.
                 onRemove = { wishlist.toggle(entry.cardId) },
             )
-        },
-    )
+        }
+    }
 }
 
-/**
- * What a wishlist card's dialog holds apart from its buttons. Kept apart so that a picture can show it: a dialog is a window of
- * its own, which the screen pictures cannot see.
- */
+/** What a wishlist card's page holds: the picture, the facts, and the target price, priority, Save and Remove to act on them. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun WishlistItemDetails(
+private fun ColumnScope.WishlistCardDetails(
     entry: WishlistEntry,
     serverUrl: String,
     currency: String,
@@ -373,53 +383,59 @@ internal fun WishlistItemDetails(
     targetInvalid: Boolean,
     problem: String?,
     priority: WishlistPriority?,
+    saveEnabled: Boolean,
     onTargetText: (String) -> Unit,
     onPriority: (WishlistPriority?) -> Unit,
+    onSave: () -> Unit,
     onRemove: () -> Unit,
 ) {
-    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        RemoteImage(
-            url = ServerUrls.cardImage(serverUrl, entry.cardId, large = true),
-            description = entry.name,
-            modifier = Modifier.fillMaxWidth().aspectRatio(CARD_ASPECT).clip(RoundedCornerShape(8.dp)),
-        )
-        DetailRow("Set", entry.setName.ifBlank { "—" })
-        DetailRow("Number", entry.numberText.ifBlank { "—" })
-        DetailRow("Rarity", entry.rarity ?: "—")
-        DetailRow("Price now", if (entry.hasPrice) money.format(entry.priceEur) else "No price")
-        DetailRow("You own", entry.statusText.ifBlank { "—" })
-        if (entry.item.quantity > 1) DetailRow("Wanted", "×${entry.item.quantity}")
+    RemoteImage(
+        url = ServerUrls.cardImage(serverUrl, entry.cardId, large = true),
+        description = entry.name,
+        modifier = Modifier
+            .fillMaxWidth(0.58f)
+            .aspectRatio(CARD_ASPECT)
+            .align(Alignment.CenterHorizontally)
+            .clip(RoundedCornerShape(8.dp)),
+    )
+    DetailRow("Set", entry.setName.ifBlank { "—" })
+    DetailRow("Number", entry.numberText.ifBlank { "—" })
+    DetailRow("Rarity", entry.rarity ?: "—")
+    DetailRow("Price now", if (entry.hasPrice) money.format(entry.priceEur) else "No price")
+    DetailRow("You own", entry.statusText.ifBlank { "—" })
+    if (entry.item.quantity > 1) DetailRow("Wanted", "×${entry.item.quantity}")
 
-        OutlinedTextField(
-            value = targetText,
-            onValueChange = onTargetText,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Target price ($currency)") },
-            placeholder = { Text("optional") },
-            supportingText = { Text("Shown as reached when the price is at or below it.") },
-            isError = targetInvalid,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true,
-        )
-        problem?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+    OutlinedTextField(
+        value = targetText,
+        onValueChange = onTargetText,
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("Target price ($currency)") },
+        placeholder = { Text("optional") },
+        supportingText = { Text("Shown as reached when the price is at or below it.") },
+        isError = targetInvalid,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        singleLine = true,
+    )
+    problem?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
 
-        Text("Priority", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SnugChip(label = "None", selected = priority == null, onClick = { onPriority(null) })
-            WishlistPriority.entries.forEach { level ->
-                SnugChip(label = level.label, selected = priority == level, onClick = { onPriority(level) })
-            }
+    Text("Priority", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        SnugChip(label = "None", selected = priority == null, onClick = { onPriority(null) })
+        WishlistPriority.entries.forEach { level ->
+            SnugChip(label = level.label, selected = priority == level, onClick = { onPriority(level) })
         }
+    }
 
-        TextButton(
-            onClick = onRemove,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
-        ) {
-            Icon(Icons.Default.Favorite, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Remove from wishlist")
-        }
+    Button(onClick = onSave, enabled = saveEnabled, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Save") }
+
+    TextButton(
+        onClick = onRemove,
+        modifier = Modifier.fillMaxWidth(),
+        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+    ) {
+        Icon(Icons.Default.Favorite, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text("Remove from wishlist")
     }
 }
 

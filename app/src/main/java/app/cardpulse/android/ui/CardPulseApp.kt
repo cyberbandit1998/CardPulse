@@ -180,7 +180,8 @@ private fun CardPulseScreens(appVm: AppViewModel, scanVm: ScanViewModel) {
                     onLoad = appVm::loadWishlist,
                     onSetTarget = appVm::setWishlistTarget,
                     onSetPriority = appVm::setWishlistPriority,
-                    modifier = Modifier.padding(padding),
+                    // The padding already leaves room for the system bars; the keyboard's padding must not count them twice.
+                    modifier = Modifier.padding(padding).consumeWindowInsets(padding),
                 )
             }
         }

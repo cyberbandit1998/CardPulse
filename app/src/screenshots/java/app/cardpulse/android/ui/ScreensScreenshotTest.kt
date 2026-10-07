@@ -62,13 +62,11 @@ import app.cardpulse.android.core.SnapshotDto
 import app.cardpulse.android.core.ThemeMode
 import app.cardpulse.android.core.Upload
 import app.cardpulse.android.core.UserDto
-import app.cardpulse.android.core.WishlistEntry
 import app.cardpulse.android.core.WishlistItemDto
 import app.cardpulse.android.core.WishlistPriority
 import app.cardpulse.android.core.filterOptions
 import app.cardpulse.android.core.lookup
 import app.cardpulse.android.core.ownershipOf
-import app.cardpulse.android.core.entries
 import app.cardpulse.android.core.toChartPoints
 import app.cardpulse.android.data.ScanPrefs
 import app.cardpulse.android.ui.screens.CollectionFilterContent
@@ -86,7 +84,6 @@ import app.cardpulse.android.ui.screens.RemoveChoices
 import app.cardpulse.android.ui.screens.SetChecklistScreen
 import app.cardpulse.android.ui.screens.SettingsScreen
 import app.cardpulse.android.ui.screens.SetsScreen
-import app.cardpulse.android.ui.screens.WishlistItemDetails
 import app.cardpulse.android.ui.screens.WishlistScreen
 import app.cardpulse.android.ui.theme.CardPulseTheme
 import kotlinx.serialization.json.JsonArray
@@ -992,41 +989,20 @@ class ScreensScreenshotTest {
         Wishlist(signedIn.copy(wishlistError = "Can't connect to the server. Check the address and that it is running."))
     }
 
-    /** A card of the wishlist opened, drawn on its own: its dialog is a window of its own, which the pictures cannot see. */
-    @Composable
-    private fun WishlistCardSheet(cardId: String, targetText: String, priority: WishlistPriority?) {
-        val rows = wishlistState.wishlist.entries(
-            wishlistState.collection, wishlistState.collectionLoaded, wishlistState.prefs.priceField, wishlistState.wishlistPriorities,
-        )
-        val entry: WishlistEntry = rows.first { it.cardId == cardId }
-        Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-            Surface(shape = RoundedCornerShape(28.dp), tonalElevation = 6.dp) {
-                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Text(entry.name, style = MaterialTheme.typography.headlineSmall)
-                    WishlistItemDetails(
-                        entry = entry, serverUrl = "https://cards.example.com/", currency = "USD", money = MoneyFormatter("USD", 1.1),
-                        targetText = targetText, targetInvalid = false, problem = null, priority = priority,
-                        onTargetText = {}, onPriority = {}, onRemove = {},
-                    )
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = {}) { Text("Close") }
-                        AccentTextButton(onClick = {}) { Text("Save") }
-                    }
-                }
-            }
-        }
+    @Test
+    @Config(qualifiers = "w360dp-h1250dp-xxhdpi")
+    fun wishlistCardWithATargetAndAPriority() {
+        compose.setContent { CardPulseTheme { Wishlist(wishlistState) } }
+        compose.onNodeWithText("Obsidian Flames · #125 · Double Rare").performClick()
+        capture("1i-wishlist-card")
     }
 
     @Test
     @Config(qualifiers = "w360dp-h1250dp-xxhdpi")
-    fun wishlistCardWithATargetAndAPriority() = shoot("1i-wishlist-card") {
-        WishlistCardSheet("sv3-125_en", targetText = "8.25", priority = WishlistPriority.MEDIUM)
-    }
-
-    @Test
-    @Config(qualifiers = "w360dp-h1250dp-xxhdpi")
-    fun wishlistCardWithNoTargetInTheLightTheme() = shoot("1i-wishlist-card-light", dark = false) {
-        WishlistCardSheet("sv2-003_en", targetText = "", priority = null)
+    fun wishlistCardWithNoTargetInTheLightTheme() {
+        compose.setContent { CardPulseTheme(darkTheme = false) { Wishlist(wishlistState) } }
+        compose.onNodeWithText("Paldea Evolved · #003 · Rare").performClick()
+        capture("1i-wishlist-card-light")
     }
 
     @Test

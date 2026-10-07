@@ -299,7 +299,8 @@ class WishlistBehaviourTest {
         show()
         open("sv2-001_en")
         compose.onNodeWithText("Price now").assertExists()
-        compose.onAllNodesWithText("\$0.13").assertCountEquals(2) // on the row, and in the card
+        compose.onNodeWithText("\$0.13").assertExists() // the card is a page of its own: the list is not under it
+        compose.onNodeWithText(subtitles.getValue("sv2-001_en")).assertDoesNotExist()
         compose.onNodeWithText("You own").assertExists()
         compose.onNodeWithText("Target price (USD)").assertExists()
         compose.onNodeWithText("Priority").assertExists()
@@ -321,6 +322,22 @@ class WishlistBehaviourTest {
         compose.onNodeWithText("Save").performClick()
         assertEquals(listOf(item("sv2-001_en").id to 1.0), saved)
         compose.onNodeWithText("Remove from wishlist").assertDoesNotExist() // saved: the card closes
+        compose.onNodeWithText(subtitles.getValue("sv2-001_en")).assertExists() // and the list is back
+    }
+
+    @Test
+    fun backFromACardReturnsToTheListWithoutSavingAnything() {
+        val saved = mutableListOf<Pair<Int, Double?>>()
+        show(onSetTarget = { row, euros, done ->
+            saved += row.id to euros
+            done(null)
+        })
+        open("sv2-001_en")
+        compose.onNode(hasSetTextAction()).performTextInput("1.10")
+        compose.onNodeWithContentDescription("Back to the wishlist").performClick()
+        compose.onNodeWithText("Remove from wishlist").assertDoesNotExist()
+        assertEquals(subtitles.keys, shownCards().toSet())
+        assertEquals(emptyList<Pair<Int, Double?>>(), saved)
     }
 
     @Test
