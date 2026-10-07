@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.cardpulse.android.core.CollectionItemDto
 import app.cardpulse.android.core.MoneyFormatter
+import app.cardpulse.android.core.wishlistCardId
 import app.cardpulse.android.ui.AppState
 
 /** Every card the server lists as most valuable, one to a row, under a back arrow: what "See all" on Home opens. */
@@ -34,6 +35,8 @@ fun MostValuableScreen(
     onBack: () -> Unit,
     onRemove: (item: CollectionItemDto, wholeRow: Boolean, done: (String?) -> Unit) -> Unit,
     modifier: Modifier = Modifier,
+    wishlistedIds: Set<String> = emptySet(),
+    onToggleWishlist: ((CollectionItemDto) -> Unit)? = null,
 ) {
     val money = remember(state.prefs.currency, state.prefs.rateFromEur) {
         MoneyFormatter(state.prefs.currency, state.prefs.rateFromEur)
@@ -67,5 +70,11 @@ fun MostValuableScreen(
         }
     }
 
-    openItem?.let { entry -> ItemDialog(entry, state, onRemove = onRemove, onClose = { openItem = null }) }
+    openItem?.let { entry ->
+        ItemDialog(
+            entry, state, onRemove = onRemove, onClose = { openItem = null },
+            isWishlisted = entry.wishlistCardId() in wishlistedIds,
+            onToggleWishlist = onToggleWishlist?.let { toggle -> { toggle(entry) } },
+        )
+    }
 }

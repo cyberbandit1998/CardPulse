@@ -7,6 +7,8 @@ import app.cardpulse.android.api.PokeApi
 import app.cardpulse.android.api.SessionHolder
 import app.cardpulse.android.core.AppJson
 import app.cardpulse.android.core.CollectionItemDto
+import app.cardpulse.android.data.wishlist.AppDatabase
+import app.cardpulse.android.data.wishlist.WishlistRepository
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -33,6 +35,11 @@ class AppContainer(app: Application) {
         HttpClientFactory.retrofit(httpClient, AppJson).create(PokeApi::class.java),
         session,
     )
+
+    /** The app's own database on the phone; only the wishlist lives there. */
+    val database: AppDatabase by lazy { AppDatabase.create(app) }
+
+    val wishlistRepository: WishlistRepository by lazy { WishlistRepository(database.wishlistDao(), repository) }
 
     /** Photos taken but not yet sent. Survives the app being closed or killed mid-batch. */
     val pendingScansDir: File = File(app.filesDir, "pending_scans").apply { mkdirs() }

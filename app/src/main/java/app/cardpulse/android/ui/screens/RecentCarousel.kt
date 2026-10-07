@@ -27,6 +27,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.cardpulse.android.core.CollectionItemDto
 import app.cardpulse.android.core.setName
+import app.cardpulse.android.core.wishlistCardId
 import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.CARD_ASPECT
 import app.cardpulse.android.ui.CardArt
@@ -49,6 +50,8 @@ fun RecentCarousel(
     state: AppState,
     modifier: Modifier = Modifier,
     onOpen: (CollectionItemDto) -> Unit = {},
+    /** Card ids on the wishlist: those cards wear a small heart. */
+    wishlistedIds: Set<String> = emptySet(),
 ) {
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val cardWidth = ((maxWidth - SIDE) / CARDS_IN_VIEW - GAP).coerceIn(MIN_CARD_WIDTH, MAX_CARD_WIDTH)
@@ -56,13 +59,24 @@ fun RecentCarousel(
             contentPadding = PaddingValues(horizontal = SIDE),
             horizontalArrangement = Arrangement.spacedBy(GAP),
         ) {
-            items(cards, key = { it.id }) { entry -> RecentCard(entry, state, Modifier.width(cardWidth), onClick = { onOpen(entry) }) }
+            items(cards, key = { it.id }) { entry ->
+                RecentCard(
+                    entry, state, Modifier.width(cardWidth), onClick = { onOpen(entry) },
+                    wishlisted = entry.wishlistCardId() in wishlistedIds,
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun RecentCard(entry: CollectionItemDto, state: AppState, modifier: Modifier = Modifier, onClick: () -> Unit = {}) {
+private fun RecentCard(
+    entry: CollectionItemDto,
+    state: AppState,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit = {},
+    wishlisted: Boolean = false,
+) {
     Column(modifier.clip(RoundedCornerShape(12.dp)).clickable(role = Role.Button, onClick = onClick)) {
         Box {
             CardArt(entry, state.serverUrl, state.prefs, Modifier.fillMaxWidth().aspectRatio(CARD_ASPECT), corner = 12.dp)
@@ -79,6 +93,7 @@ private fun RecentCard(entry: CollectionItemDto, state: AppState, modifier: Modi
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                 )
             }
+            if (wishlisted) WishlistBadge(Modifier.align(Alignment.TopStart).padding(5.dp))
         }
         Text(
             entry.card?.name.orEmpty(),
