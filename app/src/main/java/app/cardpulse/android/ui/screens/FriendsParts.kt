@@ -205,19 +205,23 @@ internal fun FriendTile(card: FriendCard, serverUrl: String, onClick: () -> Unit
  */
 @Composable
 internal fun FriendCardDialog(card: FriendCard, owner: String, state: AppState, money: MoneyFormatter, onClose: () -> Unit) {
-    val item = remember(card) { card.asCollectionItem() }
     AlertDialog(
         onDismissRequest = onClose,
         confirmButton = { AccentTextButton(onClick = onClose) { Text("Close") } },
         title = { Text(card.name) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                CardArt(item, state.serverUrl, state.prefs, Modifier.fillMaxWidth().aspectRatio(CARD_ASPECT), large = true)
-                WishlistToggleButton(card.cardId)
-                card.detailLines(owner, money).forEach { (label, value) -> DetailRow(label, value) }
-            }
-        },
+        text = { FriendCardDetails(card, owner, state, money) },
     )
+}
+
+/** What the details of a friend's card hold: the picture, the button that puts the card on the user's wishlist, and the rows. */
+@Composable
+internal fun FriendCardDetails(card: FriendCard, owner: String, state: AppState, money: MoneyFormatter, modifier: Modifier = Modifier) {
+    val item = remember(card) { card.asCollectionItem() }
+    Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        CardArt(item, state.serverUrl, state.prefs, Modifier.fillMaxWidth().aspectRatio(CARD_ASPECT), large = true)
+        WishlistToggleButton(card.cardId)
+        card.detailLines(owner, money).forEach { (label, value) -> DetailRow(label, value) }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

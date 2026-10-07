@@ -1,13 +1,10 @@
 package app.cardpulse.android.core
 
 import java.io.IOException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,132 +13,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import retrofit2.HttpException
-import retrofit2.Response
-
-private fun httpError(code: Int, detail: String) =
-    HttpException(Response.error<Any>(code, """{"detail":"$detail"}""".toResponseBody("application/json".toMediaType())))
-
-/**
- * A server whose answers the test controls. Every call is recorded; a call named in [errors] fails, and one named in [gates]
- * waits until the test opens the gate, like a slow connection.
- */
-private class FakeFriends : FriendsBackend {
-    var me: FriendsMeDto = Fixtures.decode("friends_me")
-    var overview: FriendsOverviewDto = Fixtures.decode("friends_overview")
-    var marks: OwnTradeListDto = Fixtures.decode("friends_own_trade_list")
-    var requestResult: FriendRequestResultDto = Fixtures.decode("friends_request_pending")
-    var sharingAnswer: SharingDto = SharingDto("private", "private", "friends")
-    var nextCode: String = "M4PQ7-RSTV2"
-    var tradeAnswer: (Int, Int) -> TradeEntryDto = { id, quantity -> TradeEntryDto(id, quantity, owned = 4) }
-
-    val collections = mutableMapOf<Int, FriendRows<CollectionItemDto>>()
-    val wishlists = mutableMapOf<Int, FriendRows<WishlistItemDto>>()
-    val trades = mutableMapOf<Int, FriendRows<TradeItemDto>>()
-    val matches = mutableMapOf<Int, TradeMatchDto>()
-
-    val calls = mutableListOf<String>()
-    val errors = mutableMapOf<String, Throwable>()
-    val gates = mutableMapOf<String, CompletableDeferred<Unit>>()
-    val sentRequests = mutableListOf<FriendRequestBody>()
-    val sharingBodies = mutableListOf<SharingUpdateBody>()
-    val tradeCalls = mutableListOf<Pair<Int, Int>>()
-
-    fun count(name: String) = calls.count { it == name }
-
-    fun hold(name: String): CompletableDeferred<Unit> = CompletableDeferred<Unit>().also { gates[name] = it }
-
-    private suspend fun enter(name: String) {
-        calls += name
-        gates[name]?.await()
-        errors[name]?.let { throw it }
-    }
-
-    override suspend fun friendsMe(): FriendsMeDto {
-        val snapshot = me // what the server said when asked, even if the answer arrives much later
-        enter("friendsMe")
-        return snapshot
-    }
-
-    override suspend fun friendsOverview(): FriendsOverviewDto {
-        val snapshot = overview
-        enter("friendsOverview")
-        return snapshot
-    }
-
-    override suspend fun sendFriendRequest(body: FriendRequestBody): FriendRequestResultDto {
-        sentRequests += body
-        enter("sendFriendRequest")
-        return requestResult
-    }
-
-    override suspend fun acceptFriendRequest(requestId: Int): FriendDto {
-        enter("acceptFriendRequest")
-        val request = overview.incoming.first { it.id == requestId }
-        overview = overview.copy(
-            friends = overview.friends + FriendDto(id = request.user.id, username = request.user.username),
-            incoming = overview.incoming.filterNot { it.id == requestId },
-        )
-        return FriendDto(id = request.user.id, username = request.user.username)
-    }
-
-    override suspend fun declineFriendRequest(requestId: Int) {
-        enter("declineFriendRequest")
-        overview = overview.copy(incoming = overview.incoming.filterNot { it.id == requestId })
-    }
-
-    override suspend fun cancelFriendRequest(requestId: Int) {
-        enter("cancelFriendRequest")
-        overview = overview.copy(outgoing = overview.outgoing.filterNot { it.id == requestId })
-    }
-
-    override suspend fun removeFriend(friendId: Int) {
-        enter("removeFriend")
-        overview = overview.copy(friends = overview.friends.filterNot { it.id == friendId })
-    }
-
-    override suspend fun updateSharing(update: SharingUpdateBody): SharingDto {
-        sharingBodies += update
-        enter("updateSharing")
-        return sharingAnswer
-    }
-
-    override suspend fun newInviteCode(): String {
-        enter("newInviteCode")
-        return nextCode
-    }
-
-    override suspend fun ownTradeList(): OwnTradeListDto {
-        enter("ownTradeList")
-        return marks
-    }
-
-    override suspend fun setTradeQuantity(itemId: Int, quantity: Int): TradeEntryDto {
-        tradeCalls += itemId to quantity
-        enter("setTradeQuantity")
-        return tradeAnswer(itemId, quantity)
-    }
-
-    override suspend fun friendCollection(friendId: Int): FriendRows<CollectionItemDto> {
-        enter("friendCollection")
-        return collections[friendId] ?: FriendRows(emptyList())
-    }
-
-    override suspend fun friendWishlist(friendId: Int): FriendRows<WishlistItemDto> {
-        enter("friendWishlist")
-        return wishlists[friendId] ?: FriendRows(emptyList())
-    }
-
-    override suspend fun friendTradeList(friendId: Int): FriendRows<TradeItemDto> {
-        enter("friendTradeList")
-        return trades[friendId] ?: FriendRows(emptyList())
-    }
-
-    override suspend fun friendTradeMatch(friendId: Int): TradeMatchDto {
-        enter("friendTradeMatch")
-        return matches[friendId] ?: TradeMatchDto()
-    }
-}
 
 private const val MISTY = 2
 private const val GARY = 4
@@ -209,7 +80,7 @@ class FriendsSessionTest {
 
     @Test
     fun aServerWithoutTheUpdateIsSaidSoAndNothingElseIsAsked() {
-        fake.errors["friendsMe"] = httpError(404, "Not Found")
+        fake.errors["friendsMe"] = httpFailure(404, "Not Found")
 
         session.start()
 
@@ -223,7 +94,7 @@ class FriendsSessionTest {
 
     @Test
     fun onceTheServerIsUpdatedAskingAgainWorks() {
-        fake.errors["friendsMe"] = httpError(404, "Not Found")
+        fake.errors["friendsMe"] = httpFailure(404, "Not Found")
         session.start()
         fake.errors.clear()
 
@@ -236,7 +107,7 @@ class FriendsSessionTest {
 
     @Test
     fun aServerInSingleUserModeSaysItsOwnReason() {
-        fake.errors["friendsMe"] = httpError(403, "Friends needs multi-user mode. With it off nobody has to sign in, so nothing can be kept private.")
+        fake.errors["friendsMe"] = httpFailure(403, "Friends needs multi-user mode. With it off nobody has to sign in, so nothing can be kept private.")
         session.start()
         assertEquals(FriendsAvailability.NEEDS_MULTI_USER, state.availability)
         assertEquals("Friends needs multi-user mode. With it off nobody has to sign in, so nothing can be kept private.", state.availabilityNote)
@@ -255,7 +126,7 @@ class FriendsSessionTest {
 
     @Test
     fun theFriendsCanFailToLoadWithoutLosingTheRest() {
-        fake.errors["friendsOverview"] = httpError(500, "boom")
+        fake.errors["friendsOverview"] = httpFailure(500, "boom")
         session.start()
         assertTrue(state.supported)
         assertEquals("boom", state.error)
@@ -372,7 +243,7 @@ class FriendsSessionTest {
     @Test
     fun theServersWordsOnAFailureAreShownAndTheFieldIsKept() {
         started()
-        fake.errors["sendFriendRequest"] = httpError(404, "Nobody on this server has that username")
+        fake.errors["sendFriendRequest"] = httpFailure(404, "Nobody on this server has that username")
         var worked: Boolean? = null
 
         session.sendRequest(AddFriendMode.USERNAME, "nobody") { worked = it }
@@ -430,7 +301,7 @@ class FriendsSessionTest {
     @Test
     fun aRequestThatIsAlreadyGoneIsShownAsItIsNotReportedAsAFailure() {
         started()
-        fake.errors["acceptFriendRequest"] = httpError(404, "Request not found")
+        fake.errors["acceptFriendRequest"] = httpFailure(404, "Request not found")
         fake.overview = fake.overview.copy(incoming = emptyList())
 
         session.accept(4)
@@ -443,7 +314,7 @@ class FriendsSessionTest {
     @Test
     fun anotherFailureIsShown() {
         started()
-        fake.errors["declineFriendRequest"] = httpError(500, "boom")
+        fake.errors["declineFriendRequest"] = httpFailure(500, "boom")
         session.decline(4)
         assertEquals("boom", state.requestError)
         assertTrue(state.answering.isEmpty())
@@ -482,7 +353,7 @@ class FriendsSessionTest {
     @Test
     fun aFriendshipAlreadyEndedByTheOtherPersonCountsAsEnded() {
         started()
-        fake.errors["removeFriend"] = httpError(404, "That person isn't one of your friends")
+        fake.errors["removeFriend"] = httpFailure(404, "That person isn't one of your friends")
         var told: String? = "not called"
         session.removeFriend(MISTY) { told = it }
         assertNull(told)
@@ -608,7 +479,7 @@ class FriendsSessionTest {
     @Test
     fun aFailureShowsTheOldCountAgainAndSaysWhy() {
         started()
-        fake.errors["setTradeQuantity"] = httpError(422, "You only have 4 of this card")
+        fake.errors["setTradeQuantity"] = httpFailure(422, "You only have 4 of this card")
         var told: String? = null
 
         session.setTrade(3, 9) { told = it }
@@ -713,7 +584,7 @@ class FriendsSessionTest {
     @Test
     fun aListTheFriendDoesNotShareIsNotAFailureToTryAgain() {
         started()
-        fake.errors["friendWishlist"] = httpError(403, "gary hasn't shared their wishlist with you")
+        fake.errors["friendWishlist"] = httpFailure(403, "gary hasn't shared their wishlist with you")
 
         session.loadFriend(GARY, FriendTab.WISHLIST)
 
@@ -741,7 +612,7 @@ class FriendsSessionTest {
         session.loadFriend(MISTY, FriendTab.WISHLIST)
         assertTrue(state.views.getValue(MISTY).wishlist.loaded)
 
-        fake.errors["friendWishlist"] = httpError(403, "misty hasn't shared their wishlist with you")
+        fake.errors["friendWishlist"] = httpFailure(403, "misty hasn't shared their wishlist with you")
         session.loadFriend(MISTY, FriendTab.WISHLIST, force = true)
 
         val page = state.views.getValue(MISTY).wishlist
@@ -816,11 +687,37 @@ class FriendsSessionTest {
     }
 
     @Test
+    fun aLateAnswerAboutSomeoneWhoIsNoLongerAFriendIsNotKept() {
+        started()
+        fake.trades[GARY] = trade()
+        val gate = fake.hold("friendTradeList")
+        session.loadFriend(GARY, FriendTab.TRADE)
+        assertTrue(state.views.getValue(GARY).trade.loading)
+
+        // Gary ended the friendship while the page was on its way.
+        fake.overview = fake.overview.copy(friends = fake.overview.friends.filterNot { it.id == GARY })
+        session.refresh()
+        assertNull(state.views[GARY])
+        gate.complete(Unit)
+
+        assertNull(state.views[GARY])
+    }
+
+    @Test
+    fun someoneWhoIsNotAFriendIsNotAskedAbout() {
+        started()
+        session.loadFriend(99, FriendTab.COLLECTION)
+        session.loadFriend(99, FriendTab.MATCH)
+        assertEquals(0, fake.count("friendCollection") + fake.count("friendTradeMatch"))
+        assertTrue(state.views.isEmpty())
+    }
+
+    @Test
     fun theFriendsOwnPagesDoNotDisturbEachOther() {
         started()
         fake.trades[MISTY] = trade()
         session.loadFriend(MISTY, FriendTab.TRADE)
-        fake.errors["friendTradeList"] = httpError(403, "gary hasn't shared their For Trade list with you")
+        fake.errors["friendTradeList"] = httpFailure(403, "gary hasn't shared their For Trade list with you")
         session.loadFriend(GARY, FriendTab.TRADE)
         assertTrue(state.views.getValue(MISTY).trade.loaded)
         assertTrue(state.views.getValue(GARY).trade.notShared)

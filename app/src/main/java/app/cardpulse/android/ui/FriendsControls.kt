@@ -18,6 +18,9 @@ import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -26,9 +29,13 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import app.cardpulse.android.core.CollectionItemDto
+import app.cardpulse.android.core.FriendsSession
+import app.cardpulse.android.core.FriendsState
 import app.cardpulse.android.core.ShareLevel
 import app.cardpulse.android.core.TradeSlot
 import app.cardpulse.android.core.isCustomCard
+import app.cardpulse.android.core.sharing
+import app.cardpulse.android.core.supported
 
 /**
  * What the screens can do with the user's For Trade marks, handed to all of them at once ([LocalTrade]) so that a card's details
@@ -54,6 +61,23 @@ class TradeControls(
 }
 
 val LocalTrade = staticCompositionLocalOf { TradeControls.None }
+
+/**
+ * The controls the screens are given, made from what the [session] knows ([friends] is its state): nothing is offered until the
+ * marks have loaded, and a change goes to the server, whose answer is what ends up shown. A failure is passed to [onProblem].
+ */
+@Composable
+fun rememberTradeControls(friends: FriendsState, session: FriendsSession, onProblem: (String) -> Unit): TradeControls {
+    val report by rememberUpdatedState(onProblem)
+    return remember(session, friends.availability, friends.marksLoaded, friends.marks, friends.marking, friends.me) {
+        TradeControls(
+            ready = friends.supported && friends.marksLoaded,
+            marks = (friends.marks + friends.marking).filterValues { it > 0 },
+            visibleTo = friends.sharing.trade,
+            set = { itemId, quantity -> session.setTrade(itemId, quantity) { problem -> if (problem != null) report(problem) } },
+        )
+    }
+}
 
 /** What the For Trade control says about who can see the copies on offer. */
 internal fun ShareLevel.tradeVisibility(): String = when (this) {

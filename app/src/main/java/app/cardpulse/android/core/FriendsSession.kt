@@ -369,11 +369,16 @@ class FriendsSession(
         write: (FriendView, Loadable<R>) -> FriendView,
         call: suspend () -> Pair<R, Int>,
     ) {
-        val existing = read(_state.value.views[friendId] ?: FriendView())
+        val current = _state.value
+        // Someone who is not a friend (any more) is not asked about: the server would refuse, and nothing of theirs is kept.
+        if (current.loaded && current.friends.none { it.id == friendId }) return
+        val existing = read(current.views[friendId] ?: FriendView())
         if (existing.loading) return
         if (!force && (existing.loaded || existing.notShared)) return
         val from = generation
         fun put(page: Loadable<R>) = change(from) { state ->
+            // Nor does an answer that arrives after the friendship ended leave anything behind.
+            if (state.loaded && state.friends.none { it.id == friendId }) return@change state
             val view = state.views[friendId] ?: FriendView()
             state.copy(views = state.views + (friendId to write(view, page)))
         }

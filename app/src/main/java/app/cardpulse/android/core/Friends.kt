@@ -425,6 +425,12 @@ fun List<FriendCard>.ordered(order: FriendCardOrder): List<FriendCard> {
     }
 }
 
+/** "4 entries · 6 cards": how many rows a list of a friend's collection has and how many cards they hold between them. */
+fun List<FriendCard>.entriesLine(): String {
+    val cards = sumOf { it.owned ?: 0 }
+    return "$size ${if (size == 1) "entry" else "entries"} · $cards ${if (cards == 1) "card" else "cards"}"
+}
+
 /** How many cards the two halves of a match hold in all. */
 val TradeMatchDto.total: Int get() = theyHaveYouWant.size + youHaveTheyWant.size
 

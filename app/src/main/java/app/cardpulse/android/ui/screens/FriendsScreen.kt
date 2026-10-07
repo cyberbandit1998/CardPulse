@@ -140,7 +140,10 @@ fun FriendsScreen(
                 modifier = modifier,
             )
             // Not found once the friends are known: they ended the friendship, or it was a leftover from before. Back to the list.
-            friends.loaded -> LaunchedEffect(Unit) { openFriend = null }
+            friends.loaded -> LaunchedEffect(Unit) {
+                session.forgetFriend(id)
+                openFriend = null
+            }
             else -> Column(modifier.fillMaxSize()) { LoadingNote("Loading your friends…") }
         }
         return
@@ -168,11 +171,15 @@ fun FriendsScreen(
             FriendsAvailability.UNKNOWN -> LoadingNote("Checking your server…")
             FriendsAvailability.MISSING -> NoteScreen { ServerNeedsUpdate(onCheckAgain = { session.start(force = true) }) }
             FriendsAvailability.NEEDS_MULTI_USER -> NoteScreen {
-                InfoNote(
-                    Icons.Default.Lock,
-                    "Friends needs multi-user mode",
-                    friends.availabilityNote ?: "With multi-user mode off nobody has to sign in, so nothing could be kept private.",
-                )
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    InfoNote(
+                        Icons.Default.Lock,
+                        "Friends needs multi-user mode",
+                        "With multi-user mode off nobody has to sign in, so nothing could be kept private. " +
+                            "Turn multi-user mode on in your server's settings, then check again.",
+                    )
+                    OutlinedButton(onClick = { session.start(force = true) }) { Text("Check again") }
+                }
             }
             FriendsAvailability.FAILED -> NoteScreen {
                 ProblemNote("Couldn't reach your server.", friends.availabilityNote.orEmpty(), onRetry = { session.start(force = true) })
@@ -551,7 +558,10 @@ private fun InviteCodeCard(friends: FriendsState, session: FriendsSession, onCop
             Text(
                 code.ifEmpty { "…" },
                 style = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Monospace, letterSpacing = 2.sp),
-                modifier = Modifier.semantics { contentDescription = "Your invite code is ${code.replace("-", " dash ").toList().joinToString(" ")}" },
+                // Read out one character at a time, so that a screen reader does not turn "K7MQ9" into a word.
+                modifier = Modifier.semantics {
+                    contentDescription = if (code.isEmpty()) "Your invite code has not loaded yet" else "Your invite code is ${code.map { if (it == '-') "dash" else "$it" }.joinToString(" ")}"
+                },
             )
             Text(
                 "A friend can use this code instead of your username. They still have to ask, and you still have to accept.",

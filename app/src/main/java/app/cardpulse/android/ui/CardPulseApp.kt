@@ -38,8 +38,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import app.cardpulse.android.core.cardIds
 import app.cardpulse.android.core.homeNote
 import app.cardpulse.android.core.requestsWaiting
-import app.cardpulse.android.core.sharing
-import app.cardpulse.android.core.supported
 import app.cardpulse.android.core.toReview
 import app.cardpulse.android.ui.screens.CollectionScreen
 import app.cardpulse.android.ui.screens.FriendsScreen
@@ -81,16 +79,7 @@ fun CardPulseApp(
     }
     // The same for the copies a user would trade: any card's details can offer them without a callback passed through every screen.
     // Nothing is offered until the marks have loaded, or on a server that has no Friends.
-    val tradeControls = remember(friends.availability, friends.marksLoaded, friends.marks, friends.marking, friends.me) {
-        TradeControls(
-            ready = friends.supported && friends.marksLoaded,
-            marks = (friends.marks + friends.marking).filterValues { it > 0 },
-            visibleTo = friends.sharing.trade,
-            set = { itemId, quantity ->
-                friendsVm.session.setTrade(itemId, quantity) { error -> if (error != null) Toast.makeText(context, error, Toast.LENGTH_LONG).show() }
-            },
-        )
-    }
+    val tradeControls = rememberTradeControls(friends, friendsVm.session) { problem -> Toast.makeText(context, problem, Toast.LENGTH_LONG).show() }
     CompositionLocalProvider(LocalWishlist provides wishlistControls, LocalTrade provides tradeControls) {
         CardPulseScreens(appVm, scanVm, friendsVm)
     }

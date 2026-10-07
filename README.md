@@ -68,6 +68,19 @@ The app warns you if it connects to a server in single-user mode.
   when the price has reached it) and a **priority** (Low, Medium or High; PokéCollector's wishlist has no priority, so that one
   stays on this phone). The server adds one to the quantity wanted when a card is added twice, so the app never adds a card it
   knows is listed.
+- **Friends & trading:** a "Friends & trading" row on Home opens the Friends screen. Add people who have an account on
+  your server by **username or invite code**; they accept or decline (a request shares nothing by itself, and an invite
+  code never skips the acceptance). **Everything starts private.** Under Sharing you choose, for your **collection**,
+  your **wishlist** and your **For Trade** cards one at a time, whether it is *Only me*, *Friends* or *Everyone* (everyone
+  with an account on your server). Cards are **For Trade** only when you say so: open a card in your Collection and offer
+  its copies one at a time ("2 of 4 for trade"), never more than you hold, and never automatically, not even duplicates.
+  A friend's page opens on the **Trade match**: the cards they have for trade that are on your wishlist, and the cards you
+  have for trade that are on theirs; then their For Trade list, wishlist and collection, as far as they share them.
+  Tapping a card opens its details, with the heart that puts it on your own wishlist. **Your server decides who sees what,
+  on every request**, so a friend can never read what you did not share, whatever app they use; what you paid, your price
+  alerts, your photos and cards made by hand are never shared at all. This needs Multi-User Mode and a small update to
+  your PokéCollector server: see [`server/`](server/README.md). Without them the Friends screen says so and the rest of
+  the app is unchanged.
 - **Sets:** every set your server lists, each as "owned / total" (18 / 132, or 0 / 230 for a set you have no cards from
   yet), plus any set you own cards from that the list lacks (such as one in another language). Narrow it to All, Owned,
   Incomplete (some of its cards owned) or Complete (every card owned); search by name, series or the
@@ -179,6 +192,9 @@ API shows up as a failing test.
 ## Security notes
 
 - The sign-in token is stored encrypted with a key in the Android Keystore, and excluded from backups.
+- Friends and sharing are enforced by your server (see [`server/`](server/README.md)), never by hiding things in the app.
+  The app asks only for the lists a friend has shared, keeps what it was sent only while that friend's page is open, and
+  forgets all of it when you sign out.
 - The token is only ever sent to the server address you entered, never to other hosts (card art CDNs, etc.).
 - Never commit signing keys (`*.jks`, `*.keystore`) or credentials; they are git-ignored.
 

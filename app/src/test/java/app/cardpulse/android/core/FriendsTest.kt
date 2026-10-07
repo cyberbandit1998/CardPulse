@@ -362,6 +362,15 @@ class FriendCardTest {
     }
 
     @Test
+    fun aListOfCollectionRowsSaysHowManyEntriesAndCardsItHolds() {
+        // Four rows (1 + 3 + 1 + 1 copies).
+        assertEquals("4 entries · 6 cards", misty().entriesLine())
+        assertEquals("1 entry · 3 cards", misty().filter { it.cardId == "sv2-001_en" }.entriesLine())
+        assertEquals("1 entry · 1 card", misty().filter { it.cardId == "sv3-223_en" }.entriesLine())
+        assertEquals("0 entries · 0 cards", emptyList<FriendCard>().entriesLine())
+    }
+
+    @Test
     fun theHalvesOfAMatchSpeakFromTheirSides() {
         val theirs = match.theyHaveYouWant.matchCards(FriendCardKind.THEIR_OFFER, mine, "price_trend")
         val yours = match.youHaveTheyWant.matchCards(FriendCardKind.YOUR_OFFER, mine, "price_trend")

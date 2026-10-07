@@ -58,6 +58,7 @@ import app.cardpulse.android.core.TradeItemDto
 import app.cardpulse.android.core.WishlistItemDto
 import app.cardpulse.android.core.collectionCards
 import app.cardpulse.android.core.copiesByCardId
+import app.cardpulse.android.core.entriesLine
 import app.cardpulse.android.core.matchCards
 import app.cardpulse.android.core.matches
 import app.cardpulse.android.core.ordered
@@ -289,11 +290,7 @@ private fun CollectionPage(cards: List<FriendCard>, friendName: String, app: App
             FlowRow(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FriendCardOrder.entries.forEach { option -> SnugChip(label = option.label, selected = order == option, onClick = { order = option }) }
             }
-            Text(
-                "${shown.size} entries · ${shown.sumOf { it.owned ?: 0 }} cards",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Text(shown.entriesLine(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         when {
             cards.isEmpty() -> NoteScreen { InfoNote(Icons.Default.Style, "$friendName's collection is empty.", "") }

@@ -1,8 +1,9 @@
-**A wishlist for the cards you want.**
+**Friends and trading, with your own privacy settings.**
 
-- **The heart in Home's header opens your Wishlist.** Each card shows its picture, name, set, number, rarity and what it costs now, says whether you own a copy ("Owned ×2" or "Missing"), and can be put in order of **Recent, Name, Set or Price** and narrowed to **All, Missing or Owned**. It is your PokéCollector wishlist, so your website and your other phones show the same cards.
-- **Put a card on it with a heart.** There is one on every card of a set's checklist (the cards you are missing too), in a card's details, and beside each result when you add a card by typing. Cards that are on the wishlist show a small heart in the Collection and in Recently added.
-- **Owning a copy never takes a card off.** You may want more, so only you remove a card: open it and choose "Remove from wishlist".
-- **Open a card to set a target price and a priority.** The target is PokéCollector's own "alert below" price, so the website shows it too, and the row says "Reached" once the price is at or below it. The priority (Low, Medium, High) stays on this phone: PokéCollector's wishlist has no priority.
+- **A new row on Home: Friends & trading.** Add friends by username or invite code; they accept or decline, and a request shares nothing by itself.
+- **Everything starts private.** In Friends → Sharing you choose, for your collection, your wishlist and your For Trade cards one at a time, whether it is **Only me**, **Friends** or **Everyone** (everyone with an account on your server).
+- **For Trade is up to you.** Open a card in your Collection and offer its copies one at a time ("2 of 4 for trade"). Nothing is ever offered automatically, not even duplicates, and never more than you hold.
+- **A friend's page opens on the Trade match:** the cards they have for trade that you want, and the cards you have for trade that they want. Then their For Trade list, wishlist and collection, as far as they share them. Tap any card for its details; the heart puts it on your own wishlist.
+- **Your server needs a small update first.** A phone app can't keep one person's cards private from another, so the server has to. The update and the steps to install it are in the `server` folder of this repository. Until it is installed the Friends screen says so, and everything else works as before. The update also makes the website's Leaderboard, compare and "view collection" follow the same sharing settings.
 
 If anything looks wrong on your phone, tell me which screen it was.
