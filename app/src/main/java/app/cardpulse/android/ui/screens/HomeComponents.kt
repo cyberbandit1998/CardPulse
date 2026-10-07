@@ -141,7 +141,8 @@ internal fun HomeHeader(
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         PulseMark(Modifier.size(width = 36.dp, height = 30.dp))
         Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
+        // The room on the right keeps the name from touching the first button when it has shrunk to fit.
+        Column(Modifier.weight(1f).padding(end = 8.dp)) {
             // With three buttons beside it the name has little room on a narrow phone, so it shrinks to fit rather than be cut.
             FitText(
                 "CardPulse",
