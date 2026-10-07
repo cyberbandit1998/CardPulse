@@ -1,8 +1,8 @@
-**Every set in the Sets tab, a checklist for each, filters in Sets and Collection, and a calmer Portfolio.**
+**A wishlist for the cards you want.**
 
-- **The Sets tab lists every set your server has,** not only the ones you own cards from. Each shows how much you own, such as 18 / 132, and 0 / 230 for a set you have nothing from yet. Filter it with **All, Owned, Incomplete or Complete**, search by name, series or the code on the cards (try "OBF"), and sort by progress, name or cards.
-- **Tap a set to open its checklist.** Every card of the set in order: the ones you own are in full colour with a tick (and "×2" for more copies), the ones you are missing are greyed out and say "Missing". The chips All, Owned and Missing narrow it; an owned card opens its details; "Open my cards in Collection" jumps to your cards from that set. Tapping a set on Home opens its checklist too.
-- **A Filter in Collection,** next to Recent, Name and Set: rarity, condition, variant (holo, reverse holo…), how much a card is worth, how many copies, and the entries with no purchase price. It only offers what your collection has.
-- **Portfolio:** "+$115.02 (+68246.7%) over 1M" is now "+$115.02 over 1M" when the month began with almost nothing; the percentage comes back once there is something real to measure from. The chart is a little shorter, so more of the breakdown is on the screen.
+- **The heart in Home's header opens your Wishlist.** Each card shows its picture, name, set, number, rarity and what it costs now, says whether you own a copy ("Owned ×2" or "Missing"), and can be put in order of **Recent, Name, Set or Price** and narrowed to **All, Missing or Owned**. It is your PokéCollector wishlist, so your website and your other phones show the same cards.
+- **Put a card on it with a heart.** There is one on every card of a set's checklist (the cards you are missing too), in a card's details, and beside each result when you add a card by typing. Cards that are on the wishlist show a small heart in the Collection and in Recently added.
+- **Owning a copy never takes a card off.** You may want more, so only you remove a card: open it and choose "Remove from wishlist".
+- **Open a card to set a target price and a priority.** The target is PokéCollector's own "alert below" price, so the website shows it too, and the row says "Reached" once the price is at or below it. The priority (Low, Medium, High) stays on this phone: PokéCollector's wishlist has no priority.
 
 If anything looks wrong on your phone, tell me which screen it was.

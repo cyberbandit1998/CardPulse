@@ -55,8 +55,19 @@ The app warns you if it connects to a server in single-user mode.
   along each of your sets is, as pictures, names and slim progress bars. The three tiles can be pressed: Cards opens
   the whole collection, Sets opens the Sets tab, and Top Card opens the details of the card worth the most (found from
   the server's own list of your most valuable cards, never a fixed one). Every list has a "See all", tapping a card
-  opens its details, and tapping a set opens its checklist. A one-line warning says when some cards have no purchase
-  price, which makes the gain look larger than it is.
+  opens its details, and tapping a set opens its checklist. A heart in the header opens your wishlist. A one-line warning
+  says when some cards have no purchase price, which makes the gain look larger than it is.
+- **Wishlist:** the cards you want, kept by your PokéCollector server, so its website and every phone show the same list.
+  A heart on a card puts it on the list or takes it off: on every card of a set's checklist (the ones you are missing and
+  the ones you own), in a card's details, and next to each result when you add a card by typing; cards on the list carry a
+  small heart in the Collection and in Recently added. Each row shows the card's picture, name, set, number, rarity and what
+  it costs now (by the price you chose in PokéCollector), says whether you own a copy, and can be put in order of when you
+  added it, name, set or price (dearest first, the cards with no price last) and narrowed to All, Missing or Owned. **Owning
+  a copy never takes a card off the list**: you may want more, and only you remove it. Open a card to set a **target price**
+  (typed in your currency; PokéCollector keeps it as its "alert below" price, so the website shows it too, and the row says
+  when the price has reached it) and a **priority** (Low, Medium or High; PokéCollector's wishlist has no priority, so that one
+  stays on this phone). The server adds one to the quantity wanted when a card is added twice, so the app never adds a card it
+  knows is listed.
 - **Sets:** every set your server lists, each as "owned / total" (18 / 132, or 0 / 230 for a set you have no cards from
   yet), plus any set you own cards from that the list lacks (such as one in another language). Narrow it to All, Owned,
   Incomplete (some of its cards owned) or Complete (every card owned); search by name, series or the
