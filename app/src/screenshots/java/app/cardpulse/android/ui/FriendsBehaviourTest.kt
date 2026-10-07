@@ -296,9 +296,9 @@ class FriendsBehaviourTest {
         openSharing()
         compose.onNodeWithText("Who can see what").assertExists()
         for (section in listOf("Collection", "Wishlist", "For Trade")) {
-            compose.onNodeWithContentDescription("$section: Only me").assertIsSelected()
-            compose.onNodeWithContentDescription("$section: Friends").assertIsNotSelected()
-            compose.onNodeWithContentDescription("$section: Everyone").assertIsNotSelected()
+            compose.onNodeWithContentDescription("$section: Private").assertIsSelected()
+            compose.onNodeWithContentDescription("$section: Friends only").assertIsNotSelected()
+            compose.onNodeWithContentDescription("$section: Public").assertIsNotSelected()
         }
         compose.onAllNodesWithText("Nobody else can see it.").assertCountEquals(3)
     }
@@ -308,24 +308,24 @@ class FriendsBehaviourTest {
         fake.sharingAnswer = SharingDto(collection = "private", wishlist = "friends", trade = "private")
         show()
         openSharing()
-        compose.onNodeWithContentDescription("Wishlist: Friends").performClick()
+        compose.onNodeWithContentDescription("Wishlist: Friends only").performClick()
         assertEquals(listOf(SharingUpdateBody(wishlist = "friends")), fake.sharingBodies)
-        compose.onNodeWithContentDescription("Wishlist: Friends").assertIsSelected()
-        compose.onNodeWithContentDescription("Wishlist: Only me").assertIsNotSelected()
-        compose.onNodeWithContentDescription("Collection: Only me").assertIsSelected()
-        compose.onNodeWithContentDescription("For Trade: Only me").assertIsSelected()
+        compose.onNodeWithContentDescription("Wishlist: Friends only").assertIsSelected()
+        compose.onNodeWithContentDescription("Wishlist: Private").assertIsNotSelected()
+        compose.onNodeWithContentDescription("Collection: Private").assertIsSelected()
+        compose.onNodeWithContentDescription("For Trade: Private").assertIsSelected()
         compose.onNodeWithText("The friends you have accepted.").assertExists()
         compose.onAllNodesWithText("Nobody else can see it.").assertCountEquals(2)
     }
 
     @Test
-    fun everyoneMeansEveryoneWithAnAccountOnThisServer() {
+    fun publicMeansEveryoneWithAnAccountOnThisServerAndNotTheInternet() {
         fake.sharingAnswer = SharingDto(collection = "public", wishlist = "private", trade = "private")
         show()
         openSharing()
-        compose.onNodeWithContentDescription("Collection: Everyone").performClick()
+        compose.onNodeWithContentDescription("Collection: Public").performClick()
         assertEquals(listOf(SharingUpdateBody(collection = "public")), fake.sharingBodies)
-        compose.onNodeWithText("Everyone with an account on this server.").assertExists()
+        compose.onNodeWithText("Everyone with an account on this server, but not the internet.").assertExists()
     }
 
     @Test
@@ -333,9 +333,9 @@ class FriendsBehaviourTest {
         fake.errors["updateSharing"] = httpFailure(403, "Not allowed")
         show()
         openSharing()
-        compose.onNodeWithContentDescription("Collection: Everyone").performClick()
-        compose.onNodeWithContentDescription("Collection: Only me").assertIsSelected()
-        compose.onNodeWithContentDescription("Collection: Everyone").assertIsNotSelected()
+        compose.onNodeWithContentDescription("Collection: Public").performClick()
+        compose.onNodeWithContentDescription("Collection: Private").assertIsSelected()
+        compose.onNodeWithContentDescription("Collection: Public").assertIsNotSelected()
         compose.onNodeWithText("Couldn't save that. Not allowed").assertExists()
     }
 
@@ -344,9 +344,9 @@ class FriendsBehaviourTest {
         fake.me = fake.me.copy(sharing = SharingDto(collection = "friends", wishlist = "public", trade = "friends"))
         show()
         openSharing()
-        compose.onNodeWithContentDescription("Collection: Friends").assertIsSelected()
-        compose.onNodeWithContentDescription("Wishlist: Everyone").assertIsSelected()
-        compose.onNodeWithContentDescription("For Trade: Friends").assertIsSelected()
+        compose.onNodeWithContentDescription("Collection: Friends only").assertIsSelected()
+        compose.onNodeWithContentDescription("Wishlist: Public").assertIsSelected()
+        compose.onNodeWithContentDescription("For Trade: Friends only").assertIsSelected()
     }
 
     // --- the invite code --------------------------------------------------------------------------------

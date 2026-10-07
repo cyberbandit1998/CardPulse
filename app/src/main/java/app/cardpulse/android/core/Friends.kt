@@ -12,9 +12,9 @@ import retrofit2.HttpException
 
 /** Who can see one of the user's lists. A user who has not chosen shares nothing, and so does a level the app does not know. */
 enum class ShareLevel(val key: String, val label: String, val summary: String) {
-    PRIVATE("private", "Only me", "Nobody else can see it."),
-    FRIENDS("friends", "Friends", "The friends you have accepted."),
-    PUBLIC("public", "Everyone", "Everyone with an account on this server.");
+    PRIVATE("private", "Private", "Nobody else can see it."),
+    FRIENDS("friends", "Friends only", "The friends you have accepted."),
+    PUBLIC("public", "Public", "Everyone with an account on this server, but not the internet.");
 
     companion object {
         /** The level saved under [key]; private for anything else, so that a value this app does not know never shows as shared. */

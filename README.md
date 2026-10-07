@@ -71,8 +71,8 @@ The app warns you if it connects to a server in single-user mode.
 - **Friends & trading:** a "Friends & trading" row on Home opens the Friends screen. Add people who have an account on
   your server by **username or invite code**; they accept or decline (a request shares nothing by itself, and an invite
   code never skips the acceptance). **Everything starts private.** Under Sharing you choose, for your **collection**,
-  your **wishlist** and your **For Trade** cards one at a time, whether it is *Only me*, *Friends* or *Everyone* (everyone
-  with an account on your server). Cards are **For Trade** only when you say so: open a card in your Collection and offer
+  your **wishlist** and your **For Trade** cards one at a time, whether it is *Private* (where everything starts), *Friends only* or *Public* (everyone
+  with an account on your server, but not the internet). Cards are **For Trade** only when you say so: open a card in your Collection and offer
   its copies one at a time ("2 of 4 for trade"), never more than you hold, and never automatically, not even duplicates.
   A friend's page opens on the **Trade match**: the cards they have for trade that are on your wishlist, and the cards you
   have for trade that are on theirs; then their For Trade list, wishlist and collection, as far as they share them.

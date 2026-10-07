@@ -16,8 +16,8 @@ PokéCollector has no friends, sharing settings or trade lists of its own. This 
 ## What the update does
 
 - **Everything starts private.** Nobody sees anyone else's cards until its owner says so, for each list on its own:
-  **collection**, **wishlist** and **For Trade** cards, each *Only me*, *Friends* or *Everyone*.
-  *Everyone* means everyone with an account **on your server**, not the internet.
+  **collection**, **wishlist** and **For Trade** cards, each *Private*, *Friends only* or *Public*.
+  *Public* means everyone with an account **on your server**, not the internet.
 - **Friends are made by consent.** Someone asks (by username or by invite code) and the other person accepts or
   declines. An invite code is only another way to find a person: it never skips the acceptance.
 - **For Trade is deliberate.** A card is only on the list if its owner marks it, and for a card held several times they
@@ -56,8 +56,9 @@ changed otherwise, and there are no new screens on the website.
 
 ## Install it
 
-Run these where your PokéCollector `docker-compose.yml` and `.env` are. **Do not move or recreate that folder**:
-Docker Compose names your database volume after it, and a different folder would start an empty database.
+Steps 1, 3 and 4 run in the folder where your PokéCollector `docker-compose.yml` and `.env` are; step 2 runs next to it.
+**Do not move or recreate that folder**: Docker Compose names your database volume after it, and a different folder
+would start an empty database.
 
 **1. Back up first.** Always, before changing a server:
 
@@ -84,11 +85,13 @@ git apply /path/to/0001-friends-sharing-and-for-trade-lists.patch
 `docker-compose.yml`, and change the `context:` line in it if `pokecollector-src` is not next to your PokéCollector
 folder.
 
-**4. Build and start the backend.** Only the backend container is replaced; the database, your data and the website
-container are not touched:
+**4. Build and start the backend.** Only the backend container is replaced; the database and your data are not touched.
+The second command makes the website's web server look the backend up again (it remembers where the old one was, and
+shows *502 Bad Gateway* until it is restarted):
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.friends.yml up -d --build backend
+docker compose -f docker-compose.yml -f docker-compose.friends.yml restart frontend
 ```
 
 **5. Check it.** In CardPulse open **Home → Friends & trading** and press **Check again** if it is already open. The
@@ -98,9 +101,10 @@ screen now shows *Friends*, *Requests* and *Sharing*. Or, from the server:
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/api/friends/me
 ```
 
-`401` means the update is installed (the route exists and wants you to sign in). `404` means it is not.
+(`8000` is the backend's port unless you set `BACKEND_PORT`.) `401` means the update is installed: the route exists and
+wants you to sign in. `404` means it is not.
 
-**6. Choose what you share.** Everything starts as *Only me*. Open **Friends → Sharing** and set the collection, wishlist
+**6. Choose what you share.** Everything starts as *Private*. Open **Friends → Sharing** and set the collection, wishlist
 and For Trade list one at a time. Then add a friend by username or invite code.
 
 ### Starting each time
@@ -112,17 +116,19 @@ not have the update:
 docker compose -f docker-compose.yml -f docker-compose.friends.yml up -d
 ```
 
-(`restart: unless-stopped` brings the container back after a reboot by itself.)
+(`restart: unless-stopped` brings the containers back after a reboot by itself, with the update.)
 
 ### Going back
 
+Start the stack without the second file, which brings back the published image:
+
 ```bash
 docker compose up -d
+docker compose restart frontend
 ```
 
-without the second file starts the published image again. The three tables stay in the database, unused and harmless.
-Friends then shows *"Needs an update on your server"* in the app. To remove the tables too:
-`DROP TABLE friend_settings, friend_links, trade_list;`
+The three tables stay in the database, unused and harmless, and Friends shows *"Needs an update on your server"* in the
+app again. To remove the tables too: `DROP TABLE friend_settings, friend_links, trade_list;`
 
 ### Updating PokéCollector later
 
