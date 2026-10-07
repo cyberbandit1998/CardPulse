@@ -39,7 +39,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -190,12 +189,12 @@ fun FriendsScreen(
                         Tab(
                             selected = tab == kind,
                             onClick = { tab = kind },
+                            // The accent colour for the open tab and the muted one for the others, as the theme does for its other
+                            // text: left alone, every tab would be drawn in the same brand red.
+                            selectedContentColor = MaterialTheme.colorScheme.secondary,
+                            unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                             text = {
-                                Text(
-                                    if (kind == FriendsTabKind.REQUESTS && friends.incoming.isNotEmpty()) "Requests (${friends.incoming.size})" else kind.label,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                                Text(if (kind == FriendsTabKind.REQUESTS && friends.incoming.isNotEmpty()) "Requests (${friends.incoming.size})" else kind.label)
                             },
                         )
                     }
@@ -447,9 +446,9 @@ private fun OutgoingRow(request: FriendRequestDto, busy: Boolean, onCancel: () -
             Monogram(name)
             Column(Modifier.weight(1f)) {
                 Text(name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Waiting for an answer", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Request sent", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            TextButton(onClick = onCancel, enabled = !busy, modifier = Modifier.semantics { contentDescription = "Cancel the request to $name" }) { Text("Cancel") }
+            AccentTextButton(onClick = onCancel, enabled = !busy, modifier = Modifier.semantics { contentDescription = "Cancel the request to $name" }) { Text("Cancel") }
         }
     }
 }
@@ -592,7 +591,7 @@ private fun InviteCodeCard(friends: FriendsState, session: FriendsSession, onCop
                         },
                         enabled = !friends.codeBusy,
                     ) { Text("Make a new code") }
-                    TextButton(onClick = { confirmNew = false }) { Text("Keep this one") }
+                    AccentTextButton(onClick = { confirmNew = false }) { Text("Keep this one") }
                 }
             }
             friends.codeError?.let { problem -> Text("Couldn't make a new code. $problem", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }

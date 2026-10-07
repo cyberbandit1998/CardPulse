@@ -20,10 +20,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -265,12 +268,18 @@ class FriendsScreenshotTest {
         capture("1j-sharing-new-code")
     }
 
+    /** The row that opens the list is below the three sharing choices, so on a phone-sized window the list scrolls to it first. */
+    private fun openYourForTradeList() {
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Your For Trade list"))
+        compose.onNodeWithText("Your For Trade list").performClick()
+    }
+
     @Test
     fun yourForTradeList() {
         sharedWithFriends()
         drawFriends()
         compose.onNodeWithText("Sharing").performClick()
-        compose.onNodeWithText("Your For Trade list").performClick()
+        openYourForTradeList()
         capture("1j-my-trade")
     }
 
@@ -279,7 +288,7 @@ class FriendsScreenshotTest {
         sharedWithFriends()
         drawFriends(dark = false)
         compose.onNodeWithText("Sharing").performClick()
-        compose.onNodeWithText("Your For Trade list").performClick()
+        openYourForTradeList()
         capture("1j-my-trade-light")
     }
 

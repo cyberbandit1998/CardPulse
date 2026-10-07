@@ -88,6 +88,8 @@ class FriendPageBehaviourTest {
     private fun open(name: String, listed: Set<String> = setOf("sv3-223_en", "sv2-001_en")) {
         show(listed)
         compose.onNodeWithText(name).performClick()
+        // The page asks the session for the friend's lists as it appears: let that finish before looking at the session.
+        compose.waitForIdle()
     }
 
     private fun openTab(label: String) = compose.onNodeWithText(label).performClick()

@@ -227,9 +227,9 @@ class FriendsBehaviourTest {
         compose.onNodeWithText("Wants to be your friend").assertExists()
         compose.onNodeWithContentDescription("Accept dawn").assertExists()
         compose.onNodeWithContentDescription("Decline dawn").assertExists()
-        // The title and the one request made by the user both say they are waiting for an answer.
-        compose.onAllNodesWithText("Waiting for an answer").assertCountEquals(2)
+        compose.onNodeWithText("Waiting for an answer").assertExists()
         compose.onNodeWithText("may").assertExists()
+        compose.onNodeWithText("Request sent").assertExists()
         compose.onNodeWithContentDescription("Cancel the request to may").assertExists()
     }
 
