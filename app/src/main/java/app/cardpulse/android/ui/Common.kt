@@ -22,6 +22,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
@@ -54,6 +56,9 @@ fun RemoteImage(
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
     placeholderColor: Color = MaterialTheme.colorScheme.surfaceVariant,
+    /** Less than 1 fades the picture, and a [colorFilter] such as [GreyscaleFilter] drains its colour. */
+    alpha: Float = 1f,
+    colorFilter: ColorFilter? = null,
 ) {
     val placeholder = ColorPainter(placeholderColor)
     if (url.isNullOrBlank()) {
@@ -66,9 +71,14 @@ fun RemoteImage(
             contentScale = contentScale,
             placeholder = placeholder,
             error = placeholder,
+            alpha = alpha,
+            colorFilter = colorFilter,
         )
     }
 }
+
+/** Takes the colour out of a picture: how a card that is not owned yet is drawn. */
+val GreyscaleFilter: ColorFilter = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
 
 /** Where to load a collection item's picture from: official artwork, or the owner's own photo. */
 fun artUrl(

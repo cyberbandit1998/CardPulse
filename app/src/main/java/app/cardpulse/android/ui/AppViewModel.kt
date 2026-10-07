@@ -13,6 +13,8 @@ import app.cardpulse.android.core.NotPokeCollectorException
 import app.cardpulse.android.core.PortfolioRange
 import app.cardpulse.android.core.PriceLookup
 import app.cardpulse.android.core.ServerUrl
+import app.cardpulse.android.core.SetChecklistDto
+import app.cardpulse.android.core.SetDto
 import app.cardpulse.android.core.ThemeMode
 import app.cardpulse.android.core.UserDto
 import app.cardpulse.android.core.attempt
@@ -67,6 +69,17 @@ data class AppState(
     val offline: Boolean = false,
     /** Light, dark or the phone's setting. */
     val themeMode: ThemeMode = ThemeMode.DEFAULT,
+
+    /** Every set the server lists for the user's language: the catalogue the Sets tab browses. Loaded when that tab opens. */
+    val sets: List<SetDto> = emptyList(),
+    val setsLoaded: Boolean = false,
+    val setsLoading: Boolean = false,
+    /** Why the list of sets could not be loaded. Shown on the Sets tab itself, not as a banner on every tab. */
+    val setsError: String? = null,
+    /** The checklists opened so far, by set id. The cards of a set hardly ever change, so they are kept. */
+    val checklists: Map<String, SetChecklistDto> = emptyMap(),
+    val checklistsLoading: Set<String> = emptySet(),
+    val checklistErrors: Map<String, String> = emptyMap(),
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -84,6 +97,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var dashboardRefresh: Job? = null
     private var priceLookup: Job? = null
     private var pricesNotAllowed = false
+    /** When the list of sets was last loaded, so opening the Sets tab again soon after does not ask the server again. */
+    private var setsLoadedAt = 0L
 
     init {
         viewModelScope.launch { restoreSession() }
@@ -361,6 +376,58 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // --- sets ---------------------------------------------------------------------------------
+
+    /**
+     * Loads the list of every set the server has, unless a recent load already has it; [force] loads it again. A failure
+     * is kept for the Sets tab to show (with a way to try again), not sent to the banner every tab shares.
+     */
+    fun loadSets(force: Boolean = false) {
+        val current = _state.value
+        if (current.setsLoading) return
+        val fresh = current.setsLoaded && System.currentTimeMillis() - setsLoadedAt < SETS_MAX_AGE_MS
+        if (fresh && !force) return
+        viewModelScope.launch {
+            _state.update { it.copy(setsLoading = true, setsError = null) }
+            attempt { repo.sets() }
+                .onSuccess { sets ->
+                    setsLoadedAt = System.currentTimeMillis()
+                    _state.update { it.copy(sets = sets, setsLoaded = true, setsLoading = false, offline = false) }
+                }
+                .onFailure { error ->
+                    _state.update { it.copy(setsLoading = false, setsError = error.userMessage(), offline = error.isNoConnection()) }
+                }
+        }
+    }
+
+    /** Loads the cards of one set, unless they are already here; [force] loads them again (the way to try again after a failure). */
+    fun loadChecklist(setId: String, force: Boolean = false) {
+        val current = _state.value
+        if (setId in current.checklistsLoading) return
+        if (!force && setId in current.checklists) return
+        viewModelScope.launch {
+            _state.update { it.copy(checklistsLoading = it.checklistsLoading + setId, checklistErrors = it.checklistErrors - setId) }
+            attempt { repo.loadChecklist(setId) }
+                .onSuccess { checklist ->
+                    _state.update {
+                        // Newest last, and only the latest few kept: a big set holds hundreds of cards.
+                        val kept = (it.checklists - setId) + (setId to checklist)
+                        val trimmed = kept.entries.toList().takeLast(MAX_CHECKLISTS_KEPT).associate { entry -> entry.key to entry.value }
+                        it.copy(checklists = trimmed, checklistsLoading = it.checklistsLoading - setId, offline = false)
+                    }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(
+                            checklistsLoading = it.checklistsLoading - setId,
+                            checklistErrors = it.checklistErrors + (setId to error.userMessage()),
+                            offline = error.isNoConnection(),
+                        )
+                    }
+                }
+        }
+    }
+
     // --- portfolio history --------------------------------------------------------------------
 
     /** Loads the chart for [range]; reuses a recent fetch unless [force] is set. */
@@ -392,6 +459,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val HISTORY_MAX_AGE_MS = 10 * 60 * 1000L
+        /** How long the list of sets is reused. New sets appear on the server rarely, and a refresh is one tap away. */
+        const val SETS_MAX_AGE_MS = 30 * 60 * 1000L
+        const val MAX_CHECKLISTS_KEPT = 12
         const val DASHBOARD_REFRESH_DELAY_MS = 1500L
         /** How long things must stay quiet after a card is added before prices are looked up. */
         const val PRICE_LOOKUP_DELAY_MS = 4000L

@@ -24,6 +24,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.cardpulse.android.core.toReview
@@ -35,6 +36,7 @@ import app.cardpulse.android.ui.screens.MostValuableScreen
 import app.cardpulse.android.ui.screens.PasswordScreen
 import app.cardpulse.android.ui.screens.PortfolioScreen
 import app.cardpulse.android.ui.screens.ScanScreen
+import app.cardpulse.android.ui.screens.SetChecklistScreen
 import app.cardpulse.android.ui.screens.SettingsScreen
 import app.cardpulse.android.ui.screens.SetsScreen
 import app.cardpulse.android.ui.theme.LocalDarkTheme
@@ -53,13 +55,16 @@ fun CardPulseApp(
     var showManualAdd by rememberSaveable { mutableStateOf(false) }
     /** The full list that "See all" under Most valuable opens. */
     var showMostValuable by rememberSaveable { mutableStateOf(false) }
-    /** What the Collection tab's search box starts with: a set's name, when the user came from that set's progress. */
+    /** What the Collection tab's search box starts with: a set's name, when the user came from a set's checklist. */
     var collectionSearch by rememberSaveable { mutableStateOf("") }
+    /** The id of the set whose checklist is open, if one is: it covers the tabs, and Back closes it. */
+    var openSet by rememberSaveable { mutableStateOf<String?>(null) }
     // Signing out (or the session ending) must not leave this screen waiting behind the next sign-in.
     LaunchedEffect(app.signedIn) {
         if (!app.signedIn) {
             showManualAdd = false
             showMostValuable = false
+            openSet = null
         }
     }
     // Scans the server still holds from before are looked up once the user is in, so the round camera button can say how
@@ -137,65 +142,87 @@ fun CardPulseApp(
             }
         }
 
-        else -> {
-            Scaffold(
-                bottomBar = {
-                    // The camera and the review screen use the whole screen.
-                    if (!cameraOpen) {
-                        CardPulseBottomBar(
-                            selected = MainTab.entries[tab],
-                            onSelect = { chosen ->
-                                collectionSearch = ""
-                                tab = chosen.ordinal
-                            },
-                            // The round button is the way to the camera, from any tab.
-                            onScanNow = { scanVm.startRapid() },
-                            waiting = session.toReview.size,
-                        )
+        else -> Box(Modifier.fillMaxSize()) {
+            // The tabs stay under an open checklist, so the Sets tab is as it was (search, order, place in the list) when the
+            // checklist is closed. Screen readers are kept off them while the checklist covers them.
+            Box(Modifier.fillMaxSize().then(if (openSet != null) Modifier.clearAndSetSemantics { } else Modifier)) {
+                Scaffold(
+                    bottomBar = {
+                        // The camera and the review screen use the whole screen.
+                        if (!cameraOpen) {
+                            CardPulseBottomBar(
+                                selected = MainTab.entries[tab],
+                                onSelect = { chosen ->
+                                    collectionSearch = ""
+                                    tab = chosen.ordinal
+                                },
+                                // The round button is the way to the camera, from any tab.
+                                onScanNow = { scanVm.startRapid() },
+                                waiting = session.toReview.size,
+                            )
+                        }
+                    },
+                ) { padding ->
+                    Column(Modifier.fillMaxSize().then(if (cameraOpen) Modifier else Modifier.padding(padding))) {
+                        // Errors from background loads show above whichever tab is open (the camera shows its own).
+                        if (!cameraOpen) {
+                            app.message?.let { Banner(it, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), isError = true, onDismiss = appVm::dismissMessage) }
+                        }
+                        if (!cameraOpen && app.lookingUpPrices) PricesNote()
+                        val contentModifier = Modifier.weight(1f)
+                        if (cameraOpen) {
+                            ScanScreen(app, scanVm, onAddManually = openManualAdd, modifier = contentModifier)
+                        } else when (MainTab.entries[tab]) {
+                            MainTab.HOME -> HomeScreen(
+                                state = app,
+                                onRefresh = appVm::refreshAll,
+                                onOpenSettings = { showSettings = true },
+                                modifier = contentModifier,
+                                onOpenPortfolio = { tab = MainTab.PORTFOLIO.ordinal },
+                                onOpenCollection = { openCollection("") },
+                                onSeeAllValuable = { showMostValuable = true },
+                                onOpenSets = { tab = MainTab.SETS.ordinal },
+                                onOpenSet = { id -> openSet = id },
+                                onRemove = appVm::removeFromCollection,
+                            )
+                            MainTab.SETS -> SetsScreen(
+                                state = app,
+                                onOpenSet = { id -> openSet = id },
+                                modifier = contentModifier,
+                                onLoadSets = appVm::loadSets,
+                            )
+                            MainTab.COLLECTION -> CollectionScreen(
+                                app,
+                                onRefresh = appVm::refreshCollection,
+                                onRemove = appVm::removeFromCollection,
+                                onAddCard = openManualAdd,
+                                modifier = contentModifier,
+                                initialQuery = collectionSearch,
+                            )
+                            MainTab.PORTFOLIO -> PortfolioScreen(
+                                state = app,
+                                onShowHistory = { range, force -> appVm.showHistory(range, force) },
+                                modifier = contentModifier,
+                            )
+                        }
                     }
-                },
-            ) { padding ->
-                Column(Modifier.fillMaxSize().then(if (cameraOpen) Modifier else Modifier.padding(padding))) {
-                    // Errors from background loads show above whichever tab is open (the camera shows its own).
-                    if (!cameraOpen) {
-                        app.message?.let { Banner(it, Modifier.padding(horizontal = 12.dp, vertical = 6.dp), isError = true, onDismiss = appVm::dismissMessage) }
-                    }
-                    if (!cameraOpen && app.lookingUpPrices) PricesNote()
-                    val contentModifier = Modifier.weight(1f)
-                    if (cameraOpen) {
-                        ScanScreen(app, scanVm, onAddManually = openManualAdd, modifier = contentModifier)
-                    } else when (MainTab.entries[tab]) {
-                        MainTab.HOME -> HomeScreen(
-                            state = app,
-                            onRefresh = appVm::refreshAll,
-                            onOpenSettings = { showSettings = true },
-                            modifier = contentModifier,
-                            onOpenPortfolio = { tab = MainTab.PORTFOLIO.ordinal },
-                            onOpenCollection = { openCollection("") },
-                            onSeeAllValuable = { showMostValuable = true },
-                            onOpenSets = { tab = MainTab.SETS.ordinal },
-                            onOpenSet = { name -> openCollection(name) },
-                            onRemove = appVm::removeFromCollection,
-                        )
-                        MainTab.SETS -> SetsScreen(
-                            state = app,
-                            onOpenSet = { name -> openCollection(name) },
-                            modifier = contentModifier,
-                        )
-                        MainTab.COLLECTION -> CollectionScreen(
-                            app,
-                            onRefresh = appVm::refreshCollection,
-                            onRemove = appVm::removeFromCollection,
-                            onAddCard = openManualAdd,
-                            modifier = contentModifier,
-                            initialQuery = collectionSearch,
-                        )
-                        MainTab.PORTFOLIO -> PortfolioScreen(
-                            state = app,
-                            onShowHistory = { range, force -> appVm.showHistory(range, force) },
-                            modifier = contentModifier,
-                        )
-                    }
+                }
+            }
+            openSet?.let { setId ->
+                BackHandler { openSet = null }
+                Scaffold { padding ->
+                    SetChecklistScreen(
+                        setId = setId,
+                        state = app,
+                        onBack = { openSet = null },
+                        onLoad = { force -> appVm.loadChecklist(setId, force) },
+                        onRemove = appVm::removeFromCollection,
+                        modifier = Modifier.padding(padding),
+                        onShowInCollection = { name ->
+                            openSet = null
+                            openCollection(name)
+                        },
+                    )
                 }
             }
         }

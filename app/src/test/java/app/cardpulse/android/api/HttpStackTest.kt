@@ -194,6 +194,58 @@ class HttpStackTest {
         assertEquals("/api/collection/", next().path)
     }
 
+    // --- sets ----------------------------------------------------------------------------------
+
+    @Test
+    fun `every set is one get, and each carries how many of its cards are owned`() = runBlocking {
+        server.enqueue(fixture("sets"))
+        val sets = repo.sets()
+        val request = next()
+        assertEquals("GET", request.method)
+        assertEquals("/api/sets/", request.path)
+        assertEquals(7, sets.size)
+        assertEquals(2, sets.first { it.id == "sv3_en" }.ownedCount)
+        assertEquals(0, sets.first { it.id == "sv2_en" }.ownedCount)
+    }
+
+    @Test
+    fun `a set's checklist is asked for by the set's own id`() = runBlocking {
+        server.enqueue(fixture("set_checklist"))
+        val checklist = repo.loadChecklist("sv3_en")
+        val request = next()
+        assertEquals("GET", request.method)
+        assertEquals("/api/sets/sv3_en/checklist", request.path)
+        assertEquals("Obsidian Flames", checklist.set.name)
+        assertEquals(6, checklist.cards.size)
+        assertEquals(2, checklist.cards.count { it.owned })
+    }
+
+    @Test
+    fun `a set in a language with a hyphen in its code keeps the id intact on the wire`() = runBlocking {
+        server.enqueue(fixture("set_checklist"))
+        repo.loadChecklist("sv1_zh-tw")
+        assertEquals("/api/sets/sv1_zh-tw/checklist", next().path)
+    }
+
+    @Test
+    fun `a set the server does not have shows the server's words`() = runBlocking {
+        server.enqueue(fixture("set_not_found", code = 404))
+        val error = runCatching { repo.loadChecklist("nope_en") }.exceptionOrNull()
+        assertTrue(error is HttpException)
+        assertEquals("Set not found", error!!.userMessage())
+    }
+
+    @Test
+    fun `the checklist and the list of sets carry the sign-in like every other call`() = runBlocking {
+        session.token = "fixture-token-not-a-real-credential"
+        server.enqueue(fixture("sets"))
+        server.enqueue(fixture("set_checklist"))
+        repo.sets()
+        repo.loadChecklist("sv3_en")
+        assertEquals("Bearer fixture-token-not-a-real-credential", next().getHeader("Authorization"))
+        assertEquals("Bearer fixture-token-not-a-real-credential", next().getHeader("Authorization"))
+    }
+
     @Test
     fun `removing a card deletes its collection row`() = runBlocking {
         server.enqueue(json("""{"message": "Removed from collection"}"""))

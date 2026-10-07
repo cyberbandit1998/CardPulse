@@ -516,14 +516,20 @@ internal fun SetProgressRow(
     ) {
         SetLogo(ServerUrls.setLogo(serverUrl, set.id), set.name, Modifier.width(52.dp).height(34.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Text(set.name, style = MaterialTheme.typography.titleMedium, maxLines = nameLines, overflow = TextOverflow.Ellipsis)
+            Text(
+                set.name,
+                // A name that may take several lines is set a little smaller, so that even a long German one fits on one.
+                style = if (nameLines > 1) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
+                maxLines = nameLines,
+                overflow = TextOverflow.Ellipsis,
+            )
             SlimProgress(set.fraction, color = if (set.isComplete) MaterialTheme.extras.positive else MaterialTheme.colorScheme.secondary)
         }
         // A fixed width, so the bars of different rows end in the same place.
         Text(
             buildAnnotatedString {
                 withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)) { append("${set.owned}") }
-                withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) { append(" / ${set.total}") }
+                withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) { append(" / ${set.totalText}") }
             },
             modifier = Modifier.widthIn(min = 64.dp),
             style = MaterialTheme.typography.titleSmall,
@@ -536,7 +542,7 @@ internal fun SetProgressRow(
 
 /** A set's logo from the server, or, while there is none to show (it loads, or the set has no logo), its initials. */
 @Composable
-private fun SetLogo(url: String, name: String, modifier: Modifier = Modifier) {
+internal fun SetLogo(url: String, name: String, modifier: Modifier = Modifier) {
     SubcomposeAsyncImage(
         model = url,
         contentDescription = null,

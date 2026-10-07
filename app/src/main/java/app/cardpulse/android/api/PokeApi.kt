@@ -19,6 +19,7 @@ import app.cardpulse.android.core.ResolveRequest
 import app.cardpulse.android.core.ScanItemDto
 import app.cardpulse.android.core.ScanJobDto
 import app.cardpulse.android.core.ScanJobListDto
+import app.cardpulse.android.core.SetChecklistDto
 import app.cardpulse.android.core.SetDto
 import app.cardpulse.android.core.SnapshotDto
 import app.cardpulse.android.core.SyncStatusDto
@@ -116,9 +117,20 @@ interface PokeApi {
         @Query("page_size") pageSize: Int,
     ): CardSearchDto
 
-    /** Every set the server lists for this user's language, newest first. */
+    /**
+     * Every set the server lists for this user's language, newest first, each with how many different cards of it the
+     * user owns (`owned_count`, 0 for a set with none).
+     */
     @GET("api/sets/")
     suspend fun sets(): List<SetDto>
+
+    /**
+     * Every card the server has for one set, in card-number order, with whether the user owns each. [setId] is the
+     * server's own id for the set, such as "sv3_en". The first look at a set the server has no cards for yet can take a
+     * moment, as it fetches them.
+     */
+    @GET("api/sets/{id}/checklist")
+    suspend fun setChecklist(@Path("id") setId: String): SetChecklistDto
 
     /** Makes a card that isn't in the catalogue. It belongs to this user and gets an id starting "custom-". */
     @POST("api/cards/custom")

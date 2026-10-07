@@ -43,6 +43,9 @@ import app.cardpulse.android.ui.BottomBarOverhang
 import app.cardpulse.android.ui.formatDate
 import app.cardpulse.android.ui.gainColor
 
+/** How tall the history chart is: short enough that the breakdown below it is mostly on the screen. */
+private val CHART_HEIGHT = 128.dp
+
 @Composable
 fun PortfolioScreen(
     state: AppState,
@@ -97,7 +100,7 @@ fun PortfolioScreen(
                 }
                 if (state.historyLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (state.history.size < 2) {
-                    Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.fillMaxWidth().height(CHART_HEIGHT), contentAlignment = Alignment.Center) {
                         Text(
                             if (state.historyLoading) "Loading…" else "Not enough history yet. PokéCollector records a point each time prices update.",
                             style = MaterialTheme.typography.bodyMedium,
@@ -105,7 +108,7 @@ fun PortfolioScreen(
                         )
                     }
                 } else {
-                    PortfolioChart(state.history, Modifier.fillMaxWidth().height(180.dp))
+                    PortfolioChart(state.history, Modifier.fillMaxWidth().height(CHART_HEIGHT))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(formatDate(state.history.first().time), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(

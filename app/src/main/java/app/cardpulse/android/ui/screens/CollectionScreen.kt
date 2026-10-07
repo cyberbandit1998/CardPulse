@@ -4,13 +4,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -18,10 +20,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -39,11 +45,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.cardpulse.android.core.ArtSource
+import app.cardpulse.android.core.CollectionFilter
 import app.cardpulse.android.core.CollectionItemDto
 import app.cardpulse.android.core.MoneyFormatter
 import app.cardpulse.android.core.defaultArtSource
+import app.cardpulse.android.core.filterOptions
 import app.cardpulse.android.core.hasCatalogueImage
 import app.cardpulse.android.core.parseServerInstant
+import app.cardpulse.android.core.passing
 import app.cardpulse.android.core.takesItsPhotoWhenRemoved
 import app.cardpulse.android.ui.AccentTextButton
 import app.cardpulse.android.ui.AppState
@@ -67,6 +76,7 @@ private fun CollectionItemDto.matches(query: String): Boolean {
     return query.trim().split(' ').filter { it.isNotEmpty() }.all { word -> haystack.any { it.contains(word, ignoreCase = true) } }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CollectionScreen(
     state: AppState,
@@ -80,14 +90,20 @@ fun CollectionScreen(
 ) {
     var query by rememberSaveable(initialQuery) { mutableStateOf(initialQuery) }
     var sort by rememberSaveable { mutableStateOf(SortOrder.RECENT) }
+    var filter by rememberSaveable(stateSaver = CollectionFilterSaver) { mutableStateOf(CollectionFilter()) }
+    var showFilter by remember { mutableStateOf(false) }
     var openItem by remember { mutableStateOf<CollectionItemDto?>(null) }
 
-    val shown = remember(state.collection, query, sort) {
-        val filtered = state.collection.filter { it.matches(query) }
+    val priceField = state.prefs.priceField
+    val rate = state.prefs.rateFromEur
+    val money = remember(state.prefs.currency, rate) { MoneyFormatter(state.prefs.currency, rate) }
+    val options = remember(state.collection, priceField, rate) { state.collection.filterOptions(priceField, rate) }
+    val shown = remember(state.collection, query, sort, filter, priceField, rate) {
+        val narrowed = state.collection.passing(filter, priceField, rate).filter { it.matches(query) }
         when (sort) {
-            SortOrder.RECENT -> filtered // the server already returns newest first
-            SortOrder.NAME -> filtered.sortedBy { it.card?.name?.lowercase().orEmpty() }
-            SortOrder.SET -> filtered.sortedWith(compareBy({ it.setName().lowercase() }, { it.card?.number?.padStart(4, '0').orEmpty() }))
+            SortOrder.RECENT -> narrowed // the server already returns newest first
+            SortOrder.NAME -> narrowed.sortedBy { it.card?.name?.lowercase().orEmpty() }
+            SortOrder.SET -> narrowed.sortedWith(compareBy({ it.setName().lowercase() }, { it.card?.number?.padStart(4, '0').orEmpty() }))
         }
     }
     val totalCards = remember(state.collection) { state.collection.sumOf { it.quantity } }
@@ -101,22 +117,37 @@ fun CollectionScreen(
                 label = { Text("Search name, set, number, rarity…") },
                 singleLine = true,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            // Wraps on a narrow phone, so the Filter chip is never cut off.
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.Center) {
                 SortOrder.entries.forEach { option ->
                     FilterChip(selected = sort == option, onClick = { sort = option }, label = { Text(option.label) })
                 }
-                Spacer(Modifier.weight(1f))
-                AccentTextButton(onClick = onRefresh) { Text("Refresh") }
+                FilterChip(
+                    selected = filter.isActive,
+                    onClick = { showFilter = true },
+                    // With the count there is no room for the icon on a small phone; the selected look says it is on.
+                    label = { Text(if (filter.isActive) "Filter ${filter.activeCount}" else "Filter") },
+                    leadingIcon = if (filter.isActive) {
+                        null
+                    } else {
+                        { Icon(Icons.Default.FilterList, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
+                    },
+                )
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "${shown.size} entries · $totalCards cards",
+                    if (filter.isActive) {
+                        "${shown.size} of ${state.collection.size} entries · ${shown.sumOf { it.quantity }} cards"
+                    } else {
+                        "${shown.size} entries · $totalCards cards"
+                    },
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                AccentTextButton(onClick = onRefresh) { Text("Refresh") }
                 AccentTextButton(onClick = onAddCard) { Text("Add card") }
             }
             if (state.collectionLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -128,7 +159,11 @@ fun CollectionScreen(
         when {
             !state.collectionLoaded && state.collectionLoading -> Unit
             state.collection.isEmpty() -> EmptyNote("Your collection is empty. Scan a card, or type one in with Add card, to add the first one.")
-            shown.isEmpty() -> EmptyNote("Nothing matches “${query.trim()}”.")
+            shown.isEmpty() -> EmptyNote(
+                text = if (query.isBlank()) "Nothing matches this filter." else "Nothing matches “${query.trim()}”.",
+                action = if (filter.isActive) "Clear the filter" else null,
+                onAction = { filter = CollectionFilter() },
+            )
             else -> LazyVerticalGrid(
                 columns = GridCells.Adaptive(112.dp),
                 contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 12.dp + BottomBarOverhang),
@@ -142,13 +177,27 @@ fun CollectionScreen(
         }
     }
 
+    if (showFilter) {
+        CollectionFilterDialog(
+            options = options,
+            filter = filter,
+            shownCount = shown.size,
+            currency = money,
+            onChange = { filter = it },
+            onClose = { showFilter = false },
+        )
+    }
+
     openItem?.let { entry -> ItemDialog(entry, state, onRemove = onRemove, onClose = { openItem = null }) }
 }
 
 @Composable
-private fun EmptyNote(text: String) {
+private fun EmptyNote(text: String, action: String? = null, onAction: () -> Unit = {}) {
     Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.TopCenter) {
-        Text(text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(text, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (action != null) AccentTextButton(onClick = onAction) { Text(action) }
+        }
     }
 }
 

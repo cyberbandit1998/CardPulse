@@ -127,11 +127,11 @@ class HomeBehaviourTest {
     }
 
     @Test
-    fun aSetOpensItsCards() {
+    fun aSetOpensItsChecklist() {
         var opened: String? = null
         show(onOpenSet = { opened = it })
         compose.onNodeWithText("30th Celebration").performClick()
-        assertEquals("30th Celebration", opened)
+        assertEquals("cel_en", opened) // the set's id, which the checklist is asked for by
     }
 
     @Test
