@@ -1,0 +1,59 @@
+{
+  "friends": [
+    {
+      "id": 3,
+      "username": "brock",
+      "avatar_id": 95,
+      "since": "2026-10-05T12:00:00",
+      "shares": {
+        "collection": false,
+        "wishlist": false,
+        "trade": true
+      }
+    },
+    {
+      "id": 4,
+      "username": "gary",
+      "avatar_id": 0,
+      "since": "2026-10-05T12:00:00",
+      "shares": {
+        "collection": false,
+        "wishlist": false,
+        "trade": false
+      }
+    },
+    {
+      "id": 2,
+      "username": "misty",
+      "avatar_id": 121,
+      "since": "2026-10-05T12:00:00",
+      "shares": {
+        "collection": true,
+        "wishlist": true,
+        "trade": true
+      }
+    }
+  ],
+  "incoming": [
+    {
+      "id": 4,
+      "user": {
+        "id": 5,
+        "username": "dawn",
+        "avatar_id": 393
+      },
+      "created_at": "2026-10-04T12:00:00"
+    }
+  ],
+  "outgoing": [
+    {
+      "id": 5,
+      "user": {
+        "id": 6,
+        "username": "may",
+        "avatar_id": 252
+      },
+      "created_at": "2026-10-04T12:00:00"
+    }
+  ]
+}

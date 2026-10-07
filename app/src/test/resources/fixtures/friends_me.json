@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "user": {
+    "id": 1,
+    "username": "ash",
+    "avatar_id": 25
+  },
+  "invite_code": "K7MQ9-XWD3H",
+  "sharing": {
+    "collection": "private",
+    "wishlist": "private",
+    "trade": "private"
+  },
+  "counts": {
+    "friends": 3,
+    "incoming": 1,
+    "outgoing": 1,
+    "for_trade_cards": 3
+  }
+}

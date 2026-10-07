@@ -12,10 +12,18 @@ import app.cardpulse.android.core.CustomCardRequest
 import app.cardpulse.android.core.DashboardDto
 import app.cardpulse.android.core.DisplayPrefs
 import app.cardpulse.android.core.ForcePasswordRequest
+import app.cardpulse.android.core.FriendDto
+import app.cardpulse.android.core.FriendRequestBody
+import app.cardpulse.android.core.FriendRequestResultDto
+import app.cardpulse.android.core.FriendRows
+import app.cardpulse.android.core.FriendsBackend
+import app.cardpulse.android.core.FriendsMeDto
+import app.cardpulse.android.core.FriendsOverviewDto
 import app.cardpulse.android.core.LoginResponseDto
 import app.cardpulse.android.core.ManualAddBackend
 import app.cardpulse.android.core.MoverDto
 import app.cardpulse.android.core.NotPokeCollectorException
+import app.cardpulse.android.core.OwnTradeListDto
 import app.cardpulse.android.core.PortfolioRange
 import app.cardpulse.android.core.PriceBackend
 import app.cardpulse.android.core.ResolveAndAddRequest
@@ -26,15 +34,23 @@ import app.cardpulse.android.core.ScanItemDto
 import app.cardpulse.android.core.ScanJobDto
 import app.cardpulse.android.core.SetChecklistDto
 import app.cardpulse.android.core.SetDto
+import app.cardpulse.android.core.SharingDto
+import app.cardpulse.android.core.SharingUpdateBody
 import app.cardpulse.android.core.SnapshotDto
 import app.cardpulse.android.core.SyncStatusDto
+import app.cardpulse.android.core.TradeEntryDto
+import app.cardpulse.android.core.TradeItemDto
+import app.cardpulse.android.core.TradeMatchDto
+import app.cardpulse.android.core.TradeQuantityBody
 import app.cardpulse.android.core.WishlistAddRequest
 import app.cardpulse.android.core.WishlistItemDto
 import app.cardpulse.android.core.attempt
 import app.cardpulse.android.core.displayPrefsFrom
 import app.cardpulse.android.core.wishlistQuantityBody
 import app.cardpulse.android.core.wishlistTargetBody
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
@@ -61,7 +77,7 @@ class Repository(
     private val api: PokeApi,
     private val session: SessionHolder,
     private val json: Json = AppJson,
-) : ScanBackend, PriceBackend, ManualAddBackend {
+) : ScanBackend, PriceBackend, ManualAddBackend, FriendsBackend {
     // --- connection and sign-in ---------------------------------------------------------------
 
     /** Points the app at [serverUrl] and confirms it really is a PokéCollector server. */
@@ -169,6 +185,62 @@ class Repository(
 
     suspend fun removeFromWishlist(itemId: Int) {
         api.removeFromWishlist(itemId)
+    }
+
+    // --- friends and trading ----------------------------------------------------------------------
+
+    override suspend fun friendsMe(): FriendsMeDto = api.friendsMe()
+
+    override suspend fun friendsOverview(): FriendsOverviewDto = api.friendsOverview()
+
+    override suspend fun sendFriendRequest(body: FriendRequestBody): FriendRequestResultDto = api.sendFriendRequest(body)
+
+    override suspend fun acceptFriendRequest(requestId: Int): FriendDto = api.acceptFriendRequest(requestId)
+
+    override suspend fun declineFriendRequest(requestId: Int) {
+        api.declineFriendRequest(requestId)
+    }
+
+    override suspend fun cancelFriendRequest(requestId: Int) {
+        api.cancelFriendRequest(requestId)
+    }
+
+    override suspend fun removeFriend(friendId: Int) {
+        api.removeFriend(friendId)
+    }
+
+    override suspend fun updateSharing(update: SharingUpdateBody): SharingDto = api.updateSharing(update)
+
+    override suspend fun newInviteCode(): String = api.newInviteCode().inviteCode
+
+    override suspend fun ownTradeList(): OwnTradeListDto = api.ownTradeList()
+
+    override suspend fun setTradeQuantity(itemId: Int, quantity: Int): TradeEntryDto =
+        api.setTradeQuantity(itemId, TradeQuantityBody(quantity))
+
+    override suspend fun friendCollection(friendId: Int): FriendRows<CollectionItemDto> =
+        decodeRows(api.friendCollection(friendId), CollectionItemDto.serializer())
+
+    override suspend fun friendWishlist(friendId: Int): FriendRows<WishlistItemDto> =
+        decodeRows(api.friendWishlist(friendId), WishlistItemDto.serializer())
+
+    override suspend fun friendTradeList(friendId: Int): FriendRows<TradeItemDto> =
+        decodeRows(api.friendTradeList(friendId), TradeItemDto.serializer())
+
+    override suspend fun friendTradeMatch(friendId: Int): TradeMatchDto = api.friendTradeMatch(friendId)
+
+    /** The rows of a list the server sent as an array, one by one, so that a row this app cannot read is counted instead of failing the list. */
+    private fun <T> decodeRows(rows: JsonArray, serializer: KSerializer<T>): FriendRows<T> {
+        var unreadable = 0
+        val items = rows.mapNotNull { element ->
+            try {
+                json.decodeFromJsonElement(serializer, element)
+            } catch (_: IllegalArgumentException) {
+                unreadable++
+                null
+            }
+        }
+        return FriendRows(items, unreadable)
     }
 
     // --- cards typed in -------------------------------------------------------------------------

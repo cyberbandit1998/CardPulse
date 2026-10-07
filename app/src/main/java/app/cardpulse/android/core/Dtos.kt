@@ -181,6 +181,11 @@ data class CollectionItemDto(
     @SerialName("added_at") val addedAt: String? = null,
     /** True when the owner has a private photo of this card (shared by every copy of the card). */
     @SerialName("has_scan_photo") val hasScanPhoto: Boolean = false,
+    /**
+     * Only in someone else's shared collection, and only when they share their For Trade list with you: how many of the copies
+     * are For Trade. Null everywhere else: the signed-in user's own marks come from `GET /api/friends/trade-list`.
+     */
+    @SerialName("for_trade_quantity") val forTradeQuantity: Int? = null,
     val card: CardDto? = null,
 ) {
     val printingDetailNames: List<String>

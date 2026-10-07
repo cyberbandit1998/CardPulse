@@ -1,0 +1,17 @@
+{
+  "detail": [
+    {
+      "type": "literal_error",
+      "loc": [
+        "body",
+        "collection"
+      ],
+      "msg": "Input should be 'private', 'friends' or 'public'",
+      "input": "everyone",
+      "ctx": {
+        "expected": "'private', 'friends' or 'public'"
+      },
+      "url": "https://errors.pydantic.dev/2.13/v/literal_error"
+    }
+  ]
+}

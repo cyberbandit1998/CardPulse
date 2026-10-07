@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "collection_item_id": 3,
+      "quantity": 2,
+      "owned": 4
+    },
+    {
+      "collection_item_id": 4,
+      "quantity": 1,
+      "owned": 2
+    }
+  ]
+}
