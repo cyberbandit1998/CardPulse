@@ -60,18 +60,22 @@ fun WishlistHeart(cardId: String?, cardName: String, modifier: Modifier = Modifi
     if (!wishlist.ready || cardId.isNullOrBlank()) return
     val on = wishlist.shownOn(cardId)
     val name = cardName.ifBlank { "this card" }
-    IconButton(
-        onClick = { wishlist.toggle(cardId) },
-        modifier = modifier
-            .size(36.dp)
-            .then(if (onPicture) Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.88f), CircleShape) else Modifier),
-    ) {
-        Icon(
-            imageVector = if (on) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-            contentDescription = if (on) "Remove $name from the wishlist" else "Add $name to the wishlist",
-            tint = if (on) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp),
-        )
+    IconButton(onClick = { wishlist.toggle(cardId) }, modifier = modifier.size(36.dp)) {
+        // The backing is drawn here, inside the button: on the button itself it would take the 48dp the touch target is
+        // widened to and spill over the corner of the card.
+        Box(
+            Modifier
+                .size(32.dp)
+                .then(if (onPicture) Modifier.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.88f), CircleShape) else Modifier),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (on) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                contentDescription = if (on) "Remove $name from the wishlist" else "Add $name to the wishlist",
+                tint = if (on) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+        }
     }
 }
 

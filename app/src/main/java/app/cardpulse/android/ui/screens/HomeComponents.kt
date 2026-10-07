@@ -142,7 +142,12 @@ internal fun HomeHeader(
         PulseMark(Modifier.size(width = 36.dp, height = 30.dp))
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text("CardPulse", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 1)
+            // With three buttons beside it the name has little room on a narrow phone, so it shrinks to fit rather than be cut.
+            FitText(
+                "CardPulse",
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                minSize = 16.sp,
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(8.dp).clip(CircleShape).background(status))
                 Spacer(Modifier.width(6.dp))
