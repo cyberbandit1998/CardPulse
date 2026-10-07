@@ -62,9 +62,13 @@ import app.cardpulse.android.core.SnapshotDto
 import app.cardpulse.android.core.ThemeMode
 import app.cardpulse.android.core.Upload
 import app.cardpulse.android.core.UserDto
+import app.cardpulse.android.core.WishlistEntry
+import app.cardpulse.android.core.WishlistItemDto
+import app.cardpulse.android.core.WishlistPriority
 import app.cardpulse.android.core.filterOptions
 import app.cardpulse.android.core.lookup
 import app.cardpulse.android.core.ownershipOf
+import app.cardpulse.android.core.entries
 import app.cardpulse.android.core.toChartPoints
 import app.cardpulse.android.data.ScanPrefs
 import app.cardpulse.android.ui.screens.CollectionFilterContent
@@ -82,6 +86,8 @@ import app.cardpulse.android.ui.screens.RemoveChoices
 import app.cardpulse.android.ui.screens.SetChecklistScreen
 import app.cardpulse.android.ui.screens.SettingsScreen
 import app.cardpulse.android.ui.screens.SetsScreen
+import app.cardpulse.android.ui.screens.WishlistItemDetails
+import app.cardpulse.android.ui.screens.WishlistScreen
 import app.cardpulse.android.ui.theme.CardPulseTheme
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -915,6 +921,169 @@ class ScreensScreenshotTest {
     fun manualAddOnASmallPhone() {
         manual(typed("Charizard ex", "125", charizardEx, picked = charizardEx, edits = AddEdits(quantity = 12, condition = "MP", variant = "Holo", lang = "zh-tw")))
         capture("4a-manual-small-phone")
+    }
+
+    // --- the wishlist ----------------------------------------------------------------------------------------------
+
+    // What the server really sent for a wishlist of six cards, with the collection of the fixtures: three cards are owned (one of
+    // them wanted twice over), three are missing, one has no price. Priorities are kept on the phone, so they are made up here.
+    private val wishlistItems = Fixtures.decode<List<WishlistItemDto>>("wishlist")
+    private val wishlistState = signedIn.copy(
+        wishlist = wishlistItems,
+        wishlistLoaded = true,
+        wishlistPriorities = mapOf(
+            "sv3-223_en" to WishlistPriority.HIGH,
+            "sv3-125_en" to WishlistPriority.MEDIUM,
+            "sv2-001_en" to WishlistPriority.LOW,
+        ),
+    )
+
+    /** What the hearts on the cards draw from: the cards in [listed] are on the wishlist. */
+    private fun wishlistControls(listed: Set<String> = wishlistItems.map { it.cardId }.toSet()) =
+        WishlistControls(ready = true, listed = listed, toggle = {})
+
+    @Composable
+    private fun Wishlist(state: AppState) {
+        CompositionLocalProvider(LocalWishlist provides wishlistControls(state.wishlist.map { it.cardId }.toSet())) {
+            Scaffold { padding ->
+                WishlistScreen(
+                    state = state, onBack = {}, onLoad = {}, onSetTarget = { _, _, _ -> }, onSetPriority = { _, _ -> },
+                    modifier = Modifier.padding(padding),
+                )
+            }
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h1000dp-xxhdpi")
+    fun wishlist() = shoot("1i-wishlist") { Wishlist(wishlistState) }
+
+    @Test
+    @Config(qualifiers = "w360dp-h1000dp-xxhdpi")
+    fun wishlistLight() = shoot("1i-wishlist-light", dark = false) { Wishlist(wishlistState) }
+
+    @Test
+    @Config(qualifiers = "w360dp-h1000dp-xxhdpi")
+    fun wishlistByPrice() {
+        compose.setContent { CardPulseTheme { Wishlist(wishlistState) } }
+        compose.onNodeWithText("Price").performClick()
+        capture("1i-wishlist-by-price")
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h1000dp-xxhdpi")
+    fun wishlistOnlyWhatIsMissing() {
+        compose.setContent { CardPulseTheme { Wishlist(wishlistState) } }
+        compose.onNodeWithText("Missing (3)").performClick()
+        capture("1i-wishlist-missing")
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h700dp-xxhdpi")
+    fun wishlistWithNothingOnIt() = shoot("1i-wishlist-empty") { Wishlist(wishlistState.copy(wishlist = emptyList())) }
+
+    @Test
+    @Config(qualifiers = "w360dp-h700dp-xxhdpi")
+    fun wishlistWhileItLoads() = shoot("1i-wishlist-loading") { Wishlist(signedIn.copy(wishlistLoading = true)) }
+
+    @Test
+    @Config(qualifiers = "w360dp-h700dp-xxhdpi")
+    fun wishlistWhenItCannotBeHad() = shoot("1i-wishlist-error") {
+        Wishlist(signedIn.copy(wishlistError = "Can't connect to the server. Check the address and that it is running."))
+    }
+
+    /** A card of the wishlist opened, drawn on its own: its dialog is a window of its own, which the pictures cannot see. */
+    @Composable
+    private fun WishlistCardSheet(cardId: String, targetText: String, priority: WishlistPriority?) {
+        val rows = wishlistState.wishlist.entries(
+            wishlistState.collection, wishlistState.collectionLoaded, wishlistState.prefs.priceField, wishlistState.wishlistPriorities,
+        )
+        val entry: WishlistEntry = rows.first { it.cardId == cardId }
+        Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Surface(shape = RoundedCornerShape(28.dp), tonalElevation = 6.dp) {
+                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text(entry.name, style = MaterialTheme.typography.headlineSmall)
+                    WishlistItemDetails(
+                        entry = entry, serverUrl = "https://cards.example.com/", currency = "USD", money = MoneyFormatter("USD", 1.1),
+                        targetText = targetText, targetInvalid = false, problem = null, priority = priority,
+                        onTargetText = {}, onPriority = {}, onRemove = {},
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = {}) { Text("Close") }
+                        AccentTextButton(onClick = {}) { Text("Save") }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h1250dp-xxhdpi")
+    fun wishlistCardWithATargetAndAPriority() = shoot("1i-wishlist-card") {
+        WishlistCardSheet("sv3-125_en", targetText = "8.25", priority = WishlistPriority.MEDIUM)
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h1250dp-xxhdpi")
+    fun wishlistCardWithNoTargetInTheLightTheme() = shoot("1i-wishlist-card-light", dark = false) {
+        WishlistCardSheet("sv2-003_en", targetText = "", priority = null)
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h900dp-xxhdpi")
+    fun checklistWithHearts() = shoot("1h-checklist-hearts") {
+        CompositionLocalProvider(LocalWishlist provides wishlistControls(setOf("sv3-125_en", "sv3-002_en"))) {
+            Checklist(checklistState, "sv3_en")
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h900dp-xxhdpi")
+    fun checklistWithHeartsInTheLightTheme() = shoot("1h-checklist-hearts-light", dark = false) {
+        CompositionLocalProvider(LocalWishlist provides wishlistControls(setOf("sv3-125_en", "sv3-002_en"))) {
+            Checklist(checklistState, "sv3_en")
+        }
+    }
+
+    @Test
+    fun collectionWithTheSmallHeartOnWishlistCards() = shoot("11-collection-hearts") {
+        CompositionLocalProvider(LocalWishlist provides wishlistControls(setOf("sv3-125_en", "sv1-198_en"))) {
+            CollectionScreen(state = signedIn, onRefresh = {}, onRemove = { _, _, _ -> }, onAddCard = {})
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h1300dp-xxhdpi")
+    fun homeWithTheWishlistButton() = shoot("10-home-wishlist") {
+        CompositionLocalProvider(LocalWishlist provides wishlistControls(setOf("sv3-125_en"))) {
+            HomeScreen(state = homeState, onRefresh = {}, onOpenSettings = {}, onOpenWishlist = {})
+        }
+    }
+
+    @Test
+    @Config(qualifiers = "w320dp-h640dp-xhdpi")
+    fun homeHeaderWithTheWishlistButtonOnASmallPhone() = shoot("10-home-wishlist-small") {
+        HomeScreen(state = homeState, onRefresh = {}, onOpenSettings = {}, onOpenWishlist = {})
+    }
+
+    @Test
+    fun manualAddResultsWithHearts() {
+        compose.setContent {
+            CardPulseTheme {
+                CompositionLocalProvider(LocalWishlist provides wishlistControls(setOf(pikachuBase.id))) {
+                    ManualAddContent(
+                        state = typed("Pikachu", "", pikachuJourney, pikachuBase, pikachuGerman),
+                        serverUrl = "https://cards.example.com/",
+                        currency = "USD",
+                        rateFromEur = 1.1,
+                        ownership = { index.ownershipOf(it) },
+                        actions = ManualAddActions(),
+                    )
+                }
+            }
+        }
+        compose.waitForIdle()
+        capture("42-manual-several-hearts")
     }
 
     @Test
