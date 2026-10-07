@@ -24,6 +24,8 @@ import app.cardpulse.android.core.SetDto
 import app.cardpulse.android.core.SnapshotDto
 import app.cardpulse.android.core.SyncStatusDto
 import app.cardpulse.android.core.UserDto
+import app.cardpulse.android.core.WishlistAddRequest
+import app.cardpulse.android.core.WishlistItemDto
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -131,6 +133,29 @@ interface PokeApi {
      */
     @GET("api/sets/{id}/checklist")
     suspend fun setChecklist(@Path("id") setId: String): SetChecklistDto
+
+    // --- wishlist ---------------------------------------------------------------------------
+    /** The whole wishlist, newest first, each row with its card (set and prices included). Decoded row by row. */
+    @GET("api/wishlist/")
+    suspend fun wishlist(): JsonArray
+
+    /**
+     * Puts a card on the wishlist, by its id. For a card that is already listed the server does not fail: it raises the quantity
+     * wanted, so the app only adds cards it knows are not on the list. The answer is the row.
+     */
+    @POST("api/wishlist/")
+    suspend fun addToWishlist(@Body body: WishlistAddRequest): WishlistItemDto
+
+    /**
+     * Changes only the fields [body] names (`wishlistTargetBody`, `wishlistQuantityBody`), so a field left out stays as it is.
+     * The answer is the row as the server now has it.
+     */
+    @PUT("api/wishlist/{id}")
+    suspend fun updateWishlistItem(@Path("id") itemId: Int, @Body body: JsonObject): WishlistItemDto
+
+    /** Takes a card off the wishlist. Any success answer will do, so nothing is parsed. */
+    @DELETE("api/wishlist/{id}")
+    suspend fun removeFromWishlist(@Path("id") itemId: Int)
 
     /** Makes a card that isn't in the catalogue. It belongs to this user and gets an id starting "custom-". */
     @POST("api/cards/custom")

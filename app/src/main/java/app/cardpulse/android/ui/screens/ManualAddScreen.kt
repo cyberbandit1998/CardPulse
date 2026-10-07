@@ -83,6 +83,7 @@ import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.Banner
 import app.cardpulse.android.ui.RemoteImage
 import app.cardpulse.android.ui.ScanViewModel
+import app.cardpulse.android.ui.WishlistHeart
 
 /** Everything the manual-add screen can ask for, so the screen itself holds no logic. */
 class ManualAddActions(
@@ -443,6 +444,8 @@ private fun ResultRow(card: CardDto, selected: Boolean, serverUrl: String, owner
                 }
             }
         }
+        // Not the card to add to the collection? It can go on the wishlist instead.
+        WishlistHeart(card.id, card.name)
         if (selected) Icon(Icons.Default.CheckCircle, contentDescription = "Picked", tint = MaterialTheme.colorScheme.primary)
     }
 }

@@ -62,6 +62,8 @@ fun HomeScreen(
     /** A set was tapped: open its checklist. Gets the set's id (such as "sv3_en"). */
     onOpenSet: (String) -> Unit = {},
     onRemove: (item: CollectionItemDto, wholeRow: Boolean, done: (String?) -> Unit) -> Unit = { _, _, done -> done(null) },
+    /** The heart in the header: the wishlist. Without it the header has no such button. */
+    onOpenWishlist: (() -> Unit)? = null,
 ) {
     val money = remember(state.prefs.currency, state.prefs.rateFromEur) {
         MoneyFormatter(state.prefs.currency, state.prefs.rateFromEur)
@@ -89,7 +91,13 @@ fun HomeScreen(
     ) {
         item {
             Column {
-                HomeHeader(connected = !state.offline, onRefresh = onRefresh, onOpenSettings = onOpenSettings, modifier = inset)
+                HomeHeader(
+                    connected = !state.offline,
+                    onRefresh = onRefresh,
+                    onOpenSettings = onOpenSettings,
+                    modifier = inset,
+                    onOpenWishlist = onOpenWishlist,
+                )
                 if (state.dashboardLoading || state.collectionLoading) {
                     LinearProgressIndicator(inset.fillMaxWidth().padding(top = 8.dp))
                 }

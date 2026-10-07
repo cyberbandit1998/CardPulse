@@ -30,6 +30,7 @@ import app.cardpulse.android.core.setName
 import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.CARD_ASPECT
 import app.cardpulse.android.ui.CardArt
+import app.cardpulse.android.ui.WishlistBadge
 
 /** How many cards are in view at once: two whole ones and most of a third, so it is plain there is more to swipe to. */
 private const val CARDS_IN_VIEW = 2.7f
@@ -79,6 +80,8 @@ private fun RecentCard(entry: CollectionItemDto, state: AppState, modifier: Modi
                         .padding(horizontal = 6.dp, vertical = 2.dp),
                 )
             }
+            // A small heart when the card is on the wishlist.
+            WishlistBadge(entry.cardId ?: entry.card?.id, Modifier.align(Alignment.TopStart).padding(5.dp))
         }
         Text(
             entry.card?.name.orEmpty(),

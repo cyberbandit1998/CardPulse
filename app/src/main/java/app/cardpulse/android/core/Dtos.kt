@@ -242,6 +242,37 @@ data class SyncStatusDto(
 data class CollectionQuantityRequest(val quantity: Int)
 
 // ---------------------------------------------------------------------------------------------
+// Wishlist
+// ---------------------------------------------------------------------------------------------
+
+/** One row of `GET /api/wishlist/`: a card the user wants, how many copies, and the price alerts the server can send. */
+@Serializable
+data class WishlistItemDto(
+    val id: Int,
+    @SerialName("card_id") val cardId: String = "",
+    /** How many copies are wanted (1 to 99). Owning a copy does not take the card off the list. */
+    val quantity: Int = 1,
+    // The server's two price alerts, in euros. This app uses the lower one as the card's target price and leaves the other as
+    // it finds it.
+    @SerialName("price_alert_above") val priceAlertAbove: Double? = null,
+    @SerialName("price_alert_below") val priceAlertBelow: Double? = null,
+    @SerialName("notified_at") val notifiedAt: String? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    /** The card with its set and prices, so the list needs no second request per card. */
+    val card: CardDto? = null,
+)
+
+/**
+ * The body of `POST /api/wishlist/`. A card that is already listed does not fail: the server adds [quantity] to the number
+ * wanted, so a card must only be added when it is known not to be on the list.
+ */
+@Serializable
+data class WishlistAddRequest(
+    @SerialName("card_id") val cardId: String,
+    val quantity: Int = 1,
+)
+
+// ---------------------------------------------------------------------------------------------
 // Portfolio
 // ---------------------------------------------------------------------------------------------
 

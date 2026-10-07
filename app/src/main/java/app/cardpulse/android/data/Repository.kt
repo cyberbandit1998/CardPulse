@@ -28,8 +28,12 @@ import app.cardpulse.android.core.SetChecklistDto
 import app.cardpulse.android.core.SetDto
 import app.cardpulse.android.core.SnapshotDto
 import app.cardpulse.android.core.SyncStatusDto
+import app.cardpulse.android.core.WishlistAddRequest
+import app.cardpulse.android.core.WishlistItemDto
 import app.cardpulse.android.core.attempt
 import app.cardpulse.android.core.displayPrefsFrom
+import app.cardpulse.android.core.wishlistQuantityBody
+import app.cardpulse.android.core.wishlistTargetBody
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
@@ -42,6 +46,12 @@ data class ServerCheck(val multiUser: Boolean)
 
 data class CollectionResult(
     val items: List<CollectionItemDto>,
+    /** Rows the server sent that this app could not read. Shown to the user instead of silently dropped. */
+    val unreadable: Int,
+)
+
+data class WishlistResult(
+    val items: List<WishlistItemDto>,
     /** Rows the server sent that this app could not read. Shown to the user instead of silently dropped. */
     val unreadable: Int,
 )
@@ -125,6 +135,40 @@ class Repository(
     suspend fun setCollectionQuantity(itemId: Int, quantity: Int): CollectionItemDto? {
         val updated = api.updateCollectionItem(itemId, CollectionQuantityRequest(quantity))
         return runCatching { json.decodeFromJsonElement(CollectionItemDto.serializer(), updated) }.getOrNull()
+    }
+
+    // --- wishlist ------------------------------------------------------------------------------
+
+    suspend fun loadWishlist(): WishlistResult {
+        var unreadable = 0
+        val items = api.wishlist().mapNotNull { element ->
+            try {
+                json.decodeFromJsonElement(WishlistItemDto.serializer(), element)
+            } catch (_: IllegalArgumentException) {
+                unreadable++
+                null
+            }
+        }
+        return WishlistResult(items, unreadable)
+    }
+
+    /**
+     * Puts a card on the wishlist and returns its row. The caller must only add a card it believes is not listed: the server
+     * answers a listed card by raising the quantity wanted. If it does (the wishlist was changed elsewhere since it was last
+     * loaded) the quantity is put back as it was, so adding from here never changes how many copies are wanted.
+     */
+    suspend fun addToWishlist(cardId: String): WishlistItemDto {
+        val added = api.addToWishlist(WishlistAddRequest(cardId))
+        if (added.quantity <= 1) return added
+        return attempt { api.updateWishlistItem(added.id, wishlistQuantityBody(added.quantity - 1)) }.getOrDefault(added)
+    }
+
+    /** Sets the target price (euros), or with null takes it away. Returns the row as the server now has it. */
+    suspend fun setWishlistTarget(itemId: Int, targetEur: Double?): WishlistItemDto =
+        api.updateWishlistItem(itemId, wishlistTargetBody(targetEur))
+
+    suspend fun removeFromWishlist(itemId: Int) {
+        api.removeFromWishlist(itemId)
     }
 
     // --- cards typed in -------------------------------------------------------------------------

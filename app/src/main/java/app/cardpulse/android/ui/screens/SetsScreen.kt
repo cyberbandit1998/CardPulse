@@ -166,13 +166,14 @@ private val SnugChipShortLabel = 24.dp
 /**
  * A filter chip 8dp narrower than Material's: the text sits [SnugChipTrim] nearer each edge. With Material's own padding the
  * four set filters (All, Owned, Incomplete, Complete) need about 343dp and a 360dp phone leaves 328dp, so the last one would
- * wrap onto a second line; like this they take about 318dp and sit on one row.
+ * wrap onto a second line; like this they take about 318dp and sit on one row. The Wishlist uses it for its rows of chips too.
  */
 @Composable
-private fun SnugChip(label: String, selected: Boolean, onClick: () -> Unit) {
+internal fun SnugChip(label: String, selected: Boolean, onClick: () -> Unit, enabled: Boolean = true) {
     FilterChip(
         selected = selected,
         onClick = onClick,
+        enabled = enabled,
         label = {
             Text(
                 label,

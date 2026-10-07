@@ -1,5 +1,6 @@
 package app.cardpulse.android.ui
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,18 +16,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.cardpulse.android.core.cardIds
 import app.cardpulse.android.core.toReview
 import app.cardpulse.android.ui.screens.CollectionScreen
 import app.cardpulse.android.ui.screens.HomeScreen
@@ -39,6 +44,7 @@ import app.cardpulse.android.ui.screens.ScanScreen
 import app.cardpulse.android.ui.screens.SetChecklistScreen
 import app.cardpulse.android.ui.screens.SettingsScreen
 import app.cardpulse.android.ui.screens.SetsScreen
+import app.cardpulse.android.ui.screens.WishlistScreen
 import app.cardpulse.android.ui.theme.LocalDarkTheme
 import app.cardpulse.android.ui.theme.SystemBarIcons
 
@@ -48,6 +54,26 @@ fun CardPulseApp(
     scanVm: ScanViewModel = viewModel(),
 ) {
     val app by appVm.state.collectAsState()
+    val context = LocalContext.current
+    // A heart on any card of any screen puts the card on the wishlist or takes it off, so every screen is given the controls
+    // rather than passed a callback. A failure is said on a toast: it is seen wherever the heart was pressed, which the banner
+    // of the tabs (under the full screens) would not be.
+    val wishlistControls = remember(app.wishlistLoaded, app.wishlist, app.wishlistPending) {
+        WishlistControls(
+            ready = app.wishlistLoaded,
+            listed = app.wishlist.cardIds(),
+            pending = app.wishlistPending,
+            toggle = { cardId ->
+                appVm.toggleWishlist(cardId) { error -> if (error != null) Toast.makeText(context, error, Toast.LENGTH_LONG).show() }
+            },
+        )
+    }
+    CompositionLocalProvider(LocalWishlist provides wishlistControls) { CardPulseScreens(appVm, scanVm) }
+}
+
+@Composable
+private fun CardPulseScreens(appVm: AppViewModel, scanVm: ScanViewModel) {
+    val app by appVm.state.collectAsState()
     val scan by scanVm.state.collectAsState()
     val session by scanVm.session.state.collectAsState()
     var tab by rememberSaveable { mutableIntStateOf(MainTab.HOME.ordinal) }
@@ -55,6 +81,8 @@ fun CardPulseApp(
     var showManualAdd by rememberSaveable { mutableStateOf(false) }
     /** The full list that "See all" under Most valuable opens. */
     var showMostValuable by rememberSaveable { mutableStateOf(false) }
+    /** The wishlist, opened from the heart in Home's header. */
+    var showWishlist by rememberSaveable { mutableStateOf(false) }
     /** What the Collection tab's search box starts with: a set's name, when the user came from a set's checklist. */
     var collectionSearch by rememberSaveable { mutableStateOf("") }
     /** The id of the set whose checklist is open, if one is: it covers the tabs, and Back closes it. */
@@ -64,6 +92,7 @@ fun CardPulseApp(
         if (!app.signedIn) {
             showManualAdd = false
             showMostValuable = false
+            showWishlist = false
             openSet = null
         }
     }
@@ -81,7 +110,7 @@ fun CardPulseApp(
     // The open camera uses the whole screen on black, over whichever tab is showing: no tab bar, and it shows its own
     // messages. Closing it goes back to that tab.
     val cameraOpen = app.signedIn && !app.mustChangePassword && !showSettings && !showManualAdd && !showMostValuable &&
-        scan.stage == ScanStage.RAPID
+        !showWishlist && scan.stage == ScanStage.RAPID
     // Light icons on the status and navigation bars wherever the screen behind them is dark.
     SystemBarIcons(lightIcons = LocalDarkTheme.current || cameraOpen)
 
@@ -142,6 +171,20 @@ fun CardPulseApp(
             }
         }
 
+        showWishlist -> {
+            BackHandler { showWishlist = false }
+            Scaffold { padding ->
+                WishlistScreen(
+                    state = app,
+                    onBack = { showWishlist = false },
+                    onLoad = appVm::loadWishlist,
+                    onSetTarget = appVm::setWishlistTarget,
+                    onSetPriority = appVm::setWishlistPriority,
+                    modifier = Modifier.padding(padding),
+                )
+            }
+        }
+
         else -> Box(Modifier.fillMaxSize()) {
             // The tabs stay under an open checklist, so the Sets tab is as it was (search, order, place in the list) when the
             // checklist is closed. Screen readers are kept off them while the checklist covers them.
@@ -184,6 +227,7 @@ fun CardPulseApp(
                                 onOpenSets = { tab = MainTab.SETS.ordinal },
                                 onOpenSet = { id -> openSet = id },
                                 onRemove = appVm::removeFromCollection,
+                                onOpenWishlist = { showWishlist = true },
                             )
                             MainTab.SETS -> SetsScreen(
                                 state = app,

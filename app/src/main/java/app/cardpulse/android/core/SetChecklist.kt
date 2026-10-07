@@ -60,11 +60,7 @@ data class ChecklistTally(val owned: Int, val total: Int) {
  */
 fun SetChecklistDto.entries(collection: List<CollectionItemDto>, collectionLoaded: Boolean): List<ChecklistEntry> {
     if (!collectionLoaded) return cards.map { ChecklistEntry(it, it.ownedQuantity.coerceAtLeast(0)) }
-    val copies = HashMap<String, Int>()
-    for (item in collection) {
-        val id = item.cardId ?: continue
-        if (item.quantity > 0) copies[id] = (copies[id] ?: 0) + item.quantity
-    }
+    val copies = collection.copiesByCardId()
     return cards.map { ChecklistEntry(it, copies[it.id] ?: 0) }
 }
 

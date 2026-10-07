@@ -2,10 +2,13 @@ package app.cardpulse.android.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import app.cardpulse.android.core.ThemeMode
+import app.cardpulse.android.core.WishlistPriorities
+import app.cardpulse.android.core.WishlistPriority
 import kotlinx.coroutines.flow.first
 
 private val Context.dataStore by preferencesDataStore("cardpulse_settings")
@@ -42,6 +45,7 @@ class SessionStore(private val context: Context, private val cipher: TokenCipher
         val variant = stringPreferencesKey("scan_variant")
         val lookUpPrices = booleanPreferencesKey("look_up_prices")
         val themeMode = stringPreferencesKey("theme_mode")
+        val wishlistPriorities = stringPreferencesKey("wishlist_priorities")
     }
 
     suspend fun load(): StoredSession {
@@ -59,6 +63,29 @@ class SessionStore(private val context: Context, private val cipher: TokenCipher
     suspend fun saveThemeMode(mode: ThemeMode) {
         context.dataStore.edit { it[Keys.themeMode] = mode.key }
     }
+
+    /**
+     * How much each wishlist card is wanted, by card id, for the account that is signed in. PokéCollector's wishlist has no
+     * priority, so these live on this phone only; another account's (or server's) levels are not returned.
+     */
+    suspend fun wishlistPriorities(): Map<String, WishlistPriority> {
+        val prefs = context.dataStore.data.first()
+        return WishlistPriorities.decode(wishlistAccount(prefs), prefs[Keys.wishlistPriorities])
+    }
+
+    suspend fun saveWishlistPriorities(levels: Map<String, WishlistPriority>) {
+        context.dataStore.edit { prefs ->
+            if (levels.isEmpty()) {
+                prefs.remove(Keys.wishlistPriorities)
+            } else {
+                prefs[Keys.wishlistPriorities] = WishlistPriorities.encode(wishlistAccount(prefs), levels)
+            }
+        }
+    }
+
+    /** Whose priorities are kept: the server and the user the phone is signed in as. */
+    private fun wishlistAccount(prefs: Preferences): String =
+        WishlistPriorities.accountKey(prefs[Keys.server].orEmpty(), prefs[Keys.username])
 
     /** [serverUrl] must already be normalized with `ServerUrl.normalize`. */
     suspend fun saveServer(serverUrl: String) {

@@ -76,3 +76,17 @@ class CollectionIndex(items: List<CollectionItemDto>) {
 /** What to say about a candidate: unknown until the collection has loaded, then new or owned. */
 fun CollectionIndex?.ownershipOf(match: ScanMatchDto): Ownership =
     this?.ownershipOf(match.plainCardId()) ?: Ownership.Unknown
+
+/**
+ * How many copies of each card the collection holds, counted by the card's own id (with its language), so the same card in
+ * another language is a different card. A card with no copies is not in the map. Used wherever a list of cards says which
+ * ones are owned: a set's checklist and the wishlist.
+ */
+fun List<CollectionItemDto>.copiesByCardId(): Map<String, Int> {
+    val copies = HashMap<String, Int>()
+    for (item in this) {
+        val id = item.cardId ?: continue
+        if (item.quantity > 0) copies[id] = (copies[id] ?: 0) + item.quantity
+    }
+    return copies
+}
