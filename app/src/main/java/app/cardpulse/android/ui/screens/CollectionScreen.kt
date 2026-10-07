@@ -60,6 +60,8 @@ import app.cardpulse.android.ui.Banner
 import app.cardpulse.android.ui.BottomBarOverhang
 import app.cardpulse.android.ui.CARD_ASPECT
 import app.cardpulse.android.ui.CardArt
+import app.cardpulse.android.ui.TradeBadge
+import app.cardpulse.android.ui.TradeSection
 import app.cardpulse.android.ui.WishlistBadge
 import app.cardpulse.android.ui.WishlistToggleButton
 import app.cardpulse.android.ui.formatDate
@@ -224,6 +226,8 @@ private fun CollectionTile(entry: CollectionItemDto, state: AppState, onClick: (
                 }
                 // A small heart when the card is on the wishlist.
                 WishlistBadge(entry.cardId ?: entry.card?.id, Modifier.align(Alignment.TopStart).padding(4.dp))
+                // And a swap arrow with a count when some of its copies are for trade.
+                TradeBadge(entry.id, entry.quantity, Modifier.align(Alignment.BottomStart).padding(4.dp))
             }
             Text(entry.card?.name.orEmpty(), style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
@@ -283,6 +287,8 @@ internal fun ItemDialog(
                 }
                 // You may want more copies of a card you own, so a card in the collection can go on the wishlist too.
                 WishlistToggleButton(entry.cardId ?: entry.card?.id)
+                // And you may have copies to spare: how many are for trade is up to you, and none are until you say.
+                TradeSection(entry)
                 DetailRow("Set", entry.setName().ifBlank { "—" })
                 DetailRow("Number", entry.card?.number ?: "—")
                 DetailRow("Rarity", entry.card?.rarity ?: "—")

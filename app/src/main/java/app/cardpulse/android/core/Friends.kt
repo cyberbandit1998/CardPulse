@@ -144,6 +144,25 @@ fun Throwable.friendsAvailability(): FriendsAvailability = when {
     else -> FriendsAvailability.FAILED
 }
 
+/** The line under "Friends & trading" on Home: what is going on, or why the feature is not usable yet. */
+fun FriendsState.homeNote(): String = when (availability) {
+    FriendsAvailability.UNKNOWN -> "Swap cards with friends"
+    FriendsAvailability.MISSING -> "Needs an update on your server"
+    FriendsAvailability.NEEDS_MULTI_USER -> "Needs multi-user mode on your server"
+    FriendsAvailability.FAILED -> "Couldn't reach the server"
+    FriendsAvailability.SUPPORTED -> when {
+        !loaded -> "Swap cards with friends"
+        friends.isEmpty() && incoming.isEmpty() -> "Add friends to compare wishlists and swap cards"
+        else -> listOfNotNull(
+            friends.size.takeIf { it > 0 }?.let { if (it == 1) "1 friend" else "$it friends" },
+            incoming.size.takeIf { it > 0 }?.let { if (it == 1) "1 request waiting" else "$it requests waiting" },
+        ).joinToString(" · ")
+    }
+}
+
+/** Requests from other people waiting for an answer: the number on Home's row. */
+val FriendsState.requestsWaiting: Int get() = if (supported) incoming.size else 0
+
 // ---------------------------------------------------------------------------------------------
 // Cards in a friend's lists
 // ---------------------------------------------------------------------------------------------
@@ -264,6 +283,37 @@ data class FriendCard(
         forTradeQuantity = offered,
         card = card,
     )
+}
+
+/**
+ * The rows of the card details for a card in [owner]'s list: what the card is and costs, the copy it is, and how [owner] has or
+ * wants it, then how many the user owns. The same layout as the details of the user's own cards, with the owner's side said.
+ */
+fun FriendCard.detailLines(owner: String, money: MoneyFormatter): List<Pair<String, String>> = buildList {
+    add("Set" to setName.ifBlank { "—" })
+    add("Number" to numberText.removePrefix("#").ifBlank { "—" })
+    add("Rarity" to (rarity ?: "—"))
+    add("Price now" to if (hasPrice) money.format(priceEur) else "No price")
+    condition?.takeIf { it.isNotBlank() }?.let { add("Condition" to it) }
+    variant?.takeIf { it.isNotBlank() }?.let { add("Variant" to it) }
+    lang?.takeIf { it.isNotBlank() }?.let { add("Language" to CardLanguages.label(it)) }
+    when (kind) {
+        FriendCardKind.COLLECTION -> {
+            owned?.let { add("$owner has" to "×$it") }
+            offered?.takeIf { it > 0 }?.let { add("For trade" to "×$it") }
+        }
+        FriendCardKind.TRADE -> add("For trade" to "×${offered ?: 1}")
+        FriendCardKind.WISHLIST -> add("$owner wants" to "×${wanted ?: 1}")
+        FriendCardKind.THEIR_OFFER -> {
+            add("$owner offers" to "×${offered ?: 1}")
+            add("You want" to "×${wanted ?: 1}")
+        }
+        FriendCardKind.YOUR_OFFER -> {
+            add("You offer" to "×${offered ?: 1}")
+            add("$owner wants" to "×${wanted ?: 1}")
+        }
+    }
+    mine?.let { add("You own" to if (it > 0) "×$it" else "none") }
 }
 
 private fun priceOf(card: CardDto?, variant: String?, priceField: String): Double = card?.priceFor(variant ?: "Normal", priceField) ?: 0.0

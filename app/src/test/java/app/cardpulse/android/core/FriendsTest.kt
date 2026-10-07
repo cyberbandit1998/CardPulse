@@ -544,3 +544,87 @@ class FriendsStateTest {
         assertEquals(6, wishlist.size)
     }
 }
+
+class FriendCardDetailsTest {
+    @Test
+    fun aCollectionCardsDetailsSayWhatTheFriendHasAndWhatTheUserDoes() {
+        val hoppip = misty().first { it.cardId == "sv2-001_en" }
+        assertEquals(
+            listOf(
+                "Set" to "Paldea Evolved",
+                "Number" to "001",
+                "Rarity" to "Common",
+                "Price now" to "$0.13",
+                "Condition" to "NM",
+                "Variant" to "Normal",
+                "Language" to "EN",
+                "misty has" to "×3",
+                "For trade" to "×2",
+                "You own" to "none",
+            ),
+            hoppip.detailLines("misty", usd),
+        )
+    }
+
+    @Test
+    fun aWishlistCardNamesNoCopyAndSaysHowManyAreWanted() {
+        val oddish = mistyWishlist().first { it.cardId == "sv3-001_en" }
+        val lines = oddish.detailLines("misty", usd)
+        assertEquals(listOf("Set", "Number", "Rarity", "Price now", "misty wants", "You own"), lines.map { it.first })
+        assertEquals("×2", lines.first { it.first == "misty wants" }.second)
+        assertEquals("×4", lines.first { it.first == "You own" }.second)
+    }
+
+    @Test
+    fun theHalvesOfAMatchSayWhoOffersAndWhoWants() {
+        val theirs = match.theyHaveYouWant.matchCards(FriendCardKind.THEIR_OFFER, mine, "price_trend").first { it.cardId == "sv2-001_en" }
+        assertEquals(listOf("misty offers" to "×2", "You want" to "×1"), theirs.detailLines("misty", usd).filter { it.first in setOf("misty offers", "You want") })
+        val yours = match.youHaveTheyWant.matchCards(FriendCardKind.YOUR_OFFER, mine, "price_trend").first { it.cardId == "sv3-001_en" }
+        val lines = yours.detailLines("misty", usd)
+        assertEquals("×2", lines.first { it.first == "You offer" }.second)
+        assertEquals("×2", lines.first { it.first == "misty wants" }.second)
+    }
+
+    @Test
+    fun aCardWithNothingKnownStillHasEveryFirstRow() {
+        val bare = AppJson.decodeFromString(TradeItemDto.serializer(), """{"id": 4}""").let { listOf(it).tradeCards(null, "price_trend").single() }
+        val lines = bare.detailLines("misty", usd)
+        assertEquals("—", lines.first { it.first == "Set" }.second)
+        assertEquals("—", lines.first { it.first == "Number" }.second)
+        assertEquals("No price", lines.first { it.first == "Price now" }.second)
+        assertTrue(lines.none { it.first == "You own" })
+    }
+}
+
+class FriendsHomeNoteTest {
+    private fun supported(friends: Int = 0, requests: Int = 0, loaded: Boolean = true) = FriendsState(
+        availability = FriendsAvailability.SUPPORTED,
+        loaded = loaded,
+        friends = List(friends) { FriendDto(it, "f$it") },
+        incoming = List(requests) { FriendRequestDto(it, PersonDto(it, "r$it")) },
+    )
+
+    @Test
+    fun homeSaysWhatIsGoingOn() {
+        assertEquals("Add friends to compare wishlists and swap cards", supported().homeNote())
+        assertEquals("1 friend", supported(friends = 1).homeNote())
+        assertEquals("3 friends", supported(friends = 3).homeNote())
+        assertEquals("3 friends · 1 request waiting", supported(friends = 3, requests = 1).homeNote())
+        assertEquals("2 requests waiting", supported(requests = 2).homeNote())
+        assertEquals("Swap cards with friends", supported(loaded = false).homeNote())
+        assertEquals("Swap cards with friends", FriendsState().homeNote())
+    }
+
+    @Test
+    fun homeSaysWhyItCannotBeUsedYet() {
+        assertEquals("Needs an update on your server", FriendsState(availability = FriendsAvailability.MISSING).homeNote())
+        assertEquals("Needs multi-user mode on your server", FriendsState(availability = FriendsAvailability.NEEDS_MULTI_USER).homeNote())
+        assertEquals("Couldn't reach the server", FriendsState(availability = FriendsAvailability.FAILED).homeNote())
+    }
+
+    @Test
+    fun requestsAreCountedOnlyWhereFriendsWork() {
+        assertEquals(2, supported(requests = 2).requestsWaiting)
+        assertEquals(0, FriendsState(availability = FriendsAvailability.MISSING, incoming = listOf(FriendRequestDto(1, PersonDto(1, "x")))).requestsWaiting)
+    }
+}

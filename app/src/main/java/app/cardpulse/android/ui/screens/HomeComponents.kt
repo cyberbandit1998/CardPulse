@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.HorizontalDivider
@@ -58,6 +59,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
@@ -455,6 +457,49 @@ internal fun ListCard(modifier: Modifier = Modifier, content: @Composable Column
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape),
         content = content,
     )
+}
+
+/**
+ * The way into Friends and trading: a row saying what is going on (how many friends and requests, or what the server still
+ * needs), with a number when someone is waiting for an answer.
+ */
+@Composable
+internal fun HomeFriendsRow(note: String, requests: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    ListCard(modifier) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable(role = Role.Button, onClickLabel = "Open friends and trading", onClick = onClick)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Default.People, contentDescription = null, tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(22.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text("Friends & trading", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            if (requests > 0) {
+                // The note already says how many requests are waiting, so a screen reader skips the number.
+                Text(
+                    "$requests",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier
+                        .clearAndSetSemantics { }
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.primary)
+                        .padding(horizontal = 7.dp, vertical = 2.dp),
+                )
+            }
+            Chevron()
+        }
+    }
 }
 
 /** A hairline between two rows of a [ListCard], starting where the text starts. */

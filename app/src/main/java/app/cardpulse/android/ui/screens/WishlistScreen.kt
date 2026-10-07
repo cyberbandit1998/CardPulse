@@ -285,7 +285,7 @@ private fun WishlistRow(entry: WishlistEntry, serverUrl: String, money: MoneyFor
 
 /** A small rounded label. */
 @Composable
-private fun Pill(text: String, background: Color, content: Color) {
+internal fun Pill(text: String, background: Color, content: Color) {
     Text(
         text,
         color = content,

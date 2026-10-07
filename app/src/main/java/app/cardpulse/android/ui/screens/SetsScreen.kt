@@ -169,10 +169,11 @@ private val SnugChipShortLabel = 24.dp
  * wrap onto a second line; like this they take about 318dp and sit on one row. The Wishlist uses it for its rows of chips too.
  */
 @Composable
-internal fun SnugChip(label: String, selected: Boolean, onClick: () -> Unit, enabled: Boolean = true) {
+internal fun SnugChip(label: String, selected: Boolean, onClick: () -> Unit, enabled: Boolean = true, modifier: Modifier = Modifier) {
     FilterChip(
         selected = selected,
         onClick = onClick,
+        modifier = modifier,
         enabled = enabled,
         label = {
             Text(
