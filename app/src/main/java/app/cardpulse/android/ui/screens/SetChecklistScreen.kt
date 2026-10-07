@@ -56,6 +56,7 @@ import app.cardpulse.android.core.CardLanguages
 import app.cardpulse.android.core.ChecklistEntry
 import app.cardpulse.android.core.ChecklistFilter
 import app.cardpulse.android.core.ChecklistTally
+import app.cardpulse.android.core.ChecklistCardDto
 import app.cardpulse.android.core.CollectionItemDto
 import app.cardpulse.android.core.ServerUrls
 import app.cardpulse.android.core.SetDto
@@ -65,6 +66,7 @@ import app.cardpulse.android.core.filtered
 import app.cardpulse.android.core.findSet
 import app.cardpulse.android.core.hasPicture
 import app.cardpulse.android.core.tally
+import app.cardpulse.android.core.wishlistCardId
 import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.CARD_ASPECT
 import app.cardpulse.android.ui.GreyscaleFilter
@@ -88,6 +90,12 @@ fun SetChecklistScreen(
     modifier: Modifier = Modifier,
     /** Shown on a set you own cards from: leaves the checklist for your Collection, searched for this set's name. */
     onShowInCollection: ((String) -> Unit)? = null,
+    /** The card ids on the wishlist: their hearts show filled. */
+    wishlistedIds: Set<String> = emptySet(),
+    /** Puts a card of the set on the wishlist or takes it off; null leaves the hearts out. */
+    onToggleWishlist: ((ChecklistCardDto, SetDto?) -> Unit)? = null,
+    /** The same for an owned card's details, which are a collection entry. */
+    onToggleWishlistItem: ((CollectionItemDto) -> Unit)? = null,
 ) {
     LaunchedEffect(setId) { onLoad(false) }
 
@@ -154,13 +162,23 @@ fun SetChecklistScreen(
                 }
                 items(shown, key = { it.card.id }) { entry ->
                     val row = if (entry.owned) entry.collectionRow(state.collection) else null
-                    ChecklistTile(entry, state.serverUrl, onClick = row?.let { found -> { openItem = found } })
+                    ChecklistTile(
+                        entry, state.serverUrl, onClick = row?.let { found -> { openItem = found } },
+                        wishlisted = entry.card.id in wishlistedIds,
+                        onToggleWishlist = onToggleWishlist?.let { toggle -> { toggle(entry.card, set) } },
+                    )
                 }
             }
         }
     }
 
-    openItem?.let { row -> ItemDialog(row, state, onRemove = onRemove, onClose = { openItem = null }) }
+    openItem?.let { row ->
+        ItemDialog(
+            row, state, onRemove = onRemove, onClose = { openItem = null },
+            isWishlisted = row.wishlistCardId() in wishlistedIds,
+            onToggleWishlist = onToggleWishlistItem?.let { toggle -> { toggle(row) } },
+        )
+    }
 }
 
 /** The set's logo and name's details, how many of its cards are owned, and a bar showing how far along it is. */
@@ -221,10 +239,18 @@ private fun ChecklistFilters(selected: ChecklistFilter, tally: ChecklistTally, o
 /**
  * One card. Owned: its picture in full colour with a tick (and "×2" for more copies). Missing: the picture drained of colour
  * and faded. Both say so in words under the name as well, so colour is never the only difference. An owned card can be
- * pressed for its details ([onClick]).
+ * pressed for its details ([onClick]). With [onToggleWishlist] the top-left corner holds the wishlist heart, filled when
+ * [wishlisted], so a missing card can be wished for straight from the checklist.
  */
 @Composable
-private fun ChecklistTile(entry: ChecklistEntry, serverUrl: String, onClick: (() -> Unit)?, modifier: Modifier = Modifier) {
+private fun ChecklistTile(
+    entry: ChecklistEntry,
+    serverUrl: String,
+    onClick: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    wishlisted: Boolean = false,
+    onToggleWishlist: (() -> Unit)? = null,
+) {
     val owned = entry.owned
     val pictureShape = RoundedCornerShape(8.dp)
     Column(
@@ -253,6 +279,17 @@ private fun ChecklistTile(entry: ChecklistEntry, serverUrl: String, onClick: (()
                 }
             }
             if (owned) OwnedBadge(entry.copies, Modifier.align(Alignment.TopEnd).padding(4.dp))
+            if (onToggleWishlist != null) {
+                WishlistToggleButton(
+                    wishlisted,
+                    onToggleWishlist,
+                    Modifier.align(Alignment.TopStart).padding(2.dp),
+                    onImage = true,
+                    iconSize = 16.dp,
+                )
+            } else if (wishlisted) {
+                WishlistBadge(Modifier.align(Alignment.TopStart).padding(4.dp))
+            }
         }
         Text(
             entry.card.name.ifBlank { "—" },

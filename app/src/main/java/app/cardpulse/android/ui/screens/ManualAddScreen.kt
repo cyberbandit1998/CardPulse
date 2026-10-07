@@ -103,7 +103,15 @@ class ManualAddActions(
 
 /** Wires the view model into [ManualAddContent]. */
 @Composable
-fun ManualAddScreen(app: AppState, vm: ScanViewModel, onClose: () -> Unit, modifier: Modifier = Modifier) {
+fun ManualAddScreen(
+    app: AppState,
+    vm: ScanViewModel,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+    /** The card ids on the wishlist, and how to put a found card on it or take it off (null leaves the hearts out). */
+    wishlistedIds: Set<String> = emptySet(),
+    onToggleWishlist: ((CardDto) -> Unit)? = null,
+) {
     val state by vm.manualAdd.state.collectAsState()
     // Until the collection has loaded nothing can honestly be called new or a duplicate.
     val index = remember(app.collection, app.collectionLoaded) {
@@ -136,6 +144,8 @@ fun ManualAddScreen(app: AppState, vm: ScanViewModel, onClose: () -> Unit, modif
             close = close,
         ),
         modifier = modifier,
+        isWishlisted = { card -> card.id in wishlistedIds },
+        onToggleWishlist = onToggleWishlist,
     )
 }
 
@@ -153,6 +163,8 @@ fun ManualAddContent(
     ownership: (CardDto) -> Ownership,
     actions: ManualAddActions,
     modifier: Modifier = Modifier,
+    isWishlisted: (CardDto) -> Boolean = { false },
+    onToggleWishlist: ((CardDto) -> Unit)? = null,
 ) {
     val selected = state.selected
     // The cursor is ready in the name box when the screen opens and after each add, so cards can be typed one after another.
@@ -176,7 +188,7 @@ fun ManualAddContent(
             state.lastAdded?.let { note -> AddedBanner(note) }
             NameAndNumber(state, actions, nameFocus)
             when (state.mode) {
-                ManualMode.LOOKUP -> LookupBody(state, serverUrl, ownership, actions)
+                ManualMode.LOOKUP -> LookupBody(state, serverUrl, ownership, actions, isWishlisted, onToggleWishlist)
                 ManualMode.BY_HAND -> ByHandBody(state, actions)
             }
             if (state.mode == ManualMode.LOOKUP && selected != null) {
@@ -305,7 +317,14 @@ private fun NameAndNumber(state: ManualAddState, actions: ManualAddActions, name
 // ---------------------------------------------------------------------------------------------
 
 @Composable
-private fun LookupBody(state: ManualAddState, serverUrl: String, ownership: (CardDto) -> Ownership, actions: ManualAddActions) {
+private fun LookupBody(
+    state: ManualAddState,
+    serverUrl: String,
+    ownership: (CardDto) -> Ownership,
+    actions: ManualAddActions,
+    isWishlisted: (CardDto) -> Boolean = { false },
+    onToggleWishlist: ((CardDto) -> Unit)? = null,
+) {
     val focus = LocalFocusManager.current
     val selected = state.selected
     // With a card picked only that card is shown, so its details and the Add button stay close; the rest are one tap away.
@@ -346,6 +365,8 @@ private fun LookupBody(state: ManualAddState, serverUrl: String, ownership: (Car
                             actions.select(card.id)
                             seeAll = false
                         },
+                        wishlisted = isWishlisted(card),
+                        onToggleWishlist = onToggleWishlist?.let { toggle -> { toggle(card) } },
                     )
                 }
                 if (showAll && state.matches > state.results.size) {
@@ -388,7 +409,15 @@ private fun LookupBody(state: ManualAddState, serverUrl: String, ownership: (Car
 
 /** A found card. The one that is picked shows everything the server knows about it. */
 @Composable
-private fun ResultRow(card: CardDto, selected: Boolean, serverUrl: String, ownership: Ownership, onClick: () -> Unit) {
+private fun ResultRow(
+    card: CardDto,
+    selected: Boolean,
+    serverUrl: String,
+    ownership: Ownership,
+    onClick: () -> Unit,
+    wishlisted: Boolean = false,
+    onToggleWishlist: (() -> Unit)? = null,
+) {
     val shape = RoundedCornerShape(12.dp)
     val borderColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
     Row(
@@ -443,7 +472,10 @@ private fun ResultRow(card: CardDto, selected: Boolean, serverUrl: String, owner
                 }
             }
         }
-        if (selected) Icon(Icons.Default.CheckCircle, contentDescription = "Picked", tint = MaterialTheme.colorScheme.primary)
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            if (selected) Icon(Icons.Default.CheckCircle, contentDescription = "Picked", tint = MaterialTheme.colorScheme.primary)
+            if (onToggleWishlist != null) WishlistToggleButton(wishlisted, onToggleWishlist)
+        }
     }
 }
 

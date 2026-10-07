@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.HorizontalDivider
@@ -124,13 +125,14 @@ internal fun RoundIconButton(icon: ImageVector, description: String, onClick: ()
     }
 }
 
-/** The app's name with whether the server answered, and the two buttons: refresh and settings. */
+/** The app's name with whether the server answered, and the buttons: refresh, the wishlist and settings. */
 @Composable
 internal fun HomeHeader(
     connected: Boolean,
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenWishlist: (() -> Unit)? = null,
 ) {
     val status = if (connected) MaterialTheme.extras.positive else MaterialTheme.extras.negative
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -146,6 +148,10 @@ internal fun HomeHeader(
         }
         RoundIconButton(Icons.Default.Refresh, "Refresh", onRefresh)
         Spacer(Modifier.width(8.dp))
+        if (onOpenWishlist != null) {
+            RoundIconButton(Icons.Default.FavoriteBorder, "Wishlist", onOpenWishlist)
+            Spacer(Modifier.width(8.dp))
+        }
         RoundIconButton(Icons.Default.Settings, "Settings", onOpenSettings)
     }
 }

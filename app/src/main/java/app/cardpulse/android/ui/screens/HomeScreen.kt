@@ -23,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.cardpulse.android.core.CollectionItemDto
+import app.cardpulse.android.core.wishlistCardId
 import app.cardpulse.android.core.MoneyFormatter
 import app.cardpulse.android.core.cardsMissingCost
 import app.cardpulse.android.core.costCoverage
@@ -62,6 +63,11 @@ fun HomeScreen(
     /** A set was tapped: open its checklist. Gets the set's id (such as "sv3_en"). */
     onOpenSet: (String) -> Unit = {},
     onRemove: (item: CollectionItemDto, wholeRow: Boolean, done: (String?) -> Unit) -> Unit = { _, _, done -> done(null) },
+    /** Opens the wishlist; null leaves its header button out. */
+    onOpenWishlist: (() -> Unit)? = null,
+    /** The card ids on the wishlist, for the hearts on the recent cards and in a card's details. */
+    wishlistedIds: Set<String> = emptySet(),
+    onToggleWishlist: ((CollectionItemDto) -> Unit)? = null,
 ) {
     val money = remember(state.prefs.currency, state.prefs.rateFromEur) {
         MoneyFormatter(state.prefs.currency, state.prefs.rateFromEur)
@@ -89,7 +95,7 @@ fun HomeScreen(
     ) {
         item {
             Column {
-                HomeHeader(connected = !state.offline, onRefresh = onRefresh, onOpenSettings = onOpenSettings, modifier = inset)
+                HomeHeader(connected = !state.offline, onRefresh = onRefresh, onOpenSettings = onOpenSettings, modifier = inset, onOpenWishlist = onOpenWishlist)
                 if (state.dashboardLoading || state.collectionLoading) {
                     LinearProgressIndicator(inset.fillMaxWidth().padding(top = 8.dp))
                 }
@@ -147,7 +153,7 @@ fun HomeScreen(
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         SectionHeader("Recently added", inset, onSeeAll = onOpenCollection)
-                        RecentCarousel(recents, state, onOpen = { openItem = it })
+                        RecentCarousel(recents, state, onOpen = { openItem = it }, wishlistedIds = wishlistedIds)
                     }
                 }
             }
@@ -209,5 +215,11 @@ fun HomeScreen(
         )
     }
 
-    openItem?.let { entry -> ItemDialog(entry, state, onRemove = onRemove, onClose = { openItem = null }) }
+    openItem?.let { entry ->
+        ItemDialog(
+            entry, state, onRemove = onRemove, onClose = { openItem = null },
+            isWishlisted = entry.wishlistCardId() in wishlistedIds,
+            onToggleWishlist = onToggleWishlist?.let { toggle -> { toggle(entry) } },
+        )
+    }
 }

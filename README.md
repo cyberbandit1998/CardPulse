@@ -57,6 +57,12 @@ The app warns you if it connects to a server in single-user mode.
   the server's own list of your most valuable cards, never a fixed one). Every list has a "See all", tapping a card
   opens its details, and tapping a set opens its checklist. A one-line warning says when some cards have no purchase
   price, which makes the gain look larger than it is.
+- **Wishlist:** the heart in the Home header opens the cards you want. Tap the heart on a card's details, on a card in a
+  set's checklist or on a search result in Add card to put it on the list (or take it off); wished-for cards wear a
+  small heart on their tiles. Each entry has a target price and a priority (Low, Medium, High), set in a sheet that
+  opens when you tap it, and is marked when its price reaches the target. Sort by recently added, name, set or price;
+  show all, missing only or owned. Swipe an entry away to remove it, with Undo. The list is kept on the phone (Room)
+  and follows your collection: cards you now own are marked owned, never removed.
 - **Sets:** every set your server lists, each as "owned / total" (18 / 132, or 0 / 230 for a set you have no cards from
   yet), plus any set you own cards from that the list lacks (such as one in another language). Narrow it to All, Owned,
   Incomplete (some of its cards owned) or Complete (every card owned); search by name, series or the

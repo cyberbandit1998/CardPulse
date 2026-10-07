@@ -54,6 +54,7 @@ import app.cardpulse.android.core.hasCatalogueImage
 import app.cardpulse.android.core.parseServerInstant
 import app.cardpulse.android.core.passing
 import app.cardpulse.android.core.takesItsPhotoWhenRemoved
+import app.cardpulse.android.core.wishlistCardId
 import app.cardpulse.android.ui.AccentTextButton
 import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.Banner
@@ -87,6 +88,10 @@ fun CollectionScreen(
     modifier: Modifier = Modifier,
     /** What the search box starts with, such as a set's name when the user came from the set's progress on Home. */
     initialQuery: String = "",
+    /** The card ids on the wishlist: their tiles wear a small heart, and a card's details show the heart filled. */
+    wishlistedIds: Set<String> = emptySet(),
+    /** Puts the entry's card on the wishlist or takes it off; null leaves the heart out of the details. */
+    onToggleWishlist: ((CollectionItemDto) -> Unit)? = null,
 ) {
     var query by rememberSaveable(initialQuery) { mutableStateOf(initialQuery) }
     var sort by rememberSaveable { mutableStateOf(SortOrder.RECENT) }
@@ -171,7 +176,7 @@ fun CollectionScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 items(shown, key = { it.id }) { entry ->
-                    CollectionTile(entry, state, onClick = { openItem = entry })
+                    CollectionTile(entry, state, onClick = { openItem = entry }, wishlisted = entry.wishlistCardId() in wishlistedIds)
                 }
             }
         }
@@ -188,7 +193,13 @@ fun CollectionScreen(
         )
     }
 
-    openItem?.let { entry -> ItemDialog(entry, state, onRemove = onRemove, onClose = { openItem = null }) }
+    openItem?.let { entry ->
+        ItemDialog(
+            entry, state, onRemove = onRemove, onClose = { openItem = null },
+            isWishlisted = entry.wishlistCardId() in wishlistedIds,
+            onToggleWishlist = onToggleWishlist?.let { toggle -> { toggle(entry) } },
+        )
+    }
 }
 
 @Composable
@@ -202,7 +213,7 @@ private fun EmptyNote(text: String, action: String? = null, onAction: () -> Unit
 }
 
 @Composable
-private fun CollectionTile(entry: CollectionItemDto, state: AppState, onClick: () -> Unit) {
+private fun CollectionTile(entry: CollectionItemDto, state: AppState, onClick: () -> Unit, wishlisted: Boolean = false) {
     Card(Modifier.clickable(onClick = onClick)) {
         Column(Modifier.padding(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Box {
@@ -220,6 +231,7 @@ private fun CollectionTile(entry: CollectionItemDto, state: AppState, onClick: (
                             .padding(horizontal = 6.dp, vertical = 2.dp),
                     )
                 }
+                if (wishlisted) WishlistBadge(Modifier.align(Alignment.TopStart).padding(4.dp))
             }
             Text(entry.card?.name.orEmpty(), style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
@@ -235,13 +247,18 @@ private fun CollectionTile(entry: CollectionItemDto, state: AppState, onClick: (
 
 private fun Modifier.cardAspect(): Modifier = this.aspectRatio(CARD_ASPECT)
 
-/** The details of one collection entry, with the way to remove it. Shared by the Collection tab and Home. */
+/**
+ * The details of one collection entry, with the way to remove it. Shared by the Collection tab and Home. With
+ * [onToggleWishlist] the title carries the wishlist heart, filled when [isWishlisted].
+ */
 @Composable
 internal fun ItemDialog(
     entry: CollectionItemDto,
     state: AppState,
     onRemove: (item: CollectionItemDto, wholeRow: Boolean, done: (String?) -> Unit) -> Unit,
     onClose: () -> Unit,
+    isWishlisted: Boolean = false,
+    onToggleWishlist: (() -> Unit)? = null,
 ) {
     val money = remember(state.prefs.currency, state.prefs.rateFromEur) { MoneyFormatter(state.prefs.currency, state.prefs.rateFromEur) }
     val hasOfficial = entry.card.hasCatalogueImage()
@@ -267,7 +284,12 @@ internal fun ItemDialog(
                 colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
             ) { Text("Remove…") }
         },
-        title = { Text(entry.card?.name.orEmpty()) },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(entry.card?.name.orEmpty(), modifier = Modifier.weight(1f))
+                if (onToggleWishlist != null) WishlistToggleButton(isWishlisted, onToggleWishlist)
+            }
+        },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 CardArt(entry, state.serverUrl, state.prefs, Modifier.fillMaxWidth().cardAspect(), large = true, source = source)

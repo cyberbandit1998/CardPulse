@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.cardpulse.android.core.CollectionItemDto
 import app.cardpulse.android.core.toReview
 import app.cardpulse.android.ui.screens.CollectionScreen
 import app.cardpulse.android.ui.screens.HomeScreen
@@ -39,6 +40,7 @@ import app.cardpulse.android.ui.screens.ScanScreen
 import app.cardpulse.android.ui.screens.SetChecklistScreen
 import app.cardpulse.android.ui.screens.SettingsScreen
 import app.cardpulse.android.ui.screens.SetsScreen
+import app.cardpulse.android.ui.screens.WishlistScreen
 import app.cardpulse.android.ui.theme.LocalDarkTheme
 import app.cardpulse.android.ui.theme.SystemBarIcons
 
@@ -46,15 +48,22 @@ import app.cardpulse.android.ui.theme.SystemBarIcons
 fun CardPulseApp(
     appVm: AppViewModel = viewModel(),
     scanVm: ScanViewModel = viewModel(),
+    wishlistVm: WishlistViewModel = viewModel(),
 ) {
     val app by appVm.state.collectAsState()
     val scan by scanVm.state.collectAsState()
     val session by scanVm.session.state.collectAsState()
+    val wishlistItems by wishlistVm.items.collectAsState()
+    val wishlistSort by wishlistVm.sort.collectAsState()
+    val wishlistFilter by wishlistVm.filter.collectAsState()
+    val wishlistedIds by wishlistVm.wishlistedIds.collectAsState()
     var tab by rememberSaveable { mutableIntStateOf(MainTab.HOME.ordinal) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showManualAdd by rememberSaveable { mutableStateOf(false) }
     /** The full list that "See all" under Most valuable opens. */
     var showMostValuable by rememberSaveable { mutableStateOf(false) }
+    /** The wishlist, opened from the heart in the Home header. */
+    var showWishlist by rememberSaveable { mutableStateOf(false) }
     /** What the Collection tab's search box starts with: a set's name, when the user came from a set's checklist. */
     var collectionSearch by rememberSaveable { mutableStateOf("") }
     /** The id of the set whose checklist is open, if one is: it covers the tabs, and Back closes it. */
@@ -64,6 +73,7 @@ fun CardPulseApp(
         if (!app.signedIn) {
             showManualAdd = false
             showMostValuable = false
+            showWishlist = false
             openSet = null
         }
     }
@@ -72,6 +82,13 @@ fun CardPulseApp(
     LaunchedEffect(app.signedIn, app.mustChangePassword) {
         if (app.signedIn && !app.mustChangePassword) scanVm.refreshQuietly()
     }
+    // Wishlist entries follow the collection: cards the user now owns are marked owned and prices are refreshed. Entries
+    // are never removed here; the user decides that.
+    LaunchedEffect(app.collection, app.collectionLoaded, app.prefs.priceField) {
+        if (app.collectionLoaded) wishlistVm.syncWithCollection(app.collection, app.prefs.priceField)
+    }
+    val priceField = app.prefs.priceField
+    val toggleItem: (CollectionItemDto) -> Unit = { wishlistVm.toggle(it, priceField) }
     val openManualAdd = { showManualAdd = true }
     val openCollection = { search: String ->
         collectionSearch = search
@@ -81,6 +98,7 @@ fun CardPulseApp(
     // The open camera uses the whole screen on black, over whichever tab is showing: no tab bar, and it shows its own
     // messages. Closing it goes back to that tab.
     val cameraOpen = app.signedIn && !app.mustChangePassword && !showSettings && !showManualAdd && !showMostValuable &&
+        !showWishlist &&
         scan.stage == ScanStage.RAPID
     // Light icons on the status and navigation bars wherever the screen behind them is dark.
     SystemBarIcons(lightIcons = LocalDarkTheme.current || cameraOpen)
@@ -124,6 +142,8 @@ fun CardPulseApp(
                     app = app,
                     vm = scanVm,
                     onClose = { showManualAdd = false },
+                    wishlistedIds = wishlistedIds,
+                    onToggleWishlist = { card -> wishlistVm.toggle(card, priceField) },
                     // The padding already leaves room for the system bars; the keyboard's padding must not count them twice.
                     modifier = Modifier.padding(padding).consumeWindowInsets(padding),
                 )
@@ -137,6 +157,27 @@ fun CardPulseApp(
                     state = app,
                     onBack = { showMostValuable = false },
                     onRemove = appVm::removeFromCollection,
+                    modifier = Modifier.padding(padding),
+                    wishlistedIds = wishlistedIds,
+                    onToggleWishlist = toggleItem,
+                )
+            }
+        }
+
+        showWishlist -> {
+            BackHandler { showWishlist = false }
+            Scaffold { padding ->
+                WishlistScreen(
+                    state = app,
+                    items = wishlistItems,
+                    sort = wishlistSort,
+                    filter = wishlistFilter,
+                    onSort = wishlistVm::setSort,
+                    onFilter = wishlistVm::setFilter,
+                    onRemove = { item -> wishlistVm.remove(item.cardId) },
+                    onUndoRemove = wishlistVm::restore,
+                    onSave = wishlistVm::update,
+                    onBack = { showWishlist = false },
                     modifier = Modifier.padding(padding),
                 )
             }
@@ -184,6 +225,9 @@ fun CardPulseApp(
                                 onOpenSets = { tab = MainTab.SETS.ordinal },
                                 onOpenSet = { id -> openSet = id },
                                 onRemove = appVm::removeFromCollection,
+                                onOpenWishlist = { showWishlist = true },
+                                wishlistedIds = wishlistedIds,
+                                onToggleWishlist = toggleItem,
                             )
                             MainTab.SETS -> SetsScreen(
                                 state = app,
@@ -198,6 +242,8 @@ fun CardPulseApp(
                                 onAddCard = openManualAdd,
                                 modifier = contentModifier,
                                 initialQuery = collectionSearch,
+                                wishlistedIds = wishlistedIds,
+                                onToggleWishlist = toggleItem,
                             )
                             MainTab.PORTFOLIO -> PortfolioScreen(
                                 state = app,
@@ -222,6 +268,9 @@ fun CardPulseApp(
                             openSet = null
                             openCollection(name)
                         },
+                        wishlistedIds = wishlistedIds,
+                        onToggleWishlist = { card, set -> wishlistVm.toggle(card, set, priceField) },
+                        onToggleWishlistItem = toggleItem,
                     )
                 }
             }
