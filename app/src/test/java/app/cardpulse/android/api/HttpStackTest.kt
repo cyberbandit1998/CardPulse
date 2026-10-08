@@ -246,6 +246,119 @@ class HttpStackTest {
         assertEquals("Bearer fixture-token-not-a-real-credential", next().getHeader("Authorization"))
     }
 
+    // --- wishlist ------------------------------------------------------------------------------
+
+    @Test
+    fun `the wishlist is one get and every row comes with its card and set`() = runBlocking {
+        server.enqueue(fixture("wishlist"))
+        val result = repo.loadWishlist()
+        val request = next()
+        assertEquals("GET", request.method)
+        assertEquals("/api/wishlist/", request.path)
+        assertEquals(6, result.items.size)
+        assertEquals(0, result.unreadable)
+        val first = result.items.first()
+        assertEquals("Charizard ex", first.card?.name)
+        assertEquals("Obsidian Flames", first.card?.setRef?.name)
+        assertEquals(8.5, first.card?.priceTrend!!, 0.0)
+    }
+
+    @Test
+    fun `a wishlist row the app cannot read is counted instead of dropped silently`() = runBlocking {
+        server.enqueue(json("""[{"id": 1, "card_id": "a-1_en", "quantity": 1}, {"id": "not a number"}]"""))
+        val result = repo.loadWishlist()
+        assertEquals(listOf("a-1_en"), result.items.map { it.cardId })
+        assertEquals(1, result.unreadable)
+    }
+
+    @Test
+    fun `adding a card posts its id and one copy`() = runBlocking {
+        server.enqueue(fixture("wishlist_added"))
+        val added = repo.addToWishlist("sv2-002_en")
+        val request = next()
+        assertEquals("POST", request.method)
+        assertEquals("/api/wishlist/", request.path)
+        assertEquals("""{"card_id":"sv2-002_en","quantity":1}""", request.bodyText())
+        assertEquals("sv2-002_en", added.cardId)
+        assertEquals(1, added.quantity)
+        assertEquals("Skiploom", added.card?.name)
+        assertEquals("a card that was not on the list needs no second call", 1, server.requestCount)
+    }
+
+    @Test
+    fun `a card the server already had comes back with a raised quantity and the quantity is put back`() = runBlocking {
+        server.enqueue(fixture("wishlist_added_again")) // the POST: the server raised the quantity wanted to 2
+        server.enqueue(fixture("wishlist_added")) // the PUT that puts it back to 1
+        val added = repo.addToWishlist("sv2-002_en")
+        assertEquals("POST", next().method)
+        val put = next()
+        assertEquals("PUT", put.method)
+        assertEquals("/api/wishlist/7", put.path)
+        assertEquals("""{"quantity":1}""", put.bodyText())
+        assertEquals(1, added.quantity)
+    }
+
+    @Test
+    fun `if the quantity cannot be put back the added row is still handed over`() = runBlocking {
+        server.enqueue(fixture("wishlist_added_again"))
+        server.enqueue(json("""{"detail": "boom"}""", code = 500))
+        val added = repo.addToWishlist("sv2-002_en")
+        assertEquals("sv2-002_en", added.cardId)
+        assertEquals(2, added.quantity)
+    }
+
+    @Test
+    fun `a target price is put on its own and names nothing else`() = runBlocking {
+        server.enqueue(fixture("wishlist_target_set"))
+        val updated = repo.setWishlistTarget(7, 0.25)
+        val request = next()
+        assertEquals("PUT", request.method)
+        assertEquals("/api/wishlist/7", request.path)
+        assertEquals("""{"price_alert_below":0.25}""", request.bodyText())
+        assertEquals(0.25, updated.priceAlertBelow!!, 0.0)
+        assertEquals("Skiploom", updated.card?.name)
+    }
+
+    @Test
+    fun `clearing a target sends an explicit null because the server only changes what is named`() = runBlocking {
+        server.enqueue(fixture("wishlist_target_cleared"))
+        val updated = repo.setWishlistTarget(7, null)
+        assertEquals("""{"price_alert_below":null}""", next().bodyText())
+        assertNull(updated.priceAlertBelow)
+    }
+
+    @Test
+    fun `removing a card deletes its wishlist row`() = runBlocking {
+        server.enqueue(fixture("wishlist_removed"))
+        repo.removeFromWishlist(7)
+        val request = next()
+        assertEquals("DELETE", request.method)
+        assertEquals("/api/wishlist/7", request.path)
+    }
+
+    @Test
+    fun `a wishlist row that is gone shows the server's words`() = runBlocking {
+        server.enqueue(fixture("wishlist_update_not_found", code = 404))
+        val error = runCatching { repo.setWishlistTarget(9999, 1.0) }.exceptionOrNull()
+        assertTrue(error is HttpException)
+        assertEquals(404, (error as HttpException).code())
+        assertEquals("Wishlist item not found", error.userMessage())
+    }
+
+    @Test
+    fun `every wishlist call carries the sign-in like every other call`() = runBlocking {
+        session.token = "fixture-token-not-a-real-credential"
+        server.enqueue(fixture("wishlist"))
+        server.enqueue(fixture("wishlist_added"))
+        server.enqueue(fixture("wishlist_target_set"))
+        server.enqueue(fixture("wishlist_removed"))
+        repo.loadWishlist()
+        repo.addToWishlist("sv2-002_en")
+        repo.setWishlistTarget(7, 0.25)
+        repo.removeFromWishlist(7)
+        repeat(4) { assertEquals("Bearer fixture-token-not-a-real-credential", next().getHeader("Authorization")) }
+    }
+
     @Test
     fun `removing a card deletes its collection row`() = runBlocking {
         server.enqueue(json("""{"message": "Removed from collection"}"""))

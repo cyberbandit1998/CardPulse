@@ -17,13 +17,20 @@ import app.cardpulse.android.core.SetChecklistDto
 import app.cardpulse.android.core.SetDto
 import app.cardpulse.android.core.ThemeMode
 import app.cardpulse.android.core.UserDto
+import app.cardpulse.android.core.WishlistItemDto
+import app.cardpulse.android.core.WishlistPriorities
+import app.cardpulse.android.core.WishlistPriority
 import app.cardpulse.android.core.attempt
+import app.cardpulse.android.core.cardIds
 import app.cardpulse.android.core.isCustomCard
 import app.cardpulse.android.core.lookUpPrices
 import app.cardpulse.android.core.replacing
 import app.cardpulse.android.core.toChartPoints
 import app.cardpulse.android.core.userMessage
+import app.cardpulse.android.core.withAdded
+import app.cardpulse.android.core.withUpdated
 import app.cardpulse.android.core.without
+import app.cardpulse.android.core.withoutCard
 import coil3.SingletonImageLoader
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -80,6 +87,19 @@ data class AppState(
     val checklists: Map<String, SetChecklistDto> = emptyMap(),
     val checklistsLoading: Set<String> = emptySet(),
     val checklistErrors: Map<String, String> = emptyMap(),
+
+    /** The wishlist, newest first. Loaded with everything else when the app opens, so a heart can say whether a card is on it. */
+    val wishlist: List<WishlistItemDto> = emptyList(),
+    val wishlistLoaded: Boolean = false,
+    val wishlistLoading: Boolean = false,
+    /** Rows the server sent that this app could not read. */
+    val wishlistUnreadable: Int = 0,
+    /** Why the wishlist could not be loaded. Shown on the Wishlist screen itself, not as a banner on every tab. */
+    val wishlistError: String? = null,
+    /** Cards whose adding or removing is on its way to the server. A heart shows such a card as it is about to be. */
+    val wishlistPending: Set<String> = emptySet(),
+    /** How much each wishlist card is wanted, by card id. Kept on this phone: the server's wishlist has no priority. */
+    val wishlistPriorities: Map<String, WishlistPriority> = emptyMap(),
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -244,8 +264,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             refreshPrefs()
             val dashboard = async { refreshDashboardNow() }
             val collection = async { refreshCollectionNow() }
+            val wishlist = async { refreshWishlistNow() }
             dashboard.await()
             collection.await()
+            wishlist.await()
         }
     }
 
@@ -374,6 +396,118 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
         }
+    }
+
+    // --- wishlist -----------------------------------------------------------------------------
+
+    /**
+     * Loads the wishlist unless it is loaded already (or on its way); [force] loads it again, which is the way to try again
+     * after a failure. A failure is kept for the Wishlist screen to show, not sent to the banner every tab shares.
+     */
+    fun loadWishlist(force: Boolean = false) {
+        val current = _state.value
+        if (current.wishlistLoading) return
+        if (current.wishlistLoaded && !force) return
+        viewModelScope.launch { refreshWishlistNow() }
+    }
+
+    private suspend fun refreshWishlistNow() {
+        _state.update { it.copy(wishlistLoading = true, wishlistError = null) }
+        attempt { repo.loadWishlist() }
+            .onSuccess { result ->
+                // The priorities kept on this phone, without those of cards that are no longer listed (unless some rows could
+                // not be read, which would make a card that is still listed look gone).
+                val kept = attempt { store.wishlistPriorities() }.getOrDefault(emptyMap())
+                val levels = if (result.unreadable == 0) WishlistPriorities.keepOnly(kept, result.items.cardIds()) else kept
+                if (levels.size != kept.size) attempt { store.saveWishlistPriorities(levels) }
+                _state.update {
+                    it.copy(
+                        wishlist = result.items,
+                        wishlistLoaded = true,
+                        wishlistLoading = false,
+                        wishlistUnreadable = result.unreadable,
+                        wishlistPriorities = levels,
+                        offline = false,
+                    )
+                }
+            }
+            .onFailure { error ->
+                _state.update { it.copy(wishlistLoading = false, wishlistError = error.userMessage(), offline = error.isNoConnection()) }
+            }
+    }
+
+    /**
+     * Puts a card on the wishlist, or takes it off if it is on it: what pressing a heart does. A card that is already listed is
+     * only ever removed here, never added again, because the server answers that by raising the quantity wanted. [done] gets
+     * null when it worked, or the reason when it didn't. Nothing happens before the wishlist has loaded (nothing honest can be
+     * said about a card until then), nor while the card's last change is still on its way.
+     */
+    fun toggleWishlist(cardId: String, done: (String?) -> Unit = {}) {
+        val current = _state.value
+        if (cardId.isBlank() || !current.wishlistLoaded || cardId in current.wishlistPending) return
+        val listed = current.wishlist.firstOrNull { it.cardId == cardId }
+        _state.update { it.copy(wishlistPending = it.wishlistPending + cardId) }
+        viewModelScope.launch {
+            attempt {
+                if (listed != null) {
+                    repo.removeFromWishlist(listed.id)
+                    null
+                } else {
+                    repo.addToWishlist(cardId)
+                }
+            }
+                .onSuccess { added ->
+                    // The list and the pending mark change together, so the heart does not flicker.
+                    _state.update {
+                        it.copy(
+                            wishlist = if (added != null) it.wishlist.withAdded(added) else it.wishlist.withoutCard(cardId),
+                            wishlistPending = it.wishlistPending - cardId,
+                        )
+                    }
+                    if (added == null) forgetPriority(cardId)
+                    done(null)
+                }
+                .onFailure { error ->
+                    if (listed != null && error is HttpException && error.code() == 404) {
+                        // Already gone (removed somewhere else): that is what was wanted.
+                        _state.update { it.copy(wishlist = it.wishlist.withoutCard(cardId), wishlistPending = it.wishlistPending - cardId) }
+                        forgetPriority(cardId)
+                        done(null)
+                    } else {
+                        _state.update { it.copy(wishlistPending = it.wishlistPending - cardId) }
+                        done(error.userMessage())
+                    }
+                }
+        }
+    }
+
+    /**
+     * Sets the target price of a wishlist card, in euros, or with null takes it away. It is the server's "alert below" price, so
+     * the website shows it too. [done] gets null when it worked, or the reason when it didn't.
+     */
+    fun setWishlistTarget(item: WishlistItemDto, targetEur: Double?, done: (String?) -> Unit) {
+        viewModelScope.launch {
+            attempt { repo.setWishlistTarget(item.id, targetEur) }
+                .onSuccess { updated ->
+                    // Keep the card the row already has, should an older server answer without one.
+                    val row = if (updated.card == null) updated.copy(card = item.card) else updated
+                    _state.update { it.copy(wishlist = it.wishlist.withUpdated(row)) }
+                    done(null)
+                }
+                .onFailure { error -> done(error.userMessage()) }
+        }
+    }
+
+    /** Sets how much a wishlist card is wanted, or with null clears it. Kept on this phone only. */
+    fun setWishlistPriority(cardId: String, priority: WishlistPriority?) {
+        val levels = _state.value.wishlistPriorities.let { if (priority == null) it - cardId else it + (cardId to priority) }
+        _state.update { it.copy(wishlistPriorities = levels) }
+        viewModelScope.launch { attempt { store.saveWishlistPriorities(levels) } }
+    }
+
+    /** A card taken off the wishlist keeps no priority for the day it is put back. */
+    private fun forgetPriority(cardId: String) {
+        if (cardId in _state.value.wishlistPriorities) setWishlistPriority(cardId, null)
     }
 
     // --- sets ---------------------------------------------------------------------------------

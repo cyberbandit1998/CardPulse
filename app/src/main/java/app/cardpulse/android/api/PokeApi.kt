@@ -10,9 +10,16 @@ import app.cardpulse.android.core.CustomCardRequest
 import app.cardpulse.android.core.DashboardDto
 import app.cardpulse.android.core.ExchangeRateDto
 import app.cardpulse.android.core.ForcePasswordRequest
+import app.cardpulse.android.core.FriendDto
+import app.cardpulse.android.core.FriendRequestBody
+import app.cardpulse.android.core.FriendRequestResultDto
+import app.cardpulse.android.core.FriendsMeDto
+import app.cardpulse.android.core.FriendsOverviewDto
 import app.cardpulse.android.core.HealthDto
+import app.cardpulse.android.core.InviteCodeDto
 import app.cardpulse.android.core.LoginResponseDto
 import app.cardpulse.android.core.MoverDto
+import app.cardpulse.android.core.OwnTradeListDto
 import app.cardpulse.android.core.ResolveAndAddRequest
 import app.cardpulse.android.core.ResolveAndAddResponse
 import app.cardpulse.android.core.ResolveRequest
@@ -21,9 +28,16 @@ import app.cardpulse.android.core.ScanJobDto
 import app.cardpulse.android.core.ScanJobListDto
 import app.cardpulse.android.core.SetChecklistDto
 import app.cardpulse.android.core.SetDto
+import app.cardpulse.android.core.SharingDto
+import app.cardpulse.android.core.SharingUpdateBody
 import app.cardpulse.android.core.SnapshotDto
 import app.cardpulse.android.core.SyncStatusDto
+import app.cardpulse.android.core.TradeEntryDto
+import app.cardpulse.android.core.TradeMatchDto
+import app.cardpulse.android.core.TradeQuantityBody
 import app.cardpulse.android.core.UserDto
+import app.cardpulse.android.core.WishlistAddRequest
+import app.cardpulse.android.core.WishlistItemDto
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -131,6 +145,86 @@ interface PokeApi {
      */
     @GET("api/sets/{id}/checklist")
     suspend fun setChecklist(@Path("id") setId: String): SetChecklistDto
+
+    // --- wishlist ---------------------------------------------------------------------------
+    /** The whole wishlist, newest first, each row with its card (set and prices included). Decoded row by row. */
+    @GET("api/wishlist/")
+    suspend fun wishlist(): JsonArray
+
+    /**
+     * Puts a card on the wishlist, by its id. For a card that is already listed the server does not fail: it raises the quantity
+     * wanted, so the app only adds cards it knows are not on the list. The answer is the row.
+     */
+    @POST("api/wishlist/")
+    suspend fun addToWishlist(@Body body: WishlistAddRequest): WishlistItemDto
+
+    /**
+     * Changes only the fields [body] names (`wishlistTargetBody`, `wishlistQuantityBody`), so a field left out stays as it is.
+     * The answer is the row as the server now has it.
+     */
+    @PUT("api/wishlist/{id}")
+    suspend fun updateWishlistItem(@Path("id") itemId: Int, @Body body: JsonObject): WishlistItemDto
+
+    /** Takes a card off the wishlist. Any success answer will do, so nothing is parsed. */
+    @DELETE("api/wishlist/{id}")
+    suspend fun removeFromWishlist(@Path("id") itemId: Int)
+
+    // --- friends and trading ----------------------------------------------------------------
+    // Added to PokéCollector by CardPulse's server update (the server folder of this repository). A server without it answers
+    // `GET api/friends/me` with 404, which is how the app knows. Who may see what is decided by the server on every request.
+
+    /** The user's invite code, what they share and the counts. Also how the app finds out the server has Friends. */
+    @GET("api/friends/me")
+    suspend fun friendsMe(): FriendsMeDto
+
+    @GET("api/friends/")
+    suspend fun friendsOverview(): FriendsOverviewDto
+
+    /** Asks someone to be friends, by username or invite code. They have to accept. */
+    @POST("api/friends/requests")
+    suspend fun sendFriendRequest(@Body body: FriendRequestBody): FriendRequestResultDto
+
+    @POST("api/friends/requests/{id}/accept")
+    suspend fun acceptFriendRequest(@Path("id") requestId: Int): FriendDto
+
+    /** Any success answer will do, so nothing is parsed. */
+    @POST("api/friends/requests/{id}/decline")
+    suspend fun declineFriendRequest(@Path("id") requestId: Int)
+
+    /** Takes back a request the user made. Any success answer will do, so nothing is parsed. */
+    @DELETE("api/friends/requests/{id}")
+    suspend fun cancelFriendRequest(@Path("id") requestId: Int)
+
+    /** Ends a friendship. Any success answer will do, so nothing is parsed. */
+    @DELETE("api/friends/{id}")
+    suspend fun removeFriend(@Path("id") friendId: Int)
+
+    /** Changes only the sections the body names. The answer is what the user shares now. */
+    @PUT("api/friends/me/sharing")
+    suspend fun updateSharing(@Body body: SharingUpdateBody): SharingDto
+
+    @POST("api/friends/me/invite-code")
+    suspend fun newInviteCode(): InviteCodeDto
+
+    @GET("api/friends/trade-list")
+    suspend fun ownTradeList(): OwnTradeListDto
+
+    /** How many copies of one collection row are For Trade (0 takes the row off). */
+    @PUT("api/friends/trade-list/{id}")
+    suspend fun setTradeQuantity(@Path("id") itemId: Int, @Body body: TradeQuantityBody): TradeEntryDto
+
+    /** What a friend shares of their collection: rows like the user's own, without what was paid. Decoded row by row. */
+    @GET("api/friends/{id}/collection")
+    suspend fun friendCollection(@Path("id") friendId: Int): JsonArray
+
+    @GET("api/friends/{id}/wishlist")
+    suspend fun friendWishlist(@Path("id") friendId: Int): JsonArray
+
+    @GET("api/friends/{id}/trade-list")
+    suspend fun friendTradeList(@Path("id") friendId: Int): JsonArray
+
+    @GET("api/friends/{id}/trade-match")
+    suspend fun friendTradeMatch(@Path("id") friendId: Int): TradeMatchDto
 
     /** Makes a card that isn't in the catalogue. It belongs to this user and gets an id starting "custom-". */
     @POST("api/cards/custom")

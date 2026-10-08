@@ -1,0 +1,2975 @@
+From eae934d0fb63c691aa0f8007ae3111afabe377d8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 7 Oct 2026 18:33:09 +0000
+Subject: [PATCH] feat: friends, per-section sharing and For Trade lists
+
+Users of one server can add each other as friends (by username or invite code, with accept/decline), choose for the
+collection, the wishlist and the For Trade list on their own whether each is private, friends-only or public, mark
+individual copies of a collection row For Trade, and compare two users: their For Trade cards that are on your wishlist,
+and yours that are on theirs.
+
+Everything starts private. Who may see what is decided in one place (services/friends.py) and checked by the server on
+every request; the router and the older endpoints that show one user to another all ask it. A person who may not see
+something gets 403 if they are a friend and 404 otherwise, so a private account looks like a missing one. What was paid,
+price alerts, photos and custom cards never leave their owner.
+
+The older endpoints that let any signed-in user read another user's whole collection now follow the same setting:
+GET /api/collection/user/{id}, and the social leaderboard, compare and achievements routes. What someone paid and when
+they added a card are left out of the first for everyone but the owner. The leaderboard, a comparison and another person's
+achievements never carry an invested amount or a profit or loss (the Investor badge says whether someone is in profit, so
+it is left out of another person's list). Two upstream tests that relied on the old behaviour are updated to share the
+collection first.
+
+Adds three tables (friend_settings, friend_links, trade_list), created on start-up; no existing table changes.
+Documented in docs/FRIENDS.md.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01384BC8nHuYg1SpN4faoQoG
+---
+ README.md                                    |   6 +-
+ backend/api/auth.py                          |  10 +
+ backend/api/collection.py                    |  19 +-
+ backend/api/friends.py                       | 489 +++++++++++
+ backend/api/social.py                        |  30 +-
+ backend/main.py                              |   3 +-
+ backend/models.py                            |  83 ++
+ backend/services/friends.py                  | 591 ++++++++++++++
+ backend/tests/friends_world.py               | 185 +++++
+ backend/tests/test_custom_card_ownership.py  |   8 +
+ backend/tests/test_friends.py                | 818 +++++++++++++++++++
+ backend/tests/test_friends_http.py           | 262 ++++++
+ backend/tests/test_public_wishlists_decks.py |   8 +-
+ docs/BACKEND.md                              |  31 +-
+ docs/FRIENDS.md                              | 123 +++
+ 15 files changed, 2653 insertions(+), 13 deletions(-)
+ create mode 100644 backend/api/friends.py
+ create mode 100644 backend/services/friends.py
+ create mode 100644 backend/tests/friends_world.py
+ create mode 100644 backend/tests/test_friends.py
+ create mode 100644 backend/tests/test_friends_http.py
+ create mode 100644 docs/FRIENDS.md
+
+diff --git a/README.md b/README.md
+index de9080c..2c48896 100644
+--- a/README.md
++++ b/README.md
+@@ -110,8 +110,9 @@ A **Real Deck** represents cards that have actually been set aside. It accepts o
+ Binders, Planned Binders, Planned Decks, and Real Decks share the existing `binders` and `binder_cards` tables and common Card List components. Planned rows store the localized `Card.id` printing identity, while Real Deck allocations link to exact collection rows. The compatibility API remains available at `/api/decks` with CRUD routes and nested `/entries` operations.
+ 
+ ### 🏆 Social & Community
+-- Leaderboard, trainer comparison, and achievements in multi-user mode
+-- View other trainers' collections from the Leaderboard
++- Friends and trading in multi-user mode: add friends by username or invite code, choose for the collection, the Wishlist and the For Trade list on their own whether they are private, friends-only or public (everything starts private), mark individual copies For Trade, and compare two users' For Trade lists and Wishlists - see [`docs/FRIENDS.md`](docs/FRIENDS.md)
++- Leaderboard, trainer comparison, and achievements in multi-user mode, limited to users who share their collection with you and never showing what anyone paid or made
++- View the collections of trainers who share them with you from the Leaderboard
+ - Optional public trainer profiles with trainer-name URLs, a public directory, individually shared collection Binders and Decks, configurable Wishlist visibility, and opt-in market values
+ - Public Wishlists expose catalogue details and requested quantities only; public Decks reuse the read-only Deck composition, validation, analytics, and probability views without exposing ownership or allocation data
+ - Admin-controlled public sharing switch, disabled by default on new and upgraded installations
+@@ -486,6 +487,7 @@ Published installations pull frontend and backend images from `ghcr.io` and Post
+ | [`docs/CARD_SYSTEM.md`](docs/CARD_SYSTEM.md) | Public card components, variants, gallery, and extension workflow |
+ | [`docs/CARD_LISTS.md`](docs/CARD_LISTS.md) | Binders, planned lists, Decks, owned-copy allocation, conversions, and CSV workflows |
+ | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | GHCR images, Compose installation, updates, rollback, and release automation |
++| [`docs/FRIENDS.md`](docs/FRIENDS.md) | Friends, per-section sharing, For Trade, trade match, and how privacy is enforced |
+ | [`docs/POKEDEX.md`](docs/POKEDEX.md) | National Pokédex completion, metadata, images, routes, and Cardmarket links |
+ | [`docs/REVERSE_PROXY_AUTH.md`](docs/REVERSE_PROXY_AUTH.md) | Forward-auth exceptions for public profiles and binders |
+ | [`docs/scanner-providers.md`](docs/scanner-providers.md) | Gemini, hosted OpenAI, Ollama, and compatible scanner-provider setup |
+diff --git a/backend/api/auth.py b/backend/api/auth.py
+index 9d88ed2..375f1c7 100644
+--- a/backend/api/auth.py
++++ b/backend/api/auth.py
+@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
+ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+ from jose import JWTError
+ from pydantic import BaseModel
++from sqlalchemy import or_
+ from sqlalchemy.exc import IntegrityError
+ from sqlalchemy.orm import Session
+ 
+@@ -308,6 +309,8 @@ def delete_user(
+         CollectionCardPhoto,
+         CollectionItem,
+         CustomCardMatch,
++        FriendLink,
++        FriendSettings,
+         ImageCache,
+         PortfolioSnapshot,
+         PriceHistory,
+@@ -316,6 +319,7 @@ def delete_user(
+         ProductPurchase,
+         Trade,
+         TradeItem,
++        TradeListEntry,
+         UserSetting,
+         WishlistItem,
+     )
+@@ -332,6 +336,12 @@ def delete_user(
+     db.query(ProductLedgerEntry).filter(ProductLedgerEntry.user_id == user_id).delete()
+     db.query(ProductCard).filter(ProductCard.user_id == user_id).delete()
+     db.query(CollectionCardPhoto).filter(CollectionCardPhoto.user_id == user_id).delete()
++    # Friends and sharing: the For Trade list points at collection rows, so it goes before them.
++    db.query(TradeListEntry).filter(TradeListEntry.user_id == user_id).delete(synchronize_session=False)
++    db.query(FriendLink).filter(
++        or_(FriendLink.user_low_id == user_id, FriendLink.user_high_id == user_id)
++    ).delete(synchronize_session=False)
++    db.query(FriendSettings).filter(FriendSettings.user_id == user_id).delete(synchronize_session=False)
+     db.query(CollectionItem).filter(CollectionItem.user_id == user_id).delete()
+     db.query(WishlistItem).filter(WishlistItem.user_id == user_id).delete()
+     db.query(ProductPurchase).filter(ProductPurchase.user_id == user_id).delete()
+diff --git a/backend/api/collection.py b/backend/api/collection.py
+index b345598..653305f 100644
+--- a/backend/api/collection.py
++++ b/backend/api/collection.py
+@@ -18,6 +18,7 @@ from services.card_fallbacks import apply_cross_language_fallbacks, build_missin
+ from services.card_numbers import card_number_matches
+ from services.collection_photos import MAX_UPLOAD_BYTES, InvalidPhoto, normalize_photo
+ from services.card_visibility import visible_any_card_filter, visible_card_filter
++from services.friends import can_view as can_view_section
+ from services.text_search import accent_insensitive_contains, json_array_text_matches, normalize_search_term
+ from services.binder_allocations import (
+     collection_binder_allocation_counts,
+@@ -541,10 +542,17 @@ def get_user_collection(
+     current_user: User = Depends(get_current_user),
+     db: Session = Depends(get_db),
+ ):
+-    """View another user's collection (read-only). Requires authentication."""
++    """View another user's collection (read-only). Requires authentication, and that its owner shares it with you.
++
++    A collection is private until its owner chooses to share it with friends or with everyone on the server
++    (services/friends.py). Someone who may not see it is told there is no such user, as for a user who does not exist.
++    """
+     target_user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+     if not target_user:
+         raise HTTPException(status_code=404, detail="User not found")
++    own = target_user.id == current_user.id
++    if not own and not can_view_section(db, current_user.id, target_user.id, "collection"):
++        raise HTTPException(status_code=404, detail="User not found")
+     query = db.query(CollectionItem).join(Card, Card.id == CollectionItem.card_id).options(
+         joinedload(CollectionItem.card).joinedload(Card.set_ref)
+     ).filter(
+@@ -554,7 +562,14 @@ def get_user_collection(
+         # binders and template browser.
+         visible_card_filter(db, user_id, "all"),
+     )
+-    return _annotate_standard_legality(query.all(), _collection_standard_legal_fingerprints(db))
++    items = _annotate_standard_legality(query.all(), _collection_standard_legal_fingerprints(db))
++    if own:
++        return items
++    # What someone paid, and when they added a card, are not part of what they share.
++    return [
++        CollectionItemResponse.model_validate(item).model_copy(update={"purchase_price": None, "added_at": None})
++        for item in items
++    ]
+ 
+ 
+ @router.get("/", response_model=List[CollectionItemResponse])
+diff --git a/backend/api/friends.py b/backend/api/friends.py
+new file mode 100644
+index 0000000..bdbaad0
+--- /dev/null
++++ b/backend/api/friends.py
+@@ -0,0 +1,489 @@
++"""Friends, sharing and trading between the users of one server.
++
++Every rule about who may see what is in services/friends.py; this module only turns requests into calls to it and rows into
++responses. A response never carries more than the projection described there: purchase prices, added dates, photos, price
++alerts and custom cards stay with their owner.
++
++Nothing is shared until its owner chooses (docs/FRIENDS.md). Sharing is checked here, on the server, for every request: a
++client that hides a tab it was not allowed to open gets no more than one that asks for it anyway.
++"""
++
++import datetime
++from typing import List, Literal, Optional
++
++from fastapi import APIRouter, Depends, HTTPException, Response
++from pydantic import BaseModel, ConfigDict, Field, model_validator
++from sqlalchemy.orm import Session
++
++from api.auth import get_current_user, multi_user_enabled
++from api.social import _card_payload
++from database import get_db
++from models import FriendLink, User
++from schemas import CardWithSet
++from services import friends as fr
++
++SharingLevel = Literal["private", "friends", "public"]
++
++
++def _private_response(response: Response) -> None:
++    """These responses are one person's data: a shared cache must not keep them."""
++    response.headers["Cache-Control"] = "private, no-store"
++
++
++router = APIRouter(dependencies=[Depends(_private_response)])
++
++
++def get_social_user(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
++    """The signed-in user, once the server is known to ask everyone to sign in.
++
++    With multi-user mode off nobody has to, and a request without a token acts as the admin. Friends and sharing mean nothing
++    there, and must not let an anonymous visitor see what friends of the admin have shared.
++    """
++    if not multi_user_enabled(db):
++        raise HTTPException(
++            status_code=403,
++            detail="Friends needs multi-user mode. With it off nobody has to sign in, so nothing can be kept private.",
++        )
++    return current_user
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Response shapes
++# ---------------------------------------------------------------------------------------------------------------------
++
++class PersonOut(BaseModel):
++    id: int
++    username: str
++    avatar_id: Optional[int] = None
++
++
++class SharingOut(BaseModel):
++    """What the user shares, section by section."""
++
++    collection: SharingLevel = "private"
++    wishlist: SharingLevel = "private"
++    trade: SharingLevel = "private"
++
++
++class SharedFlags(BaseModel):
++    """Which sections of another person the signed-in user may see."""
++
++    collection: bool = False
++    wishlist: bool = False
++    trade: bool = False
++
++
++class CountsOut(BaseModel):
++    friends: int = 0
++    incoming: int = 0
++    outgoing: int = 0
++    for_trade_cards: int = 0
++
++
++class MeOut(BaseModel):
++    """The signed-in user's side of Friends. Asking for it is also how a client learns the server has Friends at all."""
++
++    version: int = 1
++    user: PersonOut
++    invite_code: str
++    sharing: SharingOut
++    counts: CountsOut
++
++
++class FriendOut(PersonOut):
++    since: Optional[datetime.datetime] = None
++    # What this friend lets the signed-in user see.
++    shares: SharedFlags
++
++
++class RequestOut(BaseModel):
++    id: int
++    # The other person: the one who asked, for an incoming request; the one who was asked, for an outgoing one.
++    user: PersonOut
++    created_at: Optional[datetime.datetime] = None
++
++
++class OverviewOut(BaseModel):
++    friends: List[FriendOut]
++    incoming: List[RequestOut]
++    outgoing: List[RequestOut]
++
++
++class RequestResult(BaseModel):
++    # "pending": waiting for the other person to answer. "accepted": they had asked first, so you are friends now.
++    status: Literal["pending", "accepted"]
++    request_id: int
++    user: PersonOut
++
++
++class ProfileRequestOut(BaseModel):
++    id: int
++    direction: Literal["incoming", "outgoing"]
++
++
++class ProfileOut(BaseModel):
++    user: PersonOut
++    is_friend: bool
++    request: Optional[ProfileRequestOut] = None
++    shared: SharedFlags
++
++
++class SharedCard(CardWithSet):
++    """A catalogue card as another person sees it: the catalogue's own data and prices, nothing the owner added."""
++
++    has_custom_image_fallback: bool = False
++
++
++class SharedCollectionItem(BaseModel):
++    id: int
++    card_id: str
++    quantity: int
++    condition: str = "NM"
++    variant: str = "Normal"
++    lang: str = "en"
++    # How many of the copies are For Trade. Left out (null) when the owner does not share their For Trade list with the viewer.
++    for_trade_quantity: Optional[int] = None
++    card: Optional[SharedCard] = None
++
++
++class SharedTradeItem(BaseModel):
++    id: int
++    card_id: str
++    # How many copies are For Trade.
++    quantity: int
++    condition: str = "NM"
++    variant: str = "Normal"
++    lang: str = "en"
++    card: Optional[SharedCard] = None
++
++
++class SharedWishlistItem(BaseModel):
++    id: int
++    card_id: str
++    quantity: int = 1
++    created_at: Optional[datetime.datetime] = None
++    card: Optional[SharedCard] = None
++
++
++class TradeMatchRow(SharedTradeItem):
++    # How many copies the other side wants.
++    wanted_quantity: int = 1
++
++
++class TradeMatchOut(BaseModel):
++    user: PersonOut
++    # Their For Trade cards that are on your wishlist.
++    they_have_you_want: List[TradeMatchRow]
++    # Your For Trade cards that are on their wishlist.
++    you_have_they_want: List[TradeMatchRow]
++    # A half can only be worked out when the other person shares what it is built from.
++    can_see_their_trade_list: bool
++    can_see_their_wishlist: bool
++
++
++class OwnTradeEntry(BaseModel):
++    collection_item_id: int
++    quantity: int
++    owned: int
++
++
++class OwnTradeList(BaseModel):
++    items: List[OwnTradeEntry]
++
++
++class OkOut(BaseModel):
++    ok: bool = True
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Request bodies
++# ---------------------------------------------------------------------------------------------------------------------
++
++class SharingUpdate(BaseModel):
++    """Changes the sections it names and leaves the others as they are. A section it does not know is an error."""
++
++    model_config = ConfigDict(extra="forbid")
++
++    collection: Optional[SharingLevel] = None
++    wishlist: Optional[SharingLevel] = None
++    trade: Optional[SharingLevel] = None
++
++
++class FriendRequestCreate(BaseModel):
++    """Who to ask: a username or an invite code, not both."""
++
++    model_config = ConfigDict(extra="forbid")
++
++    username: Optional[str] = Field(default=None, max_length=100)
++    invite_code: Optional[str] = Field(default=None, max_length=40)
++
++    @model_validator(mode="after")
++    def exactly_one(self):
++        if bool((self.username or "").strip()) == bool((self.invite_code or "").strip()):
++            raise ValueError("Send either a username or an invite code")
++        return self
++
++
++class TradeQuantity(BaseModel):
++    model_config = ConfigDict(extra="forbid")
++
++    quantity: int = Field(ge=0, le=999)
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Builders
++# ---------------------------------------------------------------------------------------------------------------------
++
++def _person(user: User) -> dict:
++    return {"id": user.id, "username": user.username, "avatar_id": user.avatar_id}
++
++
++def _friend_out(link: FriendLink, user: User, flags: dict) -> dict:
++    return {**_person(user), "since": link.accepted_at, "shares": flags}
++
++
++def _request_out(link: FriendLink, user: User) -> dict:
++    return {"id": link.id, "user": _person(user), "created_at": link.created_at}
++
++
++def _trade_row(row, count: int, **extra) -> dict:
++    return {
++        "id": row.id,
++        "card_id": row.card_id,
++        "quantity": count,
++        "condition": row.condition or "NM",
++        "variant": row.variant or "Normal",
++        "lang": row.lang or "en",
++        "card": _card_payload(row.card),
++        **extra,
++    }
++
++
++def _flags_for(db: Session, viewer_id: int, users: list[User]) -> dict[int, dict]:
++    levels = fr.sharing_levels_for(db, [user.id for user in users])
++    return {user.id: fr.can_view_levels(db, viewer_id, user.id, levels[user.id]) for user in users}
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# You: your invite code and what you share
++# ---------------------------------------------------------------------------------------------------------------------
++
++@router.get("/me", response_model=MeOut)
++def get_me(current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """Your invite code, what you share, and how many friends, requests and For Trade cards you have."""
++    settings = fr.ensure_settings(db, current_user.id)
++    links = fr.links_of(db, current_user.id)
++    counts = {
++        "friends": sum(1 for link, _ in links if link.status == "accepted"),
++        "incoming": sum(1 for link, _ in links if link.status == "pending" and link.requested_by_id != current_user.id),
++        "outgoing": sum(1 for link, _ in links if link.status == "pending" and link.requested_by_id == current_user.id),
++        "for_trade_cards": sum(marked for _, marked, _ in fr.own_trade_list(db, current_user.id)),
++    }
++    return {
++        "user": _person(current_user),
++        "invite_code": fr.format_invite_code(settings.invite_code),
++        "sharing": fr.sharing_levels(settings),
++        "counts": counts,
++    }
++
++
++@router.put("/me/sharing", response_model=SharingOut)
++def update_sharing(update: SharingUpdate, current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """Chooses who can see your collection, your wishlist and your For Trade list: private, friends or public."""
++    changes = {section: level for section, level in update.model_dump().items() if level is not None}
++    return fr.sharing_levels(fr.update_sharing(db, current_user.id, changes))
++
++
++@router.post("/me/invite-code")
++def new_invite_code(current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """Gives you a new invite code. The old one stops working at once. Friends you already have are not affected."""
++    settings = fr.regenerate_invite_code(db, current_user.id)
++    return {"invite_code": fr.format_invite_code(settings.invite_code)}
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Friends and requests
++# ---------------------------------------------------------------------------------------------------------------------
++
++@router.get("/", response_model=OverviewOut)
++def get_friends(current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """Your friends (with what each lets you see) and the requests waiting, in and out."""
++    links = fr.links_of(db, current_user.id)
++    accepted = [(link, user) for link, user in links if link.status == "accepted"]
++    flags = _flags_for(db, current_user.id, [user for _, user in accepted])
++    friends = sorted(
++        (_friend_out(link, user, flags[user.id]) for link, user in accepted),
++        key=lambda friend: friend["username"].lower(),
++    )
++    pending = [(link, user) for link, user in links if link.status == "pending"]
++    return {
++        "friends": friends,
++        "incoming": [_request_out(link, user) for link, user in pending if link.requested_by_id != current_user.id],
++        "outgoing": [_request_out(link, user) for link, user in pending if link.requested_by_id == current_user.id],
++    }
++
++
++@router.post("/requests", response_model=RequestResult)
++def send_friend_request(body: FriendRequestCreate, current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """Asks someone to be your friend, by username or by invite code. They have to accept: a request shares nothing."""
++    if (body.username or "").strip():
++        target = fr.find_user_by_username(db, body.username)
++    else:
++        target = fr.find_user_by_invite_code(db, body.invite_code)
++    link, accepted = fr.send_request(db, current_user, target)
++    return {"status": "accepted" if accepted else "pending", "request_id": link.id, "user": _person(target)}
++
++
++@router.post("/requests/{request_id}/accept", response_model=FriendOut)
++def accept_friend_request(request_id: int, current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """Accepts a request someone made to you. Being friends shares nothing by itself: each of you still chooses."""
++    link = fr.accept_request(db, current_user, request_id)
++    other = fr.active_user(db, fr.other_party(link, current_user.id))
++    if other is None:
++        raise HTTPException(status_code=404, detail="Request not found")
++    return _friend_out(link, other, _flags_for(db, current_user.id, [other])[other.id])
++
++
++@router.post("/requests/{request_id}/decline", response_model=OkOut)
++def decline_friend_request(request_id: int, current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """Declines a request someone made to you. They are not told; their request just goes away."""
++    fr.decline_request(db, current_user, request_id)
++    return {"ok": True}
++
++
++@router.delete("/requests/{request_id}", response_model=OkOut)
++def cancel_friend_request(request_id: int, current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """Takes back a request you made that has not been answered."""
++    fr.cancel_request(db, current_user, request_id)
++    return {"ok": True}
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Your For Trade list
++# ---------------------------------------------------------------------------------------------------------------------
++
++@router.get("/trade-list", response_model=OwnTradeList)
++def get_own_trade_list(current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """The collection rows you have marked For Trade, and how many copies of each."""
++    return {
++        "items": [
++            {"collection_item_id": item_id, "quantity": marked, "owned": held}
++            for item_id, marked, held in fr.own_trade_list(db, current_user.id)
++        ]
++    }
++
++
++@router.put("/trade-list/{item_id}", response_model=OwnTradeEntry)
++def set_trade_quantity(item_id: int, body: TradeQuantity, current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """Marks some of the copies in one of your collection rows For Trade (0 takes the row off the list).
++
++    Nothing is marked for you: a row with duplicates is not offered until you say how many copies you will trade.
++    """
++    marked, held = fr.set_trade_quantity(db, current_user, item_id, body.quantity)
++    return {"collection_item_id": item_id, "quantity": marked, "owned": held}
++
++
++@router.delete("/trade-list/{item_id}", response_model=OwnTradeEntry)
++def remove_from_trade_list(item_id: int, current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """Takes a collection row off your For Trade list."""
++    marked, held = fr.set_trade_quantity(db, current_user, item_id, 0)
++    return {"collection_item_id": item_id, "quantity": marked, "owned": held}
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Another person
++# ---------------------------------------------------------------------------------------------------------------------
++
++@router.get("/{user_id}/profile", response_model=ProfileOut)
++def get_profile(user_id: int, current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """Who someone is to you, and which of their sections you may open."""
++    owner = fr.active_user(db, user_id)
++    if owner is None:
++        raise HTTPException(status_code=404, detail="User not found")
++    flags = _flags_for(db, current_user.id, [owner])[owner.id]
++    link = fr.link_between(db, current_user.id, owner.id) if owner.id != current_user.id else None
++    if owner.id != current_user.id and link is None and not any(flags.values()):
++        raise HTTPException(status_code=404, detail="User not found")
++    request = None
++    if link is not None and link.status == "pending":
++        request = {"id": link.id, "direction": "outgoing" if link.requested_by_id == current_user.id else "incoming"}
++    return {
++        "user": _person(owner),
++        "is_friend": link is not None and link.status == "accepted",
++        "request": request,
++        "shared": flags,
++    }
++
++
++@router.get("/{user_id}/collection", response_model=List[SharedCollectionItem])
++def get_friend_collection(user_id: int, current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """What someone shares of their collection: cards, copies, condition, variant, language. Never what they paid."""
++    owner = fr.require_view(db, current_user, user_id, "collection")
++    # Which copies are For Trade is part of the For Trade list, which is shared (or not) on its own.
++    include_trade = fr.can_view(db, current_user.id, owner.id, "trade")
++    return [
++        {
++            "id": row.id,
++            "card_id": row.card_id,
++            "quantity": row.quantity,
++            "condition": row.condition or "NM",
++            "variant": row.variant or "Normal",
++            "lang": row.lang or "en",
++            "for_trade_quantity": count if include_trade else None,
++            "card": _card_payload(row.card),
++        }
++        for row, count in fr.shared_collection(db, owner.id, include_trade)
++    ]
++
++
++@router.get("/{user_id}/wishlist", response_model=List[SharedWishlistItem])
++def get_friend_wishlist(user_id: int, current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """What someone shares of their wishlist. Their target prices and alerts are never part of it."""
++    owner = fr.require_view(db, current_user, user_id, "wishlist")
++    return [
++        {
++            "id": item.id,
++            "card_id": item.card_id,
++            "quantity": item.quantity or 1,
++            "created_at": item.created_at,
++            "card": _card_payload(item.card),
++        }
++        for item in fr.shared_wishlist(db, owner.id)
++    ]
++
++
++@router.get("/{user_id}/trade-list", response_model=List[SharedTradeItem])
++def get_friend_trade_list(user_id: int, current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """The cards someone has marked For Trade, and how many copies of each."""
++    owner = fr.require_view(db, current_user, user_id, "trade")
++    return [_trade_row(row, count) for row, count in fr.shared_trade_list(db, owner.id)]
++
++
++@router.get("/{user_id}/trade-match", response_model=TradeMatchOut)
++def get_trade_match(user_id: int, current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """Compares you with one person: what they have that you want, and what you have that they want.
++
++    Each half is built only from what they share with you: their For Trade list for the first, their wishlist for the second.
++    """
++    if user_id == current_user.id:
++        raise HTTPException(status_code=400, detail="You can't compare with yourself")
++    owner = fr.active_user(db, user_id)
++    if owner is None:
++        raise HTTPException(status_code=404, detail="User not found")
++    match = fr.trade_match(db, current_user.id, owner.id)
++    if not (match.can_see_their_trade_list or match.can_see_their_wishlist) and not fr.are_friends(db, current_user.id, owner.id):
++        raise HTTPException(status_code=404, detail="User not found")
++    return {
++        "user": _person(owner),
++        "they_have_you_want": [_trade_row(row, count, wanted_quantity=wanted) for row, count, wanted in match.they_have_you_want],
++        "you_have_they_want": [_trade_row(row, count, wanted_quantity=wanted) for row, count, wanted in match.you_have_they_want],
++        "can_see_their_trade_list": match.can_see_their_trade_list,
++        "can_see_their_wishlist": match.can_see_their_wishlist,
++    }
++
++
++@router.delete("/{friend_id}", response_model=OkOut)
++def remove_friend(friend_id: int, current_user: User = Depends(get_social_user), db: Session = Depends(get_db)):
++    """Ends a friendship. Anything you or they shared with friends only stops being shared at once."""
++    fr.remove_friend(db, current_user, friend_id)
++    return {"ok": True}
+diff --git a/backend/api/social.py b/backend/api/social.py
+index 8746ade..81bde71 100644
+--- a/backend/api/social.py
++++ b/backend/api/social.py
+@@ -11,12 +11,18 @@ from models import Card, CollectionItem, ProductPurchase, Set, User, WishlistIte
+ from services.card_values import effective_market_price, normalize_price_field
+ from services.card_visibility import visible_card_filter
+ from services.digital_sets import digital_sets_enabled
++from services.friends import can_view, owners_visible_to
+ from services.public_profile_feature import public_profiles_enabled
+ from services.portfolio_valuation import calculate_portfolio_valuation
+ 
+ router = APIRouter()
+ 
+ 
++# Figures worked out from what someone paid. They are theirs alone: the leaderboard, a comparison and other people's
++# achievements never carry them, whatever the person shares (docs/FRIENDS.md).
++PRIVATE_STATS = frozenset({"total_invested", "pnl", "pnl_pct", "positive_pnl_flag"})
++
++
+ ACHIEVEMENTS = [
+     {
+         "id": "first_card",
+@@ -181,6 +187,11 @@ ACHIEVEMENTS = [
+ ]
+ 
+ 
++def _shareable(stats: dict) -> dict:
++    """A trainer's stats without the figures that come from what they paid (invested, profit or loss, in profit or not)."""
++    return {key: value for key, value in stats.items() if key not in PRIVATE_STATS}
++
++
+ def _card_payload(card: Card | None):
+     """Catalogue detail for a card shown on someone else's profile.
+ 
+@@ -392,13 +403,16 @@ def get_leaderboard(
+     db: Session = Depends(get_db),
+     current_user: User = Depends(get_current_user),
+ ):
+-    stats = _load_user_stats(db, price_field=price_field)
++    # Every number here is worked out from a collection, so only the people whose collection is shared with the viewer are
++    # ranked (the viewer always is). A private collection stays out of the list altogether.
++    stats = _load_user_stats(db, sorted(owners_visible_to(db, current_user.id, "collection")), price_field=price_field)
+     leaderboard = sorted(
+         stats.values(),
+         key=lambda entry: (entry["total_value"], entry["total_cards"], entry["unique_cards"]),
+         reverse=True,
+     )
+-    return leaderboard
++    # Ranked by what the collections are worth, and shown without what anyone paid or made (the viewer's own row included).
++    return [_shareable(entry) for entry in leaderboard]
+ 
+ 
+ @router.get("/compare/{user_id}")
+@@ -414,6 +428,9 @@ def compare_users(
+     other_user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+     if not other_user:
+         raise HTTPException(status_code=404, detail="User not found")
++    # Comparing shows what someone owns, so it needs their collection to be shared with the viewer.
++    if not can_view(db, current_user.id, user_id, "collection"):
++        raise HTTPException(status_code=404, detail="User not found")
+ 
+     stats = _load_user_stats(db, [current_user.id, user_id], price_field=price_field)
+     if current_user.id not in stats or user_id not in stats:
+@@ -520,8 +537,8 @@ def compare_users(
+             break
+ 
+     return {
+-        "user_a": stats[current_user.id],
+-        "user_b": stats[user_id],
++        "user_a": _shareable(stats[current_user.id]),
++        "user_b": _shareable(stats[user_id]),
+         "overlap": overlap,
+         "only_a": only_a,
+         "only_b": only_b,
+@@ -539,6 +556,9 @@ def get_achievements(
+     user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+     if not user:
+         raise HTTPException(status_code=404, detail="User not found")
++    # Achievements are counted from the collection, so they are shared when it is.
++    if user_id != current_user.id and not can_view(db, current_user.id, user_id, "collection"):
++        raise HTTPException(status_code=404, detail="User not found")
+ 
+     stats = _load_user_stats(db, [user_id], price_field=price_field).get(user_id)
+     if not stats:
+@@ -546,6 +566,8 @@ def get_achievements(
+ 
+     achievements = []
+     for config in ACHIEVEMENTS:
++        if user_id != current_user.id and config["metric"] in PRIVATE_STATS:
++            continue  # "Investor" says whether someone is in profit, which is theirs to know
+         progress = stats.get(config["metric"], 0)
+         unlocked = progress >= config["target"]
+         achievements.append({
+diff --git a/backend/main.py b/backend/main.py
+index 59e84d7..9a19f4c 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -148,7 +148,7 @@ async def debug_request_logging(request: Request, call_next):
+     return response
+ 
+ # Include routers
+-from api import auth, cards, collection, sets, wishlist, binders, decks, dashboard, analytics, sync, products, trades, export, backup, settings, images, social, pokedex, public, profile, scan_jobs, community
++from api import auth, cards, collection, sets, wishlist, binders, decks, dashboard, analytics, sync, products, trades, export, backup, settings, images, social, pokedex, public, profile, scan_jobs, community, friends
+ from api.github import router as github_router
+ from api.recognize import router as recognize_router
+ 
+@@ -198,6 +198,7 @@ app.include_router(backup.router, prefix="/api/backup", tags=["backup"])
+ app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
+ app.include_router(images.router, prefix="/api/images", tags=["images"])
+ app.include_router(social.router, prefix="/api/social", tags=["social"])
++app.include_router(friends.router, prefix="/api/friends", tags=["friends"])
+ app.include_router(pokedex.router, prefix="/api/pokedex", tags=["pokedex"])
+ app.include_router(public.router, prefix="/api/public", tags=["public"])
+ app.include_router(profile.router, prefix="/api/profile", tags=["profile"])
+diff --git a/backend/models.py b/backend/models.py
+index 3dc7684..2c21fc6 100644
+--- a/backend/models.py
++++ b/backend/models.py
+@@ -817,3 +817,86 @@ class ScannerProviderLimitState(Base):
+     blocked_until = Column(DateTime, nullable=True, index=True)
+     blocked_reason = Column(String, nullable=True)
+     updated_at = Column(DateTime, default=func.now(), nullable=False)
++
++
++FRIEND_SHARING_LEVELS = ("private", "friends", "public")
++
++
++def _sharing_check(column: str) -> str:
++    levels = ", ".join(f"'{level}'" for level in FRIEND_SHARING_LEVELS)
++    return f"{column} IN ({levels})"
++
++
++class FriendSettings(Base):
++    """What one user shares with the other people on this server, and the invite code that lets someone ask to be their friend.
++
++    A user without a row shares nothing: every section starts as 'private'. Each section is controlled on its own:
++
++      private - only the owner
++      friends - the owner's accepted friends
++      public  - every signed-in user of this server
++
++    These are separate from the public-profile settings on ``users`` (``is_profile_public``, ``wishlist_visibility``), which
++    only govern the unauthenticated /api/public pages.
++    """
++
++    __tablename__ = "friend_settings"
++
++    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
++    collection_sharing = Column(String, nullable=False, default="private", server_default="private")
++    wishlist_sharing = Column(String, nullable=False, default="private", server_default="private")
++    trade_sharing = Column(String, nullable=False, default="private", server_default="private")
++    invite_code = Column(String, nullable=True, unique=True)
++    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
++
++    __table_args__ = (
++        CheckConstraint(_sharing_check("collection_sharing"), name="ck_friend_settings_collection_sharing"),
++        CheckConstraint(_sharing_check("wishlist_sharing"), name="ck_friend_settings_wishlist_sharing"),
++        CheckConstraint(_sharing_check("trade_sharing"), name="ck_friend_settings_trade_sharing"),
++    )
++
++
++class FriendLink(Base):
++    """A friendship between two users, or a friend request that has not been answered yet.
++
++    One row per pair whichever way the request went: ``user_low_id`` is the smaller of the two ids, so two requests that cross
++    each other cannot both exist. ``requested_by_id`` says who asked. Declining or cancelling a request, or ending a
++    friendship, deletes the row.
++    """
++
++    __tablename__ = "friend_links"
++
++    id = Column(Integer, primary_key=True, autoincrement=True)
++    user_low_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
++    user_high_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
++    requested_by_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
++    status = Column(String, nullable=False, default="pending", server_default="pending")
++    created_at = Column(DateTime, default=func.now(), nullable=False)
++    accepted_at = Column(DateTime, nullable=True)
++
++    __table_args__ = (
++        UniqueConstraint("user_low_id", "user_high_id", name="uq_friend_links_pair"),
++        CheckConstraint("user_low_id < user_high_id", name="ck_friend_links_pair_order"),
++        CheckConstraint("requested_by_id IN (user_low_id, user_high_id)", name="ck_friend_links_requester"),
++        CheckConstraint("status IN ('pending', 'accepted')", name="ck_friend_links_status"),
++    )
++
++
++class TradeListEntry(Base):
++    """How many copies of one collection row their owner has marked For Trade. No row means none are.
++
++    Nothing is ever marked automatically, duplicates included. The number shown to other people is never more than the
++    owner currently holds (see services.friends.shared_trade_list).
++    """
++
++    __tablename__ = "trade_list"
++
++    id = Column(Integer, primary_key=True, autoincrement=True)
++    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
++    collection_item_id = Column(Integer, ForeignKey("collection.id", ondelete="CASCADE"), nullable=False, unique=True)
++    quantity = Column(Integer, nullable=False)
++    created_at = Column(DateTime, default=func.now())
++
++    __table_args__ = (
++        CheckConstraint("quantity >= 1", name="ck_trade_list_quantity_positive"),
++    )
+diff --git a/backend/services/friends.py b/backend/services/friends.py
+new file mode 100644
+index 0000000..cfaa96c
+--- /dev/null
++++ b/backend/services/friends.py
+@@ -0,0 +1,591 @@
++"""Friends, sharing and the For Trade list.
++
++Everything that decides who may see what lives here, so that the friends router and the few older endpoints that show one
++user's data to another ask one place, instead of each having its own idea of "shared".
++
++The rules
++---------
++* A user has three sections that can be shared: the full collection, the wishlist and the For Trade list. Each has its own
++  setting - private, friends or public - and a user who has never chosen shares nothing.
++* "friends" means an accepted FriendLink. A request that has not been accepted grants nothing. "public" means every signed-in
++  user of this server, not the open internet.
++* The owner always sees their own data. Nobody else does unless the setting allows it, whatever their role: an admin gets no
++  special view through these functions.
++* What other people receive is a projection: the card, how many copies, condition, variant and language. Purchase prices,
++  added dates, photos, product links, price alerts and custom cards never leave their owner.
++* Nothing goes on the For Trade list by itself. A copy is marked by its owner, one collection row at a time.
++"""
++
++import datetime
++import re
++import secrets
++from dataclasses import dataclass, field
++
++from fastapi import HTTPException
++from sqlalchemy import func, or_
++from sqlalchemy.exc import IntegrityError
++from sqlalchemy.orm import Session, joinedload
++
++from models import (
++    FRIEND_SHARING_LEVELS,
++    Card,
++    CollectionItem,
++    FriendLink,
++    FriendSettings,
++    TradeListEntry,
++    User,
++    WishlistItem,
++)
++from services.card_visibility import visible_card_filter
++
++SECTIONS = ("collection", "wishlist", "trade")
++
++# The words used when a person is told something is not shared with them.
++SECTION_NAMES = {"collection": "collection", "wishlist": "wishlist", "trade": "For Trade list"}
++
++_SECTION_COLUMNS = {
++    "collection": FriendSettings.collection_sharing,
++    "wishlist": FriendSettings.wishlist_sharing,
++    "trade": FriendSettings.trade_sharing,
++}
++_SECTION_ATTRIBUTES = {
++    "collection": "collection_sharing",
++    "wishlist": "wishlist_sharing",
++    "trade": "trade_sharing",
++}
++
++# No I, L, O or U, and no 0 or 1: a code read aloud or typed from a photo cannot be mistaken for another one.
++INVITE_ALPHABET = "ABCDEFGHJKMNPQRSTVWXYZ23456789"
++INVITE_LENGTH = 10
++# Enough that nobody has to wait on a request, few enough that nobody can flood the server with them.
++MAX_PENDING_OUTGOING = 25
++MAX_USERNAME_LENGTH = 64
++
++_ALPHANUMERIC = re.compile(r"[^A-Za-z0-9]")
++
++
++def _now() -> datetime.datetime:
++    return datetime.datetime.utcnow()
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Invite codes
++# ---------------------------------------------------------------------------------------------------------------------
++
++def normalize_invite_code(raw: str | None) -> str | None:
++    """The code as stored (ten capital letters and digits), or None when what was typed cannot be a code."""
++    code = _ALPHANUMERIC.sub("", raw or "").upper()
++    if len(code) != INVITE_LENGTH or any(char not in INVITE_ALPHABET for char in code):
++        return None
++    return code
++
++
++def format_invite_code(code: str | None) -> str | None:
++    """The code as people write it: two groups of five, such as K7MQ9-XWD3H."""
++    if not code:
++        return None
++    half = INVITE_LENGTH // 2
++    return f"{code[:half]}-{code[half:]}"
++
++
++def _new_invite_code(db: Session) -> str:
++    for _ in range(20):
++        code = "".join(secrets.choice(INVITE_ALPHABET) for _ in range(INVITE_LENGTH))
++        if not db.query(FriendSettings.user_id).filter(FriendSettings.invite_code == code).first():
++            return code
++    raise HTTPException(status_code=500, detail="Could not make an invite code")
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Users
++# ---------------------------------------------------------------------------------------------------------------------
++
++def active_user(db: Session, user_id: int) -> User | None:
++    return db.query(User).filter(User.id == user_id, User.is_active == True).first()  # noqa: E712
++
++
++def find_user_by_username(db: Session, raw: str | None) -> User:
++    name = (raw or "").strip()
++    if not name:
++        raise HTTPException(status_code=422, detail="Type a username")
++    if len(name) > MAX_USERNAME_LENGTH:
++        raise HTTPException(status_code=404, detail="Nobody on this server has that username")
++    exact = db.query(User).filter(User.username == name, User.is_active == True).first()  # noqa: E712
++    if exact:
++        return exact
++    loose = db.query(User).filter(func.lower(User.username) == name.lower(), User.is_active == True).all()  # noqa: E712
++    if len(loose) == 1:
++        return loose[0]
++    if len(loose) > 1:
++        raise HTTPException(status_code=409, detail="More than one person has almost that username. Type it exactly as it is spelled.")
++    raise HTTPException(status_code=404, detail="Nobody on this server has that username")
++
++
++def find_user_by_invite_code(db: Session, raw: str | None) -> User:
++    code = normalize_invite_code(raw)
++    if code is None:
++        raise HTTPException(status_code=422, detail="That doesn't look like an invite code")
++    settings = db.query(FriendSettings).filter(FriendSettings.invite_code == code).first()
++    user = active_user(db, settings.user_id) if settings else None
++    if user is None:
++        raise HTTPException(status_code=404, detail="That invite code doesn't match anyone")
++    return user
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# What each person shares
++# ---------------------------------------------------------------------------------------------------------------------
++
++def get_settings(db: Session, user_id: int) -> FriendSettings | None:
++    return db.query(FriendSettings).filter(FriendSettings.user_id == user_id).first()
++
++
++def ensure_settings(db: Session, user_id: int) -> FriendSettings:
++    """The user's settings row, made (with an invite code, sharing nothing) the first time it is needed."""
++    settings = get_settings(db, user_id)
++    if settings is not None and settings.invite_code:
++        return settings
++    if settings is None:
++        settings = FriendSettings(
++            user_id=user_id,
++            collection_sharing="private",
++            wishlist_sharing="private",
++            trade_sharing="private",
++        )
++        db.add(settings)
++    settings.invite_code = _new_invite_code(db)
++    try:
++        db.commit()
++    except IntegrityError:
++        # Another request made the row (or took the code) at the same moment.
++        db.rollback()
++        settings = get_settings(db, user_id)
++        if settings is None or not settings.invite_code:
++            raise HTTPException(status_code=409, detail="Try again") from None
++    return settings
++
++
++def sharing_levels(settings: FriendSettings | None) -> dict[str, str]:
++    """What a user shares, by section. Anything unknown counts as private."""
++    levels = {}
++    for section in SECTIONS:
++        level = getattr(settings, _SECTION_ATTRIBUTES[section], None) if settings is not None else None
++        levels[section] = level if level in FRIEND_SHARING_LEVELS else "private"
++    return levels
++
++
++def sharing_levels_for(db: Session, user_ids: list[int]) -> dict[int, dict[str, str]]:
++    """What each of several users shares, in one query."""
++    if not user_ids:
++        return {}
++    rows = db.query(FriendSettings).filter(FriendSettings.user_id.in_(set(user_ids))).all()
++    by_user = {row.user_id: sharing_levels(row) for row in rows}
++    return {user_id: by_user.get(user_id, sharing_levels(None)) for user_id in user_ids}
++
++
++def update_sharing(db: Session, user_id: int, changes: dict[str, str]) -> FriendSettings:
++    """Applies the sections named in [changes]; the others stay as they are."""
++    settings = ensure_settings(db, user_id)
++    for section, level in changes.items():
++        if section not in SECTIONS or level not in FRIEND_SHARING_LEVELS:
++            raise HTTPException(status_code=422, detail="Sharing must be private, friends or public")
++        setattr(settings, _SECTION_ATTRIBUTES[section], level)
++    db.commit()
++    return settings
++
++
++def regenerate_invite_code(db: Session, user_id: int) -> FriendSettings:
++    """Gives the user a new invite code. The old one stops working at once."""
++    settings = ensure_settings(db, user_id)
++    settings.invite_code = _new_invite_code(db)
++    db.commit()
++    return settings
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Friendships and requests
++# ---------------------------------------------------------------------------------------------------------------------
++
++def _ordered(a: int, b: int) -> tuple[int, int]:
++    return (a, b) if a < b else (b, a)
++
++
++def link_between(db: Session, a: int, b: int) -> FriendLink | None:
++    low, high = _ordered(a, b)
++    return db.query(FriendLink).filter(FriendLink.user_low_id == low, FriendLink.user_high_id == high).first()
++
++
++def other_party(link: FriendLink, me_id: int) -> int:
++    return link.user_high_id if link.user_low_id == me_id else link.user_low_id
++
++
++def accepted_friend_ids(db: Session, user_id: int) -> set[int]:
++    links = db.query(FriendLink).filter(
++        FriendLink.status == "accepted",
++        or_(FriendLink.user_low_id == user_id, FriendLink.user_high_id == user_id),
++    ).all()
++    return {other_party(link, user_id) for link in links}
++
++
++def are_friends(db: Session, a: int, b: int) -> bool:
++    if a == b:
++        return False
++    link = link_between(db, a, b)
++    return link is not None and link.status == "accepted"
++
++
++def links_of(db: Session, user_id: int) -> list[tuple[FriendLink, User]]:
++    """Every friendship and request of a user, newest first, each with the other person. Inactive users are left out."""
++    links = db.query(FriendLink).filter(
++        or_(FriendLink.user_low_id == user_id, FriendLink.user_high_id == user_id),
++    ).order_by(FriendLink.created_at.desc(), FriendLink.id.desc()).all()
++    if not links:
++        return []
++    others = {
++        user.id: user
++        for user in db.query(User).filter(
++            User.id.in_({other_party(link, user_id) for link in links}),
++            User.is_active == True,  # noqa: E712
++        ).all()
++    }
++    return [(link, others[other_party(link, user_id)]) for link in links if other_party(link, user_id) in others]
++
++
++def send_request(db: Session, me: User, target: User) -> tuple[FriendLink, bool]:
++    """Asks [target] to be friends. Returns the link and whether it is now a friendship.
++
++    Asking someone who has already asked you accepts their request, because both of you want it. Asking twice changes nothing.
++    """
++    if target.id == me.id:
++        raise HTTPException(status_code=400, detail="You can't add yourself as a friend")
++    link = link_between(db, me.id, target.id)
++    if link is not None:
++        if link.status == "accepted":
++            raise HTTPException(status_code=409, detail=f"You and {target.username} are already friends")
++        if link.requested_by_id == me.id:
++            return link, False
++        link.status = "accepted"
++        link.accepted_at = _now()
++        db.commit()
++        return link, True
++    waiting = db.query(FriendLink).filter(FriendLink.requested_by_id == me.id, FriendLink.status == "pending").count()
++    if waiting >= MAX_PENDING_OUTGOING:
++        raise HTTPException(status_code=409, detail="You have too many requests waiting. Wait for some to be answered, or cancel a few.")
++    low, high = _ordered(me.id, target.id)
++    link = FriendLink(user_low_id=low, user_high_id=high, requested_by_id=me.id, status="pending", created_at=_now())
++    db.add(link)
++    try:
++        db.commit()
++    except IntegrityError:
++        # The other person asked at the same moment: whatever is there now decides.
++        db.rollback()
++        link = link_between(db, me.id, target.id)
++        if link is None:
++            raise HTTPException(status_code=409, detail="Try again") from None
++        if link.status == "pending" and link.requested_by_id != me.id:
++            link.status = "accepted"
++            link.accepted_at = _now()
++            db.commit()
++            return link, True
++        return link, link.status == "accepted"
++    return link, False
++
++
++def _request_for(db: Session, request_id: int) -> FriendLink:
++    link = db.query(FriendLink).filter(FriendLink.id == request_id).first()
++    if link is None:
++        raise HTTPException(status_code=404, detail="Request not found")
++    return link
++
++
++def accept_request(db: Session, me: User, request_id: int) -> FriendLink:
++    """Accepts a request someone made to [me]. Only the person who was asked can."""
++    link = _request_for(db, request_id)
++    if me.id not in (link.user_low_id, link.user_high_id) or link.requested_by_id == me.id:
++        raise HTTPException(status_code=404, detail="Request not found")
++    if link.status != "accepted":
++        link.status = "accepted"
++        link.accepted_at = _now()
++        db.commit()
++    return link
++
++
++def decline_request(db: Session, me: User, request_id: int) -> None:
++    """Declines a request someone made to [me]. The other person is not told; their request simply goes away."""
++    link = _request_for(db, request_id)
++    if me.id not in (link.user_low_id, link.user_high_id) or link.requested_by_id == me.id:
++        raise HTTPException(status_code=404, detail="Request not found")
++    if link.status != "pending":
++        raise HTTPException(status_code=409, detail="You are already friends. Remove them from your friends instead.")
++    db.delete(link)
++    db.commit()
++
++
++def cancel_request(db: Session, me: User, request_id: int) -> None:
++    """Takes back a request [me] made that has not been answered."""
++    link = _request_for(db, request_id)
++    if link.requested_by_id != me.id:
++        raise HTTPException(status_code=404, detail="Request not found")
++    if link.status != "pending":
++        raise HTTPException(status_code=409, detail="That request was already accepted")
++    db.delete(link)
++    db.commit()
++
++
++def remove_friend(db: Session, me: User, friend_id: int) -> None:
++    """Ends a friendship. Either person can; what was shared with "friends" stops being shared at once."""
++    link = link_between(db, me.id, friend_id)
++    if link is None or link.status != "accepted":
++        raise HTTPException(status_code=404, detail="That person isn't one of your friends")
++    db.delete(link)
++    db.commit()
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Who may see what
++# ---------------------------------------------------------------------------------------------------------------------
++
++def can_view(db: Session, viewer_id: int, owner_id: int, section: str) -> bool:
++    """Whether [viewer] may see [owner]'s [section] ("collection", "wishlist" or "trade")."""
++    if section not in SECTIONS:
++        return False
++    if viewer_id == owner_id:
++        return True
++    level = sharing_levels(get_settings(db, owner_id))[section]
++    if level == "public":
++        return True
++    if level == "friends":
++        return are_friends(db, viewer_id, owner_id)
++    return False
++
++
++def can_view_levels(db: Session, viewer_id: int, owner_id: int, levels: dict[str, str]) -> dict[str, bool]:
++    """can_view for every section at once, given the owner's levels already read."""
++    friend = None
++    result = {}
++    for section in SECTIONS:
++        level = levels[section]
++        if level == "public":
++            result[section] = True
++        elif level == "friends":
++            if friend is None:
++                friend = are_friends(db, viewer_id, owner_id)
++            result[section] = friend
++        else:
++            result[section] = False
++    return result
++
++
++def owners_visible_to(db: Session, viewer_id: int, section: str) -> set[int]:
++    """The ids of everyone whose [section] the viewer may see, the viewer included."""
++    column = _SECTION_COLUMNS[section]
++    rows = db.query(FriendSettings.user_id, column).filter(column.in_(("friends", "public"))).all()
++    friends = accepted_friend_ids(db, viewer_id) if any(level == "friends" for _, level in rows) else set()
++    visible = {viewer_id}
++    for user_id, level in rows:
++        if level == "public" or (level == "friends" and user_id in friends):
++            visible.add(user_id)
++    return visible
++
++
++def require_view(db: Session, viewer: User, owner_id: int, section: str) -> User:
++    """The owner, if [viewer] may see their [section]; otherwise an error that tells the viewer no more than they may know.
++
++    A friend is told what is not shared with them. Anyone else is told only that there is no such user, so a person who is not
++    a friend cannot tell a private account from one that does not exist.
++    """
++    owner = active_user(db, owner_id)
++    if owner is None:
++        raise HTTPException(status_code=404, detail="User not found")
++    if can_view(db, viewer.id, owner.id, section):
++        return owner
++    if are_friends(db, viewer.id, owner.id):
++        raise HTTPException(status_code=403, detail=f"{owner.username} hasn't shared their {SECTION_NAMES[section]} with you")
++    raise HTTPException(status_code=404, detail="User not found")
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# What is shared
++# ---------------------------------------------------------------------------------------------------------------------
++
++def _owned_rows(db: Session, owner_id: int):
++    """The owner's collection rows that may be shown to anyone: catalogue cards only, as the older shared endpoints do."""
++    return (
++        db.query(CollectionItem)
++        .join(Card, Card.id == CollectionItem.card_id)
++        .options(joinedload(CollectionItem.card).joinedload(Card.set_ref))
++        .filter(
++            CollectionItem.user_id == owner_id,
++            Card.is_custom == False,  # noqa: E712
++            visible_card_filter(db, owner_id, "all"),
++        )
++    )
++
++
++def trade_quantities(db: Session, owner_id: int) -> dict[int, int]:
++    """Collection row id -> copies marked For Trade, never more than the owner still holds."""
++    rows = (
++        db.query(TradeListEntry.collection_item_id, TradeListEntry.quantity, CollectionItem.quantity)
++        .join(CollectionItem, CollectionItem.id == TradeListEntry.collection_item_id)
++        .filter(TradeListEntry.user_id == owner_id, CollectionItem.user_id == owner_id)
++        .all()
++    )
++    quantities = {}
++    for item_id, marked, held in rows:
++        count = min(int(marked or 0), int(held or 0))
++        if count > 0:
++            quantities[item_id] = count
++    return quantities
++
++
++def shared_collection(db: Session, owner_id: int, include_trade: bool) -> list[tuple[CollectionItem, int]]:
++    """The owner's collection rows, newest first, each with how many copies are For Trade (0 when [include_trade] is off)."""
++    rows = _owned_rows(db, owner_id).order_by(CollectionItem.added_at.desc(), CollectionItem.id.desc()).all()
++    marked = trade_quantities(db, owner_id) if include_trade else {}
++    return [(row, marked.get(row.id, 0)) for row in rows]
++
++
++def shared_trade_list(db: Session, owner_id: int) -> list[tuple[CollectionItem, int]]:
++    """The owner's rows that have copies For Trade, each with how many, in card-name order."""
++    rows = (
++        _owned_rows(db, owner_id)
++        .join(TradeListEntry, TradeListEntry.collection_item_id == CollectionItem.id)
++        .filter(TradeListEntry.user_id == owner_id)
++        .order_by(Card.name.asc(), Card.number.asc(), CollectionItem.id.asc())
++        .all()
++    )
++    marked = trade_quantities(db, owner_id)
++    return [(row, marked[row.id]) for row in rows if row.id in marked]
++
++
++def shared_wishlist(db: Session, owner_id: int) -> list[WishlistItem]:
++    """The owner's wishlist, newest first. Catalogue cards only. The price alerts are never part of it."""
++    return (
++        db.query(WishlistItem)
++        .join(Card, Card.id == WishlistItem.card_id)
++        .options(joinedload(WishlistItem.card).joinedload(Card.set_ref))
++        .filter(
++            WishlistItem.user_id == owner_id,
++            Card.is_custom == False,  # noqa: E712
++            visible_card_filter(db, owner_id, "all"),
++        )
++        .order_by(WishlistItem.created_at.desc(), WishlistItem.id.desc())
++        .all()
++    )
++
++
++@dataclass
++class TradeMatch:
++    """Both halves of a comparison between the viewer and one other person.
++
++    Each half needs the other person to share the section it is built from, so a half the viewer may not see is empty and
++    says so, rather than giving away which of their cards would have matched.
++    """
++
++    they_have_you_want: list[tuple[CollectionItem, int, int]] = field(default_factory=list)
++    you_have_they_want: list[tuple[CollectionItem, int, int]] = field(default_factory=list)
++    can_see_their_trade_list: bool = False
++    can_see_their_wishlist: bool = False
++
++
++def trade_match(db: Session, viewer_id: int, other_id: int) -> TradeMatch:
++    """Each match is (the collection row on offer, how many copies are For Trade, how many the other side wants)."""
++    result = TradeMatch(
++        can_see_their_trade_list=can_view(db, viewer_id, other_id, "trade"),
++        can_see_their_wishlist=can_view(db, viewer_id, other_id, "wishlist"),
++    )
++    if result.can_see_their_trade_list:
++        mine = {item.card_id: item for item in shared_wishlist(db, viewer_id)}
++        if mine:
++            for row, count in shared_trade_list(db, other_id):
++                wanted = mine.get(row.card_id)
++                if wanted is not None:
++                    result.they_have_you_want.append((row, count, int(wanted.quantity or 1)))
++    if result.can_see_their_wishlist:
++        theirs = {item.card_id: item for item in shared_wishlist(db, other_id)}
++        if theirs:
++            for row, count in shared_trade_list(db, viewer_id):
++                wanted = theirs.get(row.card_id)
++                if wanted is not None:
++                    result.you_have_they_want.append((row, count, int(wanted.quantity or 1)))
++    return result
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# The owner's own For Trade list
++# ---------------------------------------------------------------------------------------------------------------------
++
++def normalize_trade_list(db: Session, user_id: int) -> None:
++    """Trims every entry to the copies the owner still holds and drops entries left with none.
++
++    Without this, copies that were marked, then removed, would be marked again the moment the owner added more.
++    """
++    rows = (
++        db.query(TradeListEntry, CollectionItem.quantity)
++        .outerjoin(CollectionItem, CollectionItem.id == TradeListEntry.collection_item_id)
++        .filter(TradeListEntry.user_id == user_id)
++        .all()
++    )
++    changed = False
++    for entry, held in rows:
++        held = int(held or 0)
++        if held <= 0:
++            db.delete(entry)
++            changed = True
++        elif entry.quantity > held:
++            entry.quantity = held
++            changed = True
++    if changed:
++        db.commit()
++
++
++def own_trade_list(db: Session, user_id: int) -> list[tuple[int, int, int]]:
++    """(collection row id, copies For Trade, copies held) for every marked row of the user."""
++    normalize_trade_list(db, user_id)
++    rows = (
++        db.query(TradeListEntry.collection_item_id, TradeListEntry.quantity, CollectionItem.quantity)
++        .join(CollectionItem, CollectionItem.id == TradeListEntry.collection_item_id)
++        .filter(TradeListEntry.user_id == user_id, CollectionItem.user_id == user_id)
++        .order_by(TradeListEntry.id.asc())
++        .all()
++    )
++    return [(item_id, int(marked), int(held or 0)) for item_id, marked, held in rows]
++
++
++def set_trade_quantity(db: Session, user: User, item_id: int, quantity: int) -> tuple[int, int]:
++    """Marks [quantity] copies of one of the user's collection rows For Trade (0 takes it off). Returns (marked, held)."""
++    item = (
++        db.query(CollectionItem)
++        .options(joinedload(CollectionItem.card))
++        .filter(CollectionItem.id == item_id, CollectionItem.user_id == user.id)
++        .first()
++    )
++    if item is None:
++        raise HTTPException(status_code=404, detail="Collection item not found")
++    if item.card is None or item.card.is_custom:
++        raise HTTPException(status_code=422, detail="A custom card can't be put up for trade")
++    held = int(item.quantity or 0)
++    if quantity < 0 or quantity > held:
++        raise HTTPException(status_code=422, detail=f"You only have {held} of this card")
++    entry = db.query(TradeListEntry).filter(TradeListEntry.collection_item_id == item.id).first()
++    if quantity == 0:
++        if entry is not None:
++            db.delete(entry)
++    elif entry is not None:
++        entry.quantity = quantity
++    else:
++        db.add(TradeListEntry(user_id=user.id, collection_item_id=item.id, quantity=quantity, created_at=_now()))
++    try:
++        db.commit()
++    except IntegrityError:
++        # Two requests marked the same row at once: the later one wins.
++        db.rollback()
++        entry = db.query(TradeListEntry).filter(TradeListEntry.collection_item_id == item.id).first()
++        if entry is None:
++            raise HTTPException(status_code=409, detail="Try again") from None
++        if quantity == 0:
++            db.delete(entry)
++        else:
++            entry.quantity = quantity
++        db.commit()
++    return quantity, held
+diff --git a/backend/tests/friends_world.py b/backend/tests/friends_world.py
+new file mode 100644
+index 0000000..1dd7b51
+--- /dev/null
++++ b/backend/tests/friends_world.py
+@@ -0,0 +1,185 @@
++"""A small world for the Friends tests: a catalogue, five people and what each of them owns and wants.
++
++    ash    the owner whose data most tests look at
++    misty  ash's friend (an accepted friendship)
++    brock  a stranger: signed in, no link to anyone
++    gary   has asked ash to be friends; ash has not answered
++    oak    an admin who is not anyone's friend
++
++Nobody shares anything until a test says so (``world.share(...)``), because that is what a fresh install does.
++"""
++
++import datetime
++import os
++
++from sqlalchemy import create_engine
++from sqlalchemy.orm import sessionmaker
++from sqlalchemy.pool import StaticPool
++
++from database import Base
++from models import (
++    Card,
++    CollectionItem,
++    FriendLink,
++    FriendSettings,
++    Set,
++    TradeListEntry,
++    User,
++    WishlistItem,
++)
++
++NOW = datetime.datetime(2026, 10, 1, 12, 0, 0)
++
++
++class FriendsWorld:
++    def __init__(self):
++        # SQLite in memory by default. Point FRIENDS_TEST_DATABASE_URL at an empty PostgreSQL database to run the same tests
++        # on the database the server really uses; its tables are dropped when each test ends.
++        database_url = os.environ.get("FRIENDS_TEST_DATABASE_URL", "sqlite:///:memory:")
++        options = {"connect_args": {"check_same_thread": False}, "poolclass": StaticPool} if database_url.startswith("sqlite") else {}
++        self.engine = create_engine(database_url, **options)
++        Base.metadata.create_all(self.engine)
++        self.session_factory = sessionmaker(bind=self.engine, autoflush=False)
++        self.db = self.session_factory()
++        self._people()
++        self._catalogue()
++        self._collections()
++
++    def close(self):
++        self.db.close()
++        Base.metadata.drop_all(self.engine)
++        self.engine.dispose()
++
++    # --- people -------------------------------------------------------------------------------------------------------
++
++    def _people(self):
++        def person(name, role="trainer", **extra):
++            user = User(username=name, hashed_password="x", role=role, is_active=True, **extra)
++            self.db.add(user)
++            return user
++
++        self.ash = person("ash", avatar_id=25)
++        self.misty = person("misty", avatar_id=121)
++        self.brock = person("brock", avatar_id=95)
++        self.gary = person("gary")
++        self.oak = person("oak", role="admin")
++        self.db.commit()
++        self.befriend(self.ash, self.misty)
++        self.request(self.gary, self.ash)
++
++    def befriend(self, a, b, requested_by=None):
++        low, high = sorted((a.id, b.id))
++        link = FriendLink(
++            user_low_id=low,
++            user_high_id=high,
++            requested_by_id=(requested_by or a).id,
++            status="accepted",
++            created_at=NOW,
++            accepted_at=NOW,
++        )
++        self.db.add(link)
++        self.db.commit()
++        return link
++
++    def request(self, sender, target):
++        low, high = sorted((sender.id, target.id))
++        link = FriendLink(
++            user_low_id=low, user_high_id=high, requested_by_id=sender.id, status="pending", created_at=NOW
++        )
++        self.db.add(link)
++        self.db.commit()
++        return link
++
++    def share(self, user, collection=None, wishlist=None, trade=None):
++        settings = self.db.query(FriendSettings).filter(FriendSettings.user_id == user.id).first()
++        if settings is None:
++            settings = FriendSettings(user_id=user.id)
++            self.db.add(settings)
++        if collection is not None:
++            settings.collection_sharing = collection
++        if wishlist is not None:
++            settings.wishlist_sharing = wishlist
++        if trade is not None:
++            settings.trade_sharing = trade
++        self.db.commit()
++        return settings
++
++    # --- catalogue ----------------------------------------------------------------------------------------------------
++
++    def _catalogue(self):
++        self.db.add_all([
++            Set(id="sv1_en", tcg_set_id="sv1", name="Scarlet & Violet", lang="en", total=198, abbreviation="SVI"),
++            Set(id="sv3_en", tcg_set_id="sv3", name="Obsidian Flames", lang="en", total=197, abbreviation="OBF"),
++        ])
++
++        def card(card_id, name, set_id, number, rarity, trend):
++            self.db.add(Card(
++                id=card_id, tcg_card_id=card_id.rsplit("_", 1)[0], name=name, set_id=set_id, number=number,
++                rarity=rarity, lang="en", supertype="Pokémon", price_trend=trend, price_market=trend,
++                images_small=f"https://img.example/{card_id}/low.webp", is_custom=False, is_digital=False,
++                variants_normal=True, variants_holo=True,
++            ))
++
++        card("sv1-1_en", "Sprigatito", "sv1", "1", "Common", 0.5)
++        card("sv1-2_en", "Floragato", "sv1", "2", "Uncommon", 0.8)
++        card("sv1-3_en", "Meowscarada ex", "sv1", "3", "Double Rare", 4.0)
++        card("sv3-125_en", "Charizard ex", "sv3", "125", "Double Rare", 8.5)
++        card("sv3-223_en", "Charizard ex", "sv3", "223", "Special Illustration Rare", 61.0)
++        self.db.commit()
++        # A card ash made by hand: it belongs to ash and must never be shown to anyone else.
++        self.db.add(Card(
++            id="custom-1", name="Private proxy", set_id="custom", number="1", lang="en", is_custom=True,
++            custom_owner_id=self.ash.id, custom_image_url="https://private.example/proxy.png",
++        ))
++        self.db.commit()
++
++    # --- collections --------------------------------------------------------------------------------------------------
++
++    def _collections(self):
++        def own(user, card_id, quantity, condition="NM", variant="Normal", paid=None, minutes=0):
++            row = CollectionItem(
++                user_id=user.id, card_id=card_id, quantity=quantity, condition=condition, variant=variant,
++                purchase_price=paid, lang="en", added_at=NOW + datetime.timedelta(minutes=minutes),
++            )
++            self.db.add(row)
++            self.db.commit()
++            return row
++
++        def want(user, card_id, quantity=1, below=None, minutes=0):
++            item = WishlistItem(
++                user_id=user.id, card_id=card_id, quantity=quantity, price_alert_below=below,
++                price_alert_above=None, created_at=NOW + datetime.timedelta(minutes=minutes),
++            )
++            self.db.add(item)
++            self.db.commit()
++            return item
++
++        # ash: three Sprigatito (NM), a holo one, two Charizard ex, a Meowscarada ex, and the proxy. Paid prices are private.
++        self.ash_sprigatito = own(self.ash, "sv1-1_en", 3, paid=0.2, minutes=1)
++        self.ash_sprigatito_holo = own(self.ash, "sv1-1_en", 1, variant="Holo", paid=1.0, minutes=2)
++        self.ash_charizard = own(self.ash, "sv3-125_en", 2, condition="LP", paid=7.0, minutes=3)
++        self.ash_meowscarada = own(self.ash, "sv1-3_en", 1, paid=3.5, minutes=4)
++        self.ash_proxy = own(self.ash, "custom-1", 1, paid=0.0, minutes=5)
++        # ash wants the Charizard illustration rare (with a secret target price), two Floragato and (oddly) his own proxy.
++        self.ash_wants_sir = want(self.ash, "sv3-223_en", 1, below=50.0, minutes=1)
++        self.ash_wants_floragato = want(self.ash, "sv1-2_en", 2, minutes=2)
++        want(self.ash, "custom-1", 1, minutes=3)
++
++        # misty owns the Charizard illustration rare and two Meowscarada ex, and wants Sprigatito and a Charizard ex.
++        self.misty_sir = own(self.misty, "sv3-223_en", 1, paid=55.0, minutes=1)
++        self.misty_meowscarada = own(self.misty, "sv1-3_en", 2, paid=3.0, minutes=2)
++        self.misty_wants_sprigatito = want(self.misty, "sv1-1_en", 1, minutes=1)
++        self.misty_wants_charizard = want(self.misty, "sv3-125_en", 1, minutes=2)
++
++        # brock owns a Floragato (ash wants one) but shares nothing.
++        self.brock_floragato = own(self.brock, "sv1-2_en", 1, paid=0.5)
++
++    def mark_trade(self, user, row, quantity):
++        entry = self.db.query(TradeListEntry).filter(TradeListEntry.collection_item_id == row.id).first()
++        if entry is None:
++            entry = TradeListEntry(user_id=user.id, collection_item_id=row.id, quantity=quantity, created_at=NOW)
++            self.db.add(entry)
++        else:
++            entry.quantity = quantity
++        self.db.commit()
++        return entry
+diff --git a/backend/tests/test_custom_card_ownership.py b/backend/tests/test_custom_card_ownership.py
+index 0439d79..3d35ddc 100644
+--- a/backend/tests/test_custom_card_ownership.py
++++ b/backend/tests/test_custom_card_ownership.py
+@@ -28,6 +28,7 @@ try:
+         Card,
+         CollectionItem,
+         CustomCardMatch,
++        FriendSettings,
+         ImageCache,
+         PriceHistory,
+         Setting,
+@@ -217,6 +218,13 @@ class CustomCardOwnershipTests(unittest.TestCase):
+             db=self.db,
+         )
+ 
++        # A collection is private until its owner shares it (services/friends.py).
++        with self.assertRaises(HTTPException) as private:
++            get_user_collection(self.owner.id, current_user=self.other, db=self.db)
++        self.assertEqual(private.exception.status_code, 404)
++
++        self.db.add(FriendSettings(user_id=self.owner.id, collection_sharing="public"))
++        self.db.commit()
+         visible = get_user_collection(
+             self.owner.id,
+             current_user=self.other,
+diff --git a/backend/tests/test_friends.py b/backend/tests/test_friends.py
+new file mode 100644
+index 0000000..150d695
+--- /dev/null
++++ b/backend/tests/test_friends.py
+@@ -0,0 +1,818 @@
++import json
++import unittest
++from unittest.mock import patch
++
++try:
++    from fastapi import HTTPException
++    from pydantic import ValidationError
++
++    from api import friends as friends_api
++    from api.auth import delete_user
++    from api.collection import get_user_collection
++    from api.social import compare_users, get_achievements, get_leaderboard
++    from models import CollectionItem, FriendLink, FriendSettings, TradeListEntry
++    from services import friends as fr
++
++    from friends_world import FriendsWorld
++
++    DEPS = True
++except ModuleNotFoundError as error:  # pragma: no cover - lightweight environments
++    if error.name == "friends_world":
++        raise
++    DEPS = False
++
++
++def keys_in(value):
++    """Every dictionary key anywhere in a JSON-like value."""
++    found = set()
++    if isinstance(value, dict):
++        for key, inner in value.items():
++            found.add(key)
++            found |= keys_in(inner)
++    elif isinstance(value, (list, tuple)):
++        for inner in value:
++            found |= keys_in(inner)
++    return found
++
++
++@unittest.skipUnless(DEPS, "FastAPI/SQLAlchemy are not installed in this lightweight test environment")
++class FriendsTestCase(unittest.TestCase):
++    def setUp(self):
++        self.world = FriendsWorld()
++        self.db = self.world.db
++        for name in ("ash", "misty", "brock", "gary", "oak"):
++            setattr(self, name, getattr(self.world, name))
++
++    def tearDown(self):
++        self.world.close()
++
++    def denied(self, call, status):
++        with self.assertRaises(HTTPException) as caught:
++            call()
++        self.assertEqual(caught.exception.status_code, status, caught.exception.detail)
++        return caught.exception.detail
++
++    # Calls as a given person.
++    def collection_of(self, owner, viewer):
++        return friends_api.get_friend_collection(owner.id, current_user=viewer, db=self.db)
++
++    def wishlist_of(self, owner, viewer):
++        return friends_api.get_friend_wishlist(owner.id, current_user=viewer, db=self.db)
++
++    def trade_list_of(self, owner, viewer):
++        return friends_api.get_friend_trade_list(owner.id, current_user=viewer, db=self.db)
++
++    def match(self, viewer, other):
++        return friends_api.get_trade_match(other.id, current_user=viewer, db=self.db)
++
++    def send(self, sender, **body):
++        return friends_api.send_friend_request(friends_api.FriendRequestCreate(**body), current_user=sender, db=self.db)
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Invite codes
++# ---------------------------------------------------------------------------------------------------------------------
++
++class InviteCodeTests(FriendsTestCase):
++    def test_codes_are_typed_in_any_case_with_or_without_the_dash(self):
++        self.assertEqual(fr.normalize_invite_code("k7mq9-xwd3h"), "K7MQ9XWD3H")
++        self.assertEqual(fr.normalize_invite_code(" K7MQ9 XWD3H "), "K7MQ9XWD3H")
++        self.assertEqual(fr.format_invite_code("K7MQ9XWD3H"), "K7MQ9-XWD3H")
++
++    def test_what_cannot_be_a_code_is_refused(self):
++        for text in ("", None, "K7MQ9", "K7MQ9XWD3HH", "K7MQ9XWD3O", "K7MQ9XWD31", "K7MQ9XWDLH", "K7MQ9XWDUH", "K7MQ9XWDIH"):
++            self.assertIsNone(fr.normalize_invite_code(text), text)
++
++    def test_every_user_gets_their_own_code_made_of_the_safe_alphabet(self):
++        codes = {}
++        for user in (self.ash, self.misty, self.brock):
++            code = friends_api.get_me(current_user=user, db=self.db)["invite_code"]
++            self.assertEqual(len(code), 11, code)
++            self.assertEqual(code[5], "-")
++            self.assertTrue(set(code.replace("-", "")) <= set(fr.INVITE_ALPHABET), code)
++            codes[user.username] = code
++        self.assertEqual(len(set(codes.values())), 3)
++
++    def test_asking_again_gives_the_same_code(self):
++        first = friends_api.get_me(current_user=self.ash, db=self.db)["invite_code"]
++        self.assertEqual(friends_api.get_me(current_user=self.ash, db=self.db)["invite_code"], first)
++
++    def test_a_new_code_makes_the_old_one_stop_working(self):
++        old = friends_api.get_me(current_user=self.brock, db=self.db)["invite_code"]
++        new = friends_api.new_invite_code(current_user=self.brock, db=self.db)["invite_code"]
++        self.assertNotEqual(old, new)
++        self.denied(lambda: self.send(self.gary, invite_code=old), 404)
++        self.assertEqual(self.send(self.gary, invite_code=new)["user"]["id"], self.brock.id)
++
++    def test_a_garbled_code_is_a_422_and_an_unknown_one_a_404(self):
++        self.denied(lambda: self.send(self.gary, invite_code="not a code"), 422)
++        self.denied(lambda: self.send(self.gary, invite_code="AAAAA-AAAAA"), 404)
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Requests and friendships
++# ---------------------------------------------------------------------------------------------------------------------
++
++class RequestTests(FriendsTestCase):
++    def test_a_request_by_username_waits_for_an_answer_and_shares_nothing(self):
++        result = self.send(self.brock, username="ash")
++        self.assertEqual(result["status"], "pending")
++        self.assertEqual(result["user"]["username"], "ash")
++        self.world.share(self.ash, collection="friends", wishlist="friends", trade="friends")
++        self.denied(lambda: self.collection_of(self.ash, self.brock), 404)
++        overview = friends_api.get_friends(current_user=self.brock, db=self.db)
++        self.assertEqual([r["user"]["username"] for r in overview["outgoing"]], ["ash"])
++        self.assertEqual(overview["friends"], [])
++
++    def test_a_request_by_invite_code(self):
++        code = friends_api.get_me(current_user=self.ash, db=self.db)["invite_code"]
++        result = self.send(self.brock, invite_code=code.lower())
++        self.assertEqual((result["status"], result["user"]["username"]), ("pending", "ash"))
++
++    def test_the_username_may_be_typed_in_any_case_when_only_one_person_matches(self):
++        self.assertEqual(self.send(self.brock, username="  ASH ")["user"]["id"], self.ash.id)
++
++    def test_an_exact_username_wins_over_one_that_differs_in_case(self):
++        impostor = type(self.ash)(username="Ash", hashed_password="x", role="trainer", is_active=True)
++        self.db.add(impostor)
++        self.db.commit()
++        self.assertEqual(self.send(self.brock, username="ash")["user"]["id"], self.ash.id)
++        self.assertEqual(self.send(self.oak, username="Ash")["user"]["id"], impostor.id)
++        self.denied(lambda: self.send(self.gary, username="ASH"), 409)
++
++    def test_someone_who_does_not_exist_or_is_switched_off_cannot_be_asked(self):
++        self.denied(lambda: self.send(self.ash, username="nobody"), 404)
++        self.brock.is_active = False
++        self.db.commit()
++        self.denied(lambda: self.send(self.ash, username="brock"), 404)
++        code = fr.ensure_settings(self.db, self.brock.id).invite_code
++        self.denied(lambda: self.send(self.ash, invite_code=code), 404)
++
++    def test_exactly_one_of_username_and_code_is_needed(self):
++        for body in ({}, {"username": "ash", "invite_code": "AAAAA-AAAAA"}, {"username": "  "}):
++            with self.assertRaises(ValidationError):
++                friends_api.FriendRequestCreate(**body)
++
++    def test_you_cannot_ask_yourself_or_a_friend(self):
++        self.denied(lambda: self.send(self.ash, username="ash"), 400)
++        self.denied(lambda: self.send(self.ash, username="misty"), 409)
++
++    def test_asking_twice_changes_nothing(self):
++        first = self.send(self.brock, username="ash")
++        second = self.send(self.brock, username="ash")
++        self.assertEqual((second["status"], second["request_id"]), ("pending", first["request_id"]))
++        self.assertEqual(self.db.query(FriendLink).count(), 3)  # ash-misty, gary-ash, brock-ash
++
++    def test_asking_someone_who_already_asked_you_makes_you_friends(self):
++        result = self.send(self.ash, username="gary")
++        self.assertEqual(result["status"], "accepted")
++        self.assertTrue(fr.are_friends(self.db, self.ash.id, self.gary.id))
++
++    def test_only_the_person_asked_can_accept(self):
++        link = self.db.query(FriendLink).filter(FriendLink.requested_by_id == self.gary.id).one()
++        self.denied(lambda: friends_api.accept_friend_request(link.id, current_user=self.gary, db=self.db), 404)
++        self.denied(lambda: friends_api.accept_friend_request(link.id, current_user=self.brock, db=self.db), 404)
++        self.assertFalse(fr.are_friends(self.db, self.ash.id, self.gary.id))
++        friend = friends_api.accept_friend_request(link.id, current_user=self.ash, db=self.db)
++        self.assertEqual(friend["username"], "gary")
++        self.assertTrue(fr.are_friends(self.db, self.ash.id, self.gary.id))
++
++    def test_accepting_shares_nothing_by_itself(self):
++        link = self.db.query(FriendLink).filter(FriendLink.requested_by_id == self.gary.id).one()
++        friends_api.accept_friend_request(link.id, current_user=self.ash, db=self.db)
++        self.denied(lambda: self.collection_of(self.ash, self.gary), 403)
++        self.denied(lambda: self.wishlist_of(self.ash, self.gary), 403)
++        self.denied(lambda: self.trade_list_of(self.ash, self.gary), 403)
++
++    def test_declining_removes_the_request_and_the_other_person_can_ask_again(self):
++        link = self.db.query(FriendLink).filter(FriendLink.requested_by_id == self.gary.id).one()
++        self.denied(lambda: friends_api.decline_friend_request(link.id, current_user=self.gary, db=self.db), 404)
++        friends_api.decline_friend_request(link.id, current_user=self.ash, db=self.db)
++        self.assertEqual(friends_api.get_friends(current_user=self.ash, db=self.db)["incoming"], [])
++        self.assertEqual(friends_api.get_friends(current_user=self.gary, db=self.db)["outgoing"], [])
++        self.assertEqual(self.send(self.gary, username="ash")["status"], "pending")
++
++    def test_a_request_can_be_taken_back_only_by_the_person_who_made_it(self):
++        link = self.db.query(FriendLink).filter(FriendLink.requested_by_id == self.gary.id).one()
++        self.denied(lambda: friends_api.cancel_friend_request(link.id, current_user=self.ash, db=self.db), 404)
++        self.denied(lambda: friends_api.cancel_friend_request(link.id, current_user=self.brock, db=self.db), 404)
++        friends_api.cancel_friend_request(link.id, current_user=self.gary, db=self.db)
++        self.assertEqual(self.db.query(FriendLink).filter(FriendLink.id == link.id).count(), 0)
++
++    def test_an_accepted_friendship_is_not_a_request(self):
++        link = fr.link_between(self.db, self.ash.id, self.misty.id)
++        self.denied(lambda: friends_api.decline_friend_request(link.id, current_user=self.misty, db=self.db), 409)
++        self.denied(lambda: friends_api.cancel_friend_request(link.id, current_user=self.ash, db=self.db), 409)
++        self.assertTrue(fr.are_friends(self.db, self.ash.id, self.misty.id))
++
++    def test_unknown_requests_are_404(self):
++        for call in (friends_api.accept_friend_request, friends_api.decline_friend_request, friends_api.cancel_friend_request):
++            self.denied(lambda call=call: call(9999, current_user=self.ash, db=self.db), 404)
++
++    def test_either_friend_can_end_the_friendship(self):
++        friends_api.remove_friend(self.ash.id, current_user=self.misty, db=self.db)
++        self.assertFalse(fr.are_friends(self.db, self.ash.id, self.misty.id))
++        self.befriend_again = self.world.befriend(self.ash, self.misty)
++        friends_api.remove_friend(self.misty.id, current_user=self.ash, db=self.db)
++        self.assertFalse(fr.are_friends(self.db, self.ash.id, self.misty.id))
++
++    def test_only_a_friend_can_be_removed(self):
++        self.denied(lambda: friends_api.remove_friend(self.brock.id, current_user=self.ash, db=self.db), 404)
++        # A request that has not been accepted is not a friendship.
++        self.denied(lambda: friends_api.remove_friend(self.gary.id, current_user=self.ash, db=self.db), 404)
++        self.assertEqual(self.db.query(FriendLink).count(), 2)
++
++    def test_there_is_a_limit_on_requests_waiting(self):
++        from models import User
++
++        extra = []
++        for number in range(fr.MAX_PENDING_OUTGOING + 1):
++            user = User(username=f"trainer{number}", hashed_password="x", role="trainer", is_active=True)
++            self.db.add(user)
++            extra.append(user)
++        self.db.commit()
++        for user in extra[: fr.MAX_PENDING_OUTGOING]:
++            self.send(self.brock, username=user.username)
++        self.denied(lambda: self.send(self.brock, username=extra[-1].username), 409)
++
++    def test_the_overview_lists_friends_by_name_and_requests_by_direction(self):
++        self.world.share(self.misty, wishlist="friends", trade="public")
++        overview = friends_api.get_friends(current_user=self.ash, db=self.db)
++        self.assertEqual([(f["username"], f["shares"]) for f in overview["friends"]], [
++            ("misty", {"collection": False, "wishlist": True, "trade": True}),
++        ])
++        self.assertEqual([r["user"]["username"] for r in overview["incoming"]], ["gary"])
++        self.assertEqual(overview["outgoing"], [])
++        gary = friends_api.get_friends(current_user=self.gary, db=self.db)
++        self.assertEqual([r["user"]["username"] for r in gary["outgoing"]], ["ash"])
++        self.assertEqual(gary["incoming"], [])
++
++    def test_switched_off_people_disappear_from_the_overview(self):
++        self.misty.is_active = False
++        self.db.commit()
++        self.assertEqual(friends_api.get_friends(current_user=self.ash, db=self.db)["friends"], [])
++
++    def test_the_counts_on_me(self):
++        self.world.mark_trade(self.ash, self.world.ash_sprigatito, 2)
++        counts = friends_api.get_me(current_user=self.ash, db=self.db)["counts"]
++        self.assertEqual(counts, {"friends": 1, "incoming": 1, "outgoing": 0, "for_trade_cards": 2})
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Who can see what
++# ---------------------------------------------------------------------------------------------------------------------
++
++class PrivacyTests(FriendsTestCase):
++    SECTIONS = {
++        "collection": "collection_of",
++        "wishlist": "wishlist_of",
++        "trade": "trade_list_of",
++    }
++
++    def viewers(self):
++        # name -> (user, how they relate to ash). Gary has asked ash, who has not answered; oak is an admin.
++        return {
++            "owner": self.ash,
++            "friend": self.misty,
++            "pending requester": self.gary,
++            "stranger": self.brock,
++            "admin": self.oak,
++        }
++
++    ALLOWED = {
++        "private": {"owner"},
++        "friends": {"owner", "friend"},
++        "public": {"owner", "friend", "pending requester", "stranger", "admin"},
++    }
++
++    def test_nothing_is_shared_until_its_owner_chooses(self):
++        self.assertEqual(friends_api.get_me(current_user=self.ash, db=self.db)["sharing"],
++                         {"collection": "private", "wishlist": "private", "trade": "private"})
++        for section, reader in self.SECTIONS.items():
++            for who, viewer in self.viewers().items():
++                if who == "owner":
++                    continue
++                expected = 403 if who == "friend" else 404
++                with self.subTest(section=section, viewer=who):
++                    self.denied(lambda: getattr(self, reader)(self.ash, viewer), expected)
++
++    def test_every_level_for_every_kind_of_viewer_and_section(self):
++        self.world.mark_trade(self.ash, self.world.ash_sprigatito, 2)
++        for section, reader in self.SECTIONS.items():
++            for level, allowed in self.ALLOWED.items():
++                self.world.share(self.ash, **{section: level})
++                for who, viewer in self.viewers().items():
++                    with self.subTest(section=section, level=level, viewer=who):
++                        self.assertEqual(fr.can_view(self.db, viewer.id, self.ash.id, section), who in allowed)
++                        if who in allowed:
++                            self.assertIsInstance(getattr(self, reader)(self.ash, viewer), list)
++                        else:
++                            self.denied(lambda: getattr(self, reader)(self.ash, viewer), 403 if who == "friend" else 404)
++            self.world.share(self.ash, **{section: "private"})
++
++    def test_each_section_is_shared_on_its_own(self):
++        self.world.mark_trade(self.ash, self.world.ash_sprigatito, 1)
++        self.world.share(self.ash, wishlist="friends")
++        self.assertTrue(self.wishlist_of(self.ash, self.misty))
++        self.denied(lambda: self.collection_of(self.ash, self.misty), 403)
++        self.denied(lambda: self.trade_list_of(self.ash, self.misty), 403)
++        self.world.share(self.ash, wishlist="private", trade="friends")
++        self.assertEqual(len(self.trade_list_of(self.ash, self.misty)), 1)
++        self.denied(lambda: self.collection_of(self.ash, self.misty), 403)
++        self.denied(lambda: self.wishlist_of(self.ash, self.misty), 403)
++
++    def test_a_stranger_cannot_tell_a_private_user_from_one_who_does_not_exist(self):
++        private = self.denied(lambda: self.collection_of(self.ash, self.brock), 404)
++        missing = self.denied(lambda: friends_api.get_friend_collection(9999, current_user=self.brock, db=self.db), 404)
++        self.assertEqual(private, missing)
++        self.denied(lambda: friends_api.get_profile(self.ash.id, current_user=self.brock, db=self.db), 404)
++
++    def test_a_friend_is_told_what_is_not_shared_with_them(self):
++        self.assertEqual(self.denied(lambda: self.collection_of(self.ash, self.misty), 403),
++                         "ash hasn't shared their collection with you")
++        self.assertEqual(self.denied(lambda: self.trade_list_of(self.ash, self.misty), 403),
++                         "ash hasn't shared their For Trade list with you")
++
++    def test_ending_the_friendship_stops_sharing_at_once(self):
++        self.world.share(self.ash, collection="friends", wishlist="friends", trade="friends")
++        self.assertTrue(self.collection_of(self.ash, self.misty))
++        friends_api.remove_friend(self.ash.id, current_user=self.misty, db=self.db)
++        for reader in self.SECTIONS.values():
++            self.denied(lambda reader=reader: getattr(self, reader)(self.ash, self.misty), 404)
++
++    def test_taking_back_a_choice_stops_sharing_at_once(self):
++        self.world.share(self.ash, collection="public")
++        self.assertTrue(self.collection_of(self.ash, self.brock))
++        friends_api.update_sharing(friends_api.SharingUpdate(collection="private"), current_user=self.ash, db=self.db)
++        self.denied(lambda: self.collection_of(self.ash, self.brock), 404)
++
++    def test_a_new_invite_code_does_not_end_friendships(self):
++        self.world.share(self.ash, collection="friends")
++        friends_api.new_invite_code(current_user=self.ash, db=self.db)
++        self.assertTrue(self.collection_of(self.ash, self.misty))
++
++    def test_sharing_changes_only_what_it_names(self):
++        result = friends_api.update_sharing(friends_api.SharingUpdate(wishlist="friends"), current_user=self.ash, db=self.db)
++        self.assertEqual(result, {"collection": "private", "wishlist": "friends", "trade": "private"})
++        result = friends_api.update_sharing(friends_api.SharingUpdate(trade="public"), current_user=self.ash, db=self.db)
++        self.assertEqual(result, {"collection": "private", "wishlist": "friends", "trade": "public"})
++
++    def test_a_choice_that_is_not_one_of_the_three_is_refused(self):
++        with self.assertRaises(ValidationError):
++            friends_api.SharingUpdate(collection="everyone")
++        with self.assertRaises(ValidationError):
++            friends_api.SharingUpdate(trade_list="friends")  # a section that does not exist is an error, not ignored
++        with self.assertRaises(HTTPException):
++            fr.update_sharing(self.db, self.ash.id, {"collection": "everyone"})
++
++    def test_a_stored_value_that_is_not_a_known_level_counts_as_private(self):
++        settings = self.world.share(self.ash, collection="friends")
++        settings.collection_sharing = "everyone"  # not possible through the API; the check must still fail closed
++        self.assertEqual(fr.sharing_levels(settings)["collection"], "private")
++        self.assertFalse(fr.can_view(self.db, self.misty.id, self.ash.id, "collection"))
++
++    def test_an_unknown_section_is_never_visible(self):
++        self.assertFalse(fr.can_view(self.db, self.misty.id, self.ash.id, "purchases"))
++
++    def test_the_owner_sees_their_own_through_the_same_endpoints(self):
++        self.assertTrue(self.collection_of(self.ash, self.ash))
++        self.assertTrue(self.wishlist_of(self.ash, self.ash))
++
++    def test_a_switched_off_user_cannot_be_seen_even_when_public(self):
++        self.world.share(self.ash, collection="public")
++        self.ash.is_active = False
++        self.db.commit()
++        self.denied(lambda: self.collection_of(self.ash, self.brock), 404)
++
++    def test_who_can_see_a_profile(self):
++        # A stranger sees nothing of a private user; a friend, and anyone with a pending request, sees who they are.
++        self.denied(lambda: friends_api.get_profile(self.ash.id, current_user=self.brock, db=self.db), 404)
++        friend = friends_api.get_profile(self.ash.id, current_user=self.misty, db=self.db)
++        self.assertEqual((friend["is_friend"], friend["shared"]), (True, {"collection": False, "wishlist": False, "trade": False}))
++        pending = friends_api.get_profile(self.ash.id, current_user=self.gary, db=self.db)
++        self.assertEqual((pending["is_friend"], pending["request"]["direction"]), (False, "outgoing"))
++        incoming = friends_api.get_profile(self.gary.id, current_user=self.ash, db=self.db)
++        self.assertEqual(incoming["request"]["direction"], "incoming")
++        self.world.share(self.ash, trade="public")
++        stranger = friends_api.get_profile(self.ash.id, current_user=self.brock, db=self.db)
++        self.assertEqual((stranger["is_friend"], stranger["shared"]["trade"]), (False, True))
++
++    def test_the_friends_api_is_the_only_new_surface_that_names_a_collection_row(self):
++        # Rows are keyed by the collection id for the owner's own use; nothing lets a viewer act on one.
++        self.world.share(self.ash, collection="public")
++        self.denied(lambda: friends_api.set_trade_quantity(
++            self.world.ash_sprigatito.id, friends_api.TradeQuantity(quantity=1), current_user=self.brock, db=self.db), 404)
++        self.assertEqual(self.db.query(TradeListEntry).count(), 0)
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# What leaves the owner
++# ---------------------------------------------------------------------------------------------------------------------
++
++class ProjectionTests(FriendsTestCase):
++    PRIVATE_KEYS = {
++        "purchase_price", "added_at", "has_scan_photo", "product_sources", "allocated_quantity", "available_quantity",
++        "price_alert_above", "price_alert_below", "notified_at", "user_id", "printing_details", "custom_owner_id",
++        "custom_owner_username", "custom_image_url",
++    }
++
++    def setUp(self):
++        super().setUp()
++        self.world.share(self.ash, collection="friends", wishlist="friends", trade="friends")
++        self.world.mark_trade(self.ash, self.world.ash_sprigatito, 2)
++
++    def test_a_shared_collection_never_carries_what_was_paid_or_anything_private(self):
++        rows = self.collection_of(self.ash, self.misty)
++        self.assertEqual(self.PRIVATE_KEYS & keys_in(rows) - {"custom_owner_id", "custom_owner_username", "custom_image_url"}, set())
++        text = json.dumps(rows, default=str)
++        self.assertNotIn("private.example", text)
++        for row in rows:
++            self.assertIsNone(row["card"]["custom_owner_id"])
++            self.assertIsNone(row["card"].get("custom_owner_username"))
++            self.assertFalse(row["card"]["is_custom_owner"])
++
++    def test_the_collection_lists_each_row_with_its_copies_condition_variant_and_language(self):
++        rows = self.collection_of(self.ash, self.misty)
++        self.assertEqual(
++            [(r["card_id"], r["quantity"], r["condition"], r["variant"], r["lang"]) for r in rows],
++            [
++                ("sv1-3_en", 1, "NM", "Normal", "en"),
++                ("sv3-125_en", 2, "LP", "Normal", "en"),
++                ("sv1-1_en", 1, "NM", "Holo", "en"),
++                ("sv1-1_en", 3, "NM", "Normal", "en"),
++            ],
++        )
++        self.assertEqual([r["card"]["name"] for r in rows][:2], ["Meowscarada ex", "Charizard ex"])
++        self.assertEqual(rows[1]["card"]["price_trend"], 8.5)
++        self.assertEqual(rows[1]["card"]["set_ref"]["name"], "Obsidian Flames")
++
++    def test_custom_cards_are_never_shared(self):
++        self.world.share(self.ash, collection="public", wishlist="public", trade="public")
++        self.world.mark_trade(self.ash, self.world.ash_proxy, 1)
++        for rows in (self.collection_of(self.ash, self.brock), self.wishlist_of(self.ash, self.brock), self.trade_list_of(self.ash, self.brock)):
++            self.assertNotIn("custom-1", [row["card_id"] for row in rows])
++
++    def test_a_shared_wishlist_has_no_target_prices(self):
++        rows = self.wishlist_of(self.ash, self.misty)
++        self.assertEqual([r["card_id"] for r in rows], ["sv1-2_en", "sv3-223_en"])
++        self.assertEqual([r["quantity"] for r in rows], [2, 1])
++        self.assertEqual(self.PRIVATE_KEYS & keys_in(rows) - {"custom_owner_id", "custom_owner_username", "custom_image_url"}, set())
++        self.assertNotIn("50.0", json.dumps(rows, default=str))
++
++    def test_for_trade_counts_in_the_collection_follow_the_for_trade_setting(self):
++        rows = self.collection_of(self.ash, self.misty)
++        self.assertEqual({(r["variant"], r["quantity"]): r["for_trade_quantity"] for r in rows if r["card_id"] == "sv1-1_en"},
++                         {("Normal", 3): 2, ("Holo", 1): 0})
++        self.world.share(self.ash, trade="private")
++        rows = self.collection_of(self.ash, self.misty)
++        self.assertEqual({r["for_trade_quantity"] for r in rows}, {None})
++
++    def test_the_trade_list_names_only_what_is_for_trade(self):
++        rows = self.trade_list_of(self.ash, self.misty)
++        self.assertEqual([(r["card_id"], r["variant"], r["quantity"]) for r in rows], [("sv1-1_en", "Normal", 2)])
++        self.assertEqual(self.PRIVATE_KEYS & keys_in(rows) - {"custom_owner_id", "custom_owner_username", "custom_image_url"}, set())
++
++    def test_the_response_models_accept_what_the_endpoints_return(self):
++        # What a client gets is the response model's view of these dictionaries, so they must fit it.
++        for row in self.collection_of(self.ash, self.misty):
++            friends_api.SharedCollectionItem.model_validate(row)
++        for row in self.wishlist_of(self.ash, self.misty):
++            friends_api.SharedWishlistItem.model_validate(row)
++        for row in self.trade_list_of(self.ash, self.misty):
++            friends_api.SharedTradeItem.model_validate(row)
++
++    def test_cards_that_are_hidden_from_the_owner_stay_hidden(self):
++        from models import Card
++
++        self.db.query(Card).filter(Card.id == "sv1-3_en").update({"is_digital": True})
++        self.db.commit()
++        with patch("services.card_visibility.digital_sets_enabled", return_value=False):
++            ids = [r["card_id"] for r in self.collection_of(self.ash, self.misty)]
++        self.assertNotIn("sv1-3_en", ids)
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# The For Trade list
++# ---------------------------------------------------------------------------------------------------------------------
++
++class TradeListTests(FriendsTestCase):
++    def mark(self, user, row, quantity):
++        return friends_api.set_trade_quantity(row.id, friends_api.TradeQuantity(quantity=quantity), current_user=user, db=self.db)
++
++    def test_nothing_is_for_trade_until_the_owner_says_so_duplicates_included(self):
++        # ash has three Sprigatito and two Charizard ex: spares, but nothing is marked.
++        self.assertEqual(friends_api.get_own_trade_list(current_user=self.ash, db=self.db), {"items": []})
++        self.world.share(self.ash, trade="public")
++        self.assertEqual(self.trade_list_of(self.ash, self.brock), [])
++        # Even after more copies arrive.
++        self.world.ash_sprigatito.quantity = 9
++        self.db.commit()
++        self.assertEqual(self.trade_list_of(self.ash, self.brock), [])
++
++    def test_marking_some_copies_of_a_row(self):
++        self.assertEqual(self.mark(self.ash, self.world.ash_sprigatito, 2),
++                         {"collection_item_id": self.world.ash_sprigatito.id, "quantity": 2, "owned": 3})
++        self.assertEqual(friends_api.get_own_trade_list(current_user=self.ash, db=self.db),
++                         {"items": [{"collection_item_id": self.world.ash_sprigatito.id, "quantity": 2, "owned": 3}]})
++        self.mark(self.ash, self.world.ash_sprigatito, 3)
++        self.assertEqual(self.db.query(TradeListEntry).one().quantity, 3)
++
++    def test_each_row_is_marked_on_its_own(self):
++        # The holo Sprigatito and the normal one are different rows: marking one marks nothing of the other.
++        self.mark(self.ash, self.world.ash_sprigatito_holo, 1)
++        self.world.share(self.ash, trade="friends")
++        rows = self.trade_list_of(self.ash, self.misty)
++        self.assertEqual([(r["card_id"], r["variant"], r["quantity"]) for r in rows], [("sv1-1_en", "Holo", 1)])
++
++    def test_zero_takes_a_row_off_and_so_does_delete(self):
++        self.mark(self.ash, self.world.ash_sprigatito, 2)
++        self.mark(self.ash, self.world.ash_sprigatito, 0)
++        self.assertEqual(self.db.query(TradeListEntry).count(), 0)
++        self.mark(self.ash, self.world.ash_charizard, 1)
++        friends_api.remove_from_trade_list(self.world.ash_charizard.id, current_user=self.ash, db=self.db)
++        self.assertEqual(self.db.query(TradeListEntry).count(), 0)
++        friends_api.remove_from_trade_list(self.world.ash_charizard.id, current_user=self.ash, db=self.db)  # nothing to take off: fine
++
++    def test_you_cannot_offer_more_copies_than_you_have(self):
++        detail = self.denied(lambda: self.mark(self.ash, self.world.ash_sprigatito, 4), 422)
++        self.assertEqual(detail, "You only have 3 of this card")
++        self.denied(lambda: fr.set_trade_quantity(self.db, self.ash, self.world.ash_sprigatito.id, -1), 422)
++        with self.assertRaises(ValidationError):
++            friends_api.TradeQuantity(quantity=-1)
++        self.assertEqual(self.db.query(TradeListEntry).count(), 0)
++
++    def test_only_the_owner_can_mark_a_row(self):
++        self.denied(lambda: self.mark(self.misty, self.world.ash_sprigatito, 1), 404)
++        self.denied(lambda: self.mark(self.ash, self.world.misty_sir, 1), 404)
++        self.denied(lambda: friends_api.set_trade_quantity(9999, friends_api.TradeQuantity(quantity=1), current_user=self.ash, db=self.db), 404)
++        self.assertEqual(self.db.query(TradeListEntry).count(), 0)
++
++    def test_a_custom_card_cannot_be_put_up_for_trade(self):
++        self.denied(lambda: self.mark(self.ash, self.world.ash_proxy, 1), 422)
++
++    def test_the_count_others_see_never_exceeds_what_the_owner_holds(self):
++        self.world.share(self.ash, trade="friends")
++        self.mark(self.ash, self.world.ash_sprigatito, 3)
++        self.world.ash_sprigatito.quantity = 1
++        self.db.commit()
++        self.assertEqual([r["quantity"] for r in self.trade_list_of(self.ash, self.misty)], [1])
++
++    def test_copies_removed_and_later_added_again_are_not_for_trade_again(self):
++        self.mark(self.ash, self.world.ash_sprigatito, 3)
++        self.world.ash_sprigatito.quantity = 1
++        self.db.commit()
++        # The owner's own list trims the mark to what is left...
++        self.assertEqual(friends_api.get_own_trade_list(current_user=self.ash, db=self.db)["items"][0]["quantity"], 1)
++        # ...so more copies arriving later are not offered on their own.
++        self.world.ash_sprigatito.quantity = 5
++        self.db.commit()
++        self.world.share(self.ash, trade="friends")
++        self.assertEqual([r["quantity"] for r in self.trade_list_of(self.ash, self.misty)], [1])
++
++    def test_a_row_that_was_removed_leaves_nothing_behind(self):
++        self.mark(self.ash, self.world.ash_charizard, 1)
++        self.db.delete(self.world.ash_charizard)
++        self.db.commit()  # SQLite does not cascade; the orphan must still never be shown or counted
++        self.world.share(self.ash, trade="public")
++        self.assertEqual(self.trade_list_of(self.ash, self.brock), [])
++        self.assertEqual(friends_api.get_own_trade_list(current_user=self.ash, db=self.db), {"items": []})
++        self.assertEqual(self.db.query(TradeListEntry).count(), 0)
++
++    def test_an_entry_pointing_at_someone_elses_row_is_never_shown(self):
++        # Not reachable through the API; the query must not trust the link anyway.
++        self.db.add(TradeListEntry(user_id=self.ash.id, collection_item_id=self.world.misty_sir.id, quantity=1))
++        self.db.commit()
++        self.world.share(self.ash, trade="public")
++        self.assertEqual(self.trade_list_of(self.ash, self.brock), [])
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Trade match
++# ---------------------------------------------------------------------------------------------------------------------
++
++class TradeMatchTests(FriendsTestCase):
++    def setUp(self):
++        super().setUp()
++        # ash offers 2 of his 3 Sprigatito and 1 of his 2 Charizard ex; misty offers her Charizard illustration rare and 1 of
++        # her 2 Meowscarada ex.
++        self.world.mark_trade(self.ash, self.world.ash_sprigatito, 2)
++        self.world.mark_trade(self.ash, self.world.ash_charizard, 1)
++        self.world.mark_trade(self.misty, self.world.misty_sir, 1)
++        self.world.mark_trade(self.misty, self.world.misty_meowscarada, 1)
++
++    def names(self, rows):
++        return [(r["card"]["name"], r["card_id"], r["quantity"], r["wanted_quantity"]) for r in rows]
++
++    def test_they_have_and_you_want_when_both_halves_are_shared(self):
++        self.world.share(self.misty, wishlist="friends", trade="friends")
++        match = self.match(self.ash, self.misty)
++        # Of misty's two For Trade cards only the illustration rare is on ash's wishlist.
++        self.assertEqual(self.names(match["they_have_you_want"]), [("Charizard ex", "sv3-223_en", 1, 1)])
++        # Of ash's, both are on misty's wishlist. Quantities: copies offered, copies wanted.
++        self.assertEqual(self.names(match["you_have_they_want"]), [
++            ("Charizard ex", "sv3-125_en", 1, 1),
++            ("Sprigatito", "sv1-1_en", 2, 1),
++        ])
++        self.assertEqual((match["can_see_their_trade_list"], match["can_see_their_wishlist"]), (True, True))
++        self.assertEqual(match["user"]["username"], "misty")
++
++    def test_it_is_the_same_comparison_from_the_other_side(self):
++        self.world.share(self.misty, wishlist="friends", trade="friends")
++        self.world.share(self.ash, wishlist="friends", trade="friends")
++        mine = self.match(self.ash, self.misty)
++        theirs = self.match(self.misty, self.ash)
++        self.assertEqual([r["card_id"] for r in mine["they_have_you_want"]], [r["card_id"] for r in theirs["you_have_they_want"]])
++        self.assertEqual([r["card_id"] for r in mine["you_have_they_want"]], [r["card_id"] for r in theirs["they_have_you_want"]])
++
++    def test_cards_that_are_not_for_trade_never_match(self):
++        # ash owns Meowscarada ex and misty has spares she has not marked: neither half mentions them.
++        self.world.share(self.misty, wishlist="friends", trade="friends")
++        self.world.db.query(TradeListEntry).filter(TradeListEntry.user_id == self.misty.id).delete()
++        self.db.commit()
++        match = self.match(self.ash, self.misty)
++        self.assertEqual(match["they_have_you_want"], [])
++
++    def test_they_have_needs_their_for_trade_list_to_be_shared_with_you(self):
++        self.world.share(self.misty, wishlist="friends")  # trade stays private
++        match = self.match(self.ash, self.misty)
++        self.assertEqual(match["they_have_you_want"], [])
++        self.assertFalse(match["can_see_their_trade_list"])
++        self.assertEqual(len(match["you_have_they_want"]), 2)
++
++    def test_you_have_needs_their_wishlist_to_be_shared_with_you(self):
++        self.world.share(self.misty, trade="friends")  # wishlist stays private
++        match = self.match(self.ash, self.misty)
++        self.assertEqual(match["you_have_they_want"], [])
++        self.assertFalse(match["can_see_their_wishlist"])
++        self.assertEqual(len(match["they_have_you_want"]), 1)
++
++    def test_a_friend_who_shares_nothing_gets_an_empty_comparison_that_says_why(self):
++        match = self.match(self.ash, self.misty)
++        self.assertEqual((match["they_have_you_want"], match["you_have_they_want"]), ([], []))
++        self.assertEqual((match["can_see_their_trade_list"], match["can_see_their_wishlist"]), (False, False))
++
++    def test_your_own_lists_are_always_yours_to_compare(self):
++        # ash shares nothing, yet misty's side of the comparison from ash's phone still uses his own wishlist and trade list.
++        self.world.share(self.misty, wishlist="friends", trade="friends")
++        match = self.match(self.ash, self.misty)
++        self.assertTrue(match["they_have_you_want"] and match["you_have_they_want"])
++
++    def test_a_stranger_gets_nothing_unless_a_half_is_public(self):
++        self.world.share(self.brock, trade="friends")
++        self.denied(lambda: self.match(self.ash, self.brock), 404)
++        self.world.share(self.misty, trade="public")
++        match = self.match(self.brock, self.misty)
++        self.assertEqual((match["can_see_their_trade_list"], match["can_see_their_wishlist"]), (True, False))
++
++    def test_the_comparison_does_not_leak_a_wishlist_that_is_not_shared(self):
++        # misty's wishlist is private, so the second half must not even hint at which of ash's cards she wants.
++        self.world.share(self.misty, trade="friends")
++        match = self.match(self.ash, self.misty)
++        self.assertEqual(match["you_have_they_want"], [])
++        self.assertNotIn("sv1-1_en", json.dumps(match["you_have_they_want"]))
++
++    def test_you_cannot_compare_with_yourself_or_with_nobody(self):
++        self.denied(lambda: self.match(self.ash, self.ash), 400)
++        self.denied(lambda: friends_api.get_trade_match(9999, current_user=self.ash, db=self.db), 404)
++
++    def test_the_rows_carry_no_private_fields(self):
++        self.world.share(self.misty, wishlist="friends", trade="friends")
++        match = self.match(self.ash, self.misty)
++        banned = {"purchase_price", "added_at", "price_alert_below", "price_alert_above", "notified_at", "user_id"}
++        self.assertEqual(banned & keys_in(match), set())
++        friends_api.TradeMatchOut.model_validate(match)
++
++    def test_a_custom_card_never_matches(self):
++        self.world.share(self.misty, wishlist="friends", trade="friends")
++        self.assertNotIn("custom-1", json.dumps(self.match(self.ash, self.misty)))
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# The older endpoints that show one user to another
++# ---------------------------------------------------------------------------------------------------------------------
++
++class LegacyEndpointTests(FriendsTestCase):
++    def view_collection(self, owner, viewer):
++        return get_user_collection(owner.id, current_user=viewer, db=self.db)
++
++    def test_another_users_collection_is_private_until_shared(self):
++        for viewer in (self.misty, self.brock, self.gary, self.oak):
++            self.denied(lambda viewer=viewer: self.view_collection(self.ash, viewer), 404)
++
++    def test_it_follows_the_collection_setting(self):
++        self.world.share(self.ash, collection="friends")
++        self.assertTrue(self.view_collection(self.ash, self.misty))
++        self.denied(lambda: self.view_collection(self.ash, self.brock), 404)
++        self.world.share(self.ash, collection="public")
++        self.assertTrue(self.view_collection(self.ash, self.brock))
++
++    def test_what_someone_paid_and_when_they_added_it_is_not_shared_with_the_collection(self):
++        self.world.share(self.ash, collection="friends")
++        rows = self.view_collection(self.ash, self.misty)
++        self.assertTrue(rows)
++        self.assertEqual({row.purchase_price for row in rows}, {None})
++        self.assertEqual({row.added_at for row in rows}, {None})
++        # The owner still sees their own.
++        mine = self.view_collection(self.ash, self.ash)
++        self.assertIn(0.2, {getattr(row, "purchase_price", None) for row in mine})
++        self.assertNotIn(None, {getattr(row, "added_at", None) for row in mine})
++        # And nothing was changed in the database by taking it out of the answer.
++        self.assertEqual(self.db.query(CollectionItem).filter(CollectionItem.id == self.world.ash_sprigatito.id).one().purchase_price, 0.2)
++
++    def test_custom_cards_stay_out_of_it(self):
++        self.world.share(self.ash, collection="public")
++        self.assertNotIn("custom-1", [row.card_id for row in self.view_collection(self.ash, self.brock)])
++
++    def test_the_leaderboard_ranks_only_people_who_share_with_the_viewer(self):
++        def ranked(viewer):
++            return {entry["username"] for entry in get_leaderboard(price_field="price_trend", db=self.db, current_user=viewer)}
++
++        self.assertEqual(ranked(self.brock), {"brock"})
++        self.assertEqual(ranked(self.misty), {"misty"})
++        self.world.share(self.ash, collection="friends")
++        self.assertEqual(ranked(self.misty), {"misty", "ash"})
++        self.assertEqual(ranked(self.brock), {"brock"})
++        self.world.share(self.ash, collection="public")
++        self.assertEqual(ranked(self.brock), {"brock", "ash"})
++        self.world.share(self.ash, collection="private")
++        self.assertEqual(ranked(self.ash), {"ash"})
++
++    def test_comparing_needs_the_other_collection_to_be_shared(self):
++        self.denied(lambda: compare_users(self.ash.id, price_field="price_trend", db=self.db, current_user=self.misty), 404)
++        self.world.share(self.ash, collection="friends")
++        result = compare_users(self.ash.id, price_field="price_trend", db=self.db, current_user=self.misty)
++        self.assertEqual(result["user_b"]["username"], "ash")
++        self.denied(lambda: compare_users(self.ash.id, price_field="price_trend", db=self.db, current_user=self.brock), 404)
++
++    def test_achievements_need_the_collection_to_be_shared_except_your_own(self):
++        self.denied(lambda: get_achievements(self.ash.id, price_field="price_trend", db=self.db, current_user=self.misty), 404)
++        self.assertEqual(get_achievements(self.ash.id, price_field="price_trend", db=self.db, current_user=self.ash)["username"], "ash")
++        self.world.share(self.ash, collection="friends")
++        self.assertEqual(get_achievements(self.ash.id, price_field="price_trend", db=self.db, current_user=self.misty)["username"], "ash")
++
++    # --- what was paid, and what came of it, is not part of any of this ----------------------------------------------
++
++    PRIVATE_FIGURES = {"total_invested", "pnl", "pnl_pct", "positive_pnl_flag"}
++
++    def test_the_leaderboard_never_carries_what_anyone_paid_or_made(self):
++        self.world.share(self.ash, collection="friends")
++        board = get_leaderboard(price_field="price_trend", db=self.db, current_user=self.misty)
++        self.assertEqual({entry["username"] for entry in board}, {"misty", "ash"})
++        for entry in board:  # the viewer's own row too
++            self.assertEqual(self.PRIVATE_FIGURES & set(entry), set(), entry["username"])
++            # What it may still show: who they are, how much they have and what it is worth.
++            for key in ("user_id", "username", "total_cards", "unique_cards", "total_value", "sets_completed", "set_diversity"):
++                self.assertIn(key, entry)
++        self.assertEqual(self.PRIVATE_FIGURES & keys_in(board), set())
++
++    def test_the_leaderboard_is_still_in_order_of_what_the_collections_are_worth(self):
++        self.world.share(self.ash, collection="friends")
++        board = get_leaderboard(price_field="price_trend", db=self.db, current_user=self.misty)
++        values = [entry["total_value"] for entry in board]
++        self.assertEqual(values, sorted(values, reverse=True))
++
++    def test_a_comparison_leaves_out_what_either_side_paid_or_made(self):
++        self.world.share(self.ash, collection="friends")
++        result = compare_users(self.ash.id, price_field="price_trend", db=self.db, current_user=self.misty)
++        for side in ("user_a", "user_b"):
++            self.assertEqual(self.PRIVATE_FIGURES & set(result[side]), set(), side)
++            self.assertIn("total_value", result[side])
++        self.assertEqual(self.PRIVATE_FIGURES & keys_in(result), set())
++
++    def test_someone_elses_achievements_do_not_say_whether_they_are_in_profit(self):
++        self.world.share(self.ash, collection="friends")
++
++        def achievements(viewer):
++            return get_achievements(self.ash.id, price_field="price_trend", db=self.db, current_user=viewer)
++
++        own = achievements(self.ash)
++        theirs = achievements(self.misty)
++        self.assertIn("investor", [item["id"] for item in own["achievements"]])  # your own list is yours
++        self.assertNotIn("investor", [item["id"] for item in theirs["achievements"]])
++        # Everything else is still there, and the counts agree with the list.
++        self.assertEqual(theirs["total"], len(theirs["achievements"]))
++        self.assertEqual(theirs["total"], own["total"] - 1)
++        self.assertEqual(self.PRIVATE_FIGURES & keys_in(theirs), set())
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Deleting a user
++# ---------------------------------------------------------------------------------------------------------------------
++
++class DeleteUserTests(FriendsTestCase):
++    def test_a_deleted_user_leaves_no_friendships_settings_or_trade_marks(self):
++        self.world.share(self.misty, collection="public")
++        self.world.mark_trade(self.misty, self.world.misty_sir, 1)
++        fr.ensure_settings(self.db, self.ash.id)
++        with patch("services.scan_trace.revoke_user_traces"):
++            delete_user(self.misty.id, current_user=self.oak, db=self.db)
++        self.assertEqual(self.db.query(TradeListEntry).count(), 0)
++        self.assertEqual(self.db.query(FriendSettings).filter(FriendSettings.user_id == self.misty.id).count(), 0)
++        self.assertEqual([l for l in self.db.query(FriendLink).all() if self.misty.id in (l.user_low_id, l.user_high_id)], [])
++        # ash's own settings and his other requests are untouched.
++        self.assertEqual(self.db.query(FriendSettings).filter(FriendSettings.user_id == self.ash.id).count(), 1)
++        self.assertEqual(self.db.query(FriendLink).count(), 1)  # gary's request to ash
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/backend/tests/test_friends_http.py b/backend/tests/test_friends_http.py
+new file mode 100644
+index 0000000..6fe9278
+--- /dev/null
++++ b/backend/tests/test_friends_http.py
+@@ -0,0 +1,262 @@
++import unittest
++from unittest.mock import patch
++
++try:
++    from fastapi import FastAPI
++    from fastapi.testclient import TestClient
++
++    from api import auth as auth_api
++    from api import collection as collection_api
++    from api import friends as friends_api
++    from api import social as social_api
++    from database import get_db
++    from services.auth import create_access_token
++
++    from friends_world import FriendsWorld
++
++    DEPS = True
++except ModuleNotFoundError as error:  # pragma: no cover - lightweight environments
++    if error.name == "friends_world":
++        raise
++    DEPS = False
++
++
++@unittest.skipUnless(DEPS, "FastAPI/SQLAlchemy are not installed in this lightweight test environment")
++class FriendsHttpTests(unittest.TestCase):
++    """The same rules, through the real routing and sign-in: what a phone or a browser actually gets."""
++
++    def setUp(self):
++        self.world = FriendsWorld()
++        self.settings = {"multi_user_mode": "true"}
++        app = FastAPI()
++        app.include_router(friends_api.router, prefix="/api/friends")
++        app.include_router(collection_api.router, prefix="/api/collection")
++        app.include_router(social_api.router, prefix="/api/social")
++
++        def override_db():
++            session = self.world.session_factory()
++            try:
++                yield session
++            finally:
++                session.close()
++
++        app.dependency_overrides[get_db] = override_db
++        # multi_user_enabled() reads the stored setting through its own session; serve it from here instead.
++        patcher = patch.object(auth_api, "get_setting", lambda key, default=None: self.settings.get(key, default))
++        patcher.start()
++        self.addCleanup(patcher.stop)
++        self.client = TestClient(app)
++        self.addCleanup(self.client.close)
++        self.addCleanup(self.world.close)
++
++    def headers(self, user):
++        return {"Authorization": "Bearer " + create_access_token({"sub": str(user.id), "role": user.role})}
++
++    def get(self, path, user=None, **kwargs):
++        return self.client.get(path, headers=self.headers(user) if user else {}, **kwargs)
++
++    def post(self, path, user, body=None):
++        return self.client.post(path, headers=self.headers(user), json=body)
++
++    def put(self, path, user, body):
++        return self.client.put(path, headers=self.headers(user), json=body)
++
++    def delete(self, path, user):
++        return self.client.delete(path, headers=self.headers(user))
++
++    # --- signing in ---------------------------------------------------------------------------------------------------
++
++    def test_every_endpoint_needs_a_signed_in_user(self):
++        paths = [
++            ("GET", "/api/friends/me"), ("GET", "/api/friends/"), ("GET", "/api/friends/trade-list"),
++            ("GET", f"/api/friends/{self.world.ash.id}/profile"), ("GET", f"/api/friends/{self.world.ash.id}/collection"),
++            ("GET", f"/api/friends/{self.world.ash.id}/wishlist"), ("GET", f"/api/friends/{self.world.ash.id}/trade-list"),
++            ("GET", f"/api/friends/{self.world.ash.id}/trade-match"),
++        ]
++        for method, path in paths:
++            with self.subTest(path=path):
++                self.assertEqual(self.client.request(method, path).status_code, 401)
++        self.assertEqual(self.client.post("/api/friends/requests", json={"username": "ash"}).status_code, 401)
++        self.assertEqual(self.client.put("/api/friends/me/sharing", json={"collection": "public"}).status_code, 401)
++        self.assertEqual(self.client.delete(f"/api/friends/{self.world.misty.id}").status_code, 401)
++
++    def test_a_token_for_a_switched_off_user_is_refused(self):
++        self.world.brock.is_active = False
++        self.world.db.commit()
++        self.assertEqual(self.get("/api/friends/me", self.world.brock).status_code, 401)
++
++    def test_with_multi_user_mode_off_nothing_works_not_even_for_the_admin_without_a_token(self):
++        self.world.share(self.world.ash, collection="public")
++        self.settings["multi_user_mode"] = "false"
++        # Without a token the server treats the caller as the admin (single-user mode). That must not open Friends.
++        for path in ("/api/friends/me", "/api/friends/", f"/api/friends/{self.world.ash.id}/collection"):
++            with self.subTest(path=path):
++                self.assertEqual(self.client.get(path).status_code, 403)
++                self.assertEqual(self.get(path, self.world.oak).status_code, 403)
++
++    # --- the whole story ----------------------------------------------------------------------------------------------
++
++    def test_two_people_become_friends_share_and_find_a_match(self):
++        world = self.world
++        ash, brock = world.ash, world.brock
++
++        me = self.get("/api/friends/me", ash)
++        self.assertEqual(me.status_code, 200)
++        self.assertEqual(me.headers["cache-control"], "private, no-store")
++        body = me.json()
++        self.assertEqual(body["version"], 1)
++        self.assertEqual(body["user"], {"id": ash.id, "username": "ash", "avatar_id": 25})
++        self.assertEqual(body["sharing"], {"collection": "private", "wishlist": "private", "trade": "private"})
++        code = body["invite_code"]
++
++        # brock asks with ash's invite code; ash accepts; nothing is shared yet.
++        asked = self.post("/api/friends/requests", brock, {"invite_code": code})
++        self.assertEqual((asked.status_code, asked.json()["status"]), (200, "pending"))
++        incoming = self.get("/api/friends/", ash).json()["incoming"]
++        self.assertEqual([r["user"]["username"] for r in incoming], ["brock", "gary"])  # newest first
++        request_id = next(r["id"] for r in incoming if r["user"]["username"] == "brock")
++        self.assertEqual(self.get(f"/api/friends/{ash.id}/collection", brock).status_code, 404)
++        accepted = self.post(f"/api/friends/requests/{request_id}/accept", ash)
++        self.assertEqual((accepted.status_code, accepted.json()["username"]), (200, "brock"))
++        self.assertEqual(self.get(f"/api/friends/{ash.id}/collection", brock).status_code, 403)
++
++        # ash chooses what brock may see.
++        shared = self.put("/api/friends/me/sharing", ash, {"collection": "friends", "trade": "friends"})
++        self.assertEqual(shared.json(), {"collection": "friends", "wishlist": "private", "trade": "friends"})
++        marked = self.put(f"/api/friends/trade-list/{world.ash_sprigatito.id}", ash, {"quantity": 2})
++        self.assertEqual(marked.json(), {"collection_item_id": world.ash_sprigatito.id, "quantity": 2, "owned": 3})
++
++        collection = self.get(f"/api/friends/{ash.id}/collection", brock)
++        self.assertEqual(collection.status_code, 200)
++        names = [(row["card"]["name"], row["quantity"], row["for_trade_quantity"]) for row in collection.json()]
++        self.assertIn(("Sprigatito", 3, 2), names)
++        self.assertEqual(self.get(f"/api/friends/{ash.id}/wishlist", brock).status_code, 403)
++        trade = self.get(f"/api/friends/{ash.id}/trade-list", brock).json()
++        self.assertEqual([(r["card"]["name"], r["quantity"]) for r in trade], [("Sprigatito", 2)])
++
++        # brock owns a Floragato that ash wants: he offers it, shares his wishlist, and the comparison finds both halves.
++        world.share(brock, wishlist="friends", trade="friends")
++        self.assertEqual(self.put(f"/api/friends/trade-list/{world.brock_floragato.id}", brock, {"quantity": 1}).status_code, 200)
++        self.assertEqual(self.post("/api/friends/requests", brock, {"username": "ash"}).status_code, 409)  # already friends
++        match = self.get(f"/api/friends/{brock.id}/trade-match", ash)
++        self.assertEqual(match.status_code, 200)
++        self.assertEqual([r["card"]["name"] for r in match.json()["they_have_you_want"]], ["Floragato"])
++        self.assertEqual(match.json()["you_have_they_want"], [])  # brock's wishlist is empty
++
++        # Ending the friendship closes it at once.
++        self.assertEqual(self.delete(f"/api/friends/{brock.id}", ash).status_code, 200)
++        self.assertEqual(self.get(f"/api/friends/{ash.id}/collection", brock).status_code, 404)
++
++    # --- status codes and shapes --------------------------------------------------------------------------------------
++
++    def test_a_friend_gets_a_403_and_a_stranger_a_404(self):
++        ash = self.world.ash
++        friend = self.get(f"/api/friends/{ash.id}/collection", self.world.misty)
++        stranger = self.get(f"/api/friends/{ash.id}/collection", self.world.brock)
++        missing = self.get("/api/friends/99999/collection", self.world.brock)
++        self.assertEqual((friend.status_code, stranger.status_code, missing.status_code), (403, 404, 404))
++        self.assertEqual(stranger.json(), missing.json())
++
++    def test_the_routes_that_look_alike_are_not_confused(self):
++        world = self.world
++        # "requests" and "trade-list" are words, not user ids.
++        self.assertEqual(self.get("/api/friends/trade-list", world.ash).json(), {"items": []})
++        self.assertEqual(self.post("/api/friends/requests", world.ash, {"username": "brock"}).status_code, 200)
++        request_id = self.get("/api/friends/", world.ash).json()["outgoing"][0]["id"]
++        self.assertEqual(self.delete(f"/api/friends/requests/{request_id}", world.ash).status_code, 200)
++        self.assertEqual(self.delete(f"/api/friends/{world.misty.id}", world.ash).status_code, 200)
++        self.assertEqual(self.delete(f"/api/friends/{world.misty.id}", world.ash).status_code, 404)
++
++    def test_bad_requests_are_422(self):
++        ash = self.world.ash
++        self.assertEqual(self.put("/api/friends/me/sharing", ash, {"collection": "everyone"}).status_code, 422)
++        self.assertEqual(self.put("/api/friends/me/sharing", ash, {"collection": "public", "extra": 1}).status_code, 422)
++        self.assertEqual(self.put("/api/friends/me/sharing", ash, {"trade_list": "public"}).status_code, 422)
++        self.assertEqual(self.post("/api/friends/requests", ash, {}).status_code, 422)
++        self.assertEqual(self.post("/api/friends/requests", ash, {"username": "brock", "invite_code": "AAAAA-AAAAA"}).status_code, 422)
++        self.assertEqual(self.post("/api/friends/requests", ash, {"invite_code": "nope"}).status_code, 422)
++        row = self.world.ash_sprigatito.id
++        self.assertEqual(self.put(f"/api/friends/trade-list/{row}", ash, {"quantity": -1}).status_code, 422)
++        self.assertEqual(self.put(f"/api/friends/trade-list/{row}", ash, {"quantity": 4}).status_code, 422)
++        self.assertEqual(self.put(f"/api/friends/trade-list/{row}", ash, {"quantity": 1, "user_id": 2}).status_code, 422)
++        self.assertEqual(self.put(f"/api/friends/trade-list/{row}", ash, {}).status_code, 422)
++
++    def test_nobody_else_can_change_what_a_person_shares(self):
++        # Sharing is set only for the signed-in user: there is no way to name someone else.
++        self.put("/api/friends/me/sharing", self.world.brock, {"collection": "public"})
++        self.assertEqual(self.get("/api/friends/me", self.world.ash).json()["sharing"]["collection"], "private")
++
++    def test_the_collection_response_has_the_shape_the_apps_read(self):
++        self.world.share(self.world.ash, collection="friends")
++        rows = self.get(f"/api/friends/{self.world.ash.id}/collection", self.world.misty).json()
++        row = next(r for r in rows if r["card_id"] == "sv3-125_en")
++        self.assertEqual(
++            {key: row[key] for key in ("id", "card_id", "quantity", "condition", "variant", "lang", "for_trade_quantity")},
++            {"id": self.world.ash_charizard.id, "card_id": "sv3-125_en", "quantity": 2, "condition": "LP", "variant": "Normal",
++             "lang": "en", "for_trade_quantity": None},
++        )
++        card = row["card"]
++        self.assertEqual((card["name"], card["number"], card["rarity"], card["price_trend"]), ("Charizard ex", "125", "Double Rare", 8.5))
++        self.assertEqual(card["set_ref"]["name"], "Obsidian Flames")
++        self.assertNotIn("purchase_price", row)
++        self.assertNotIn("added_at", row)
++
++    def test_the_wishlist_response_has_no_target_prices(self):
++        self.world.share(self.world.ash, wishlist="public")
++        rows = self.get(f"/api/friends/{self.world.ash.id}/wishlist", self.world.brock).json()
++        self.assertEqual([r["card"]["name"] for r in rows], ["Floragato", "Charizard ex"])
++        for row in rows:
++            self.assertNotIn("price_alert_below", row)
++            self.assertNotIn("price_alert_above", row)
++            self.assertNotIn("notified_at", row)
++
++    # --- the older endpoints, over HTTP -------------------------------------------------------------------------------
++
++    def test_the_older_collection_endpoint_obeys_the_same_setting(self):
++        ash = self.world.ash
++        self.assertEqual(self.get(f"/api/collection/user/{ash.id}", self.world.misty).status_code, 404)
++        self.world.share(ash, collection="friends")
++        shared = self.get(f"/api/collection/user/{ash.id}", self.world.misty)
++        self.assertEqual(shared.status_code, 200)
++        self.assertTrue(shared.json())
++        self.assertEqual({row["purchase_price"] for row in shared.json()}, {None})
++        self.assertEqual({row["added_at"] for row in shared.json()}, {None})
++        self.assertEqual(self.get(f"/api/collection/user/{ash.id}", self.world.brock).status_code, 404)
++        own = self.get(f"/api/collection/user/{ash.id}", ash).json()
++        self.assertIn(0.2, {row["purchase_price"] for row in own})
++        self.assertNotIn(None, {row["added_at"] for row in own})
++
++    def test_the_leaderboard_lists_only_people_who_share_with_the_viewer(self):
++        names = lambda viewer: {entry["username"] for entry in self.get("/api/social/leaderboard", viewer).json()}  # noqa: E731
++        self.assertEqual(names(self.world.brock), {"brock"})
++        self.world.share(self.world.ash, collection="public")
++        self.assertEqual(names(self.world.brock), {"brock", "ash"})
++        self.assertEqual(self.get(f"/api/social/compare/{self.world.misty.id}", self.world.brock).status_code, 404)
++        self.assertEqual(self.get(f"/api/social/achievements/{self.world.misty.id}", self.world.brock).status_code, 404)
++
++    def test_the_social_routes_carry_nothing_worked_out_from_what_was_paid(self):
++        private = {"total_invested", "pnl", "pnl_pct", "positive_pnl_flag"}
++
++        def keys(value):
++            if isinstance(value, dict):
++                return set(value) | {key for inner in value.values() for key in keys(inner)}
++            if isinstance(value, list):
++                return {key for inner in value for key in keys(inner)}
++            return set()
++
++        ash, misty = self.world.ash, self.world.misty
++        self.world.share(ash, collection="friends")
++        board = self.get("/api/social/leaderboard", misty).json()
++        self.assertEqual({entry["username"] for entry in board}, {"misty", "ash"})
++        self.assertEqual(private & keys(board), set())
++        self.assertIn("total_value", board[0])
++        compare = self.get(f"/api/social/compare/{ash.id}", misty).json()
++        self.assertEqual(private & keys(compare), set())
++        theirs = self.get(f"/api/social/achievements/{ash.id}", misty).json()
++        self.assertNotIn("investor", [item["id"] for item in theirs["achievements"]])
++        own = self.get(f"/api/social/achievements/{ash.id}", ash).json()
++        self.assertIn("investor", [item["id"] for item in own["achievements"]])
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/backend/tests/test_public_wishlists_decks.py b/backend/tests/test_public_wishlists_decks.py
+index 58b06db..3476a52 100644
+--- a/backend/tests/test_public_wishlists_decks.py
++++ b/backend/tests/test_public_wishlists_decks.py
+@@ -15,7 +15,7 @@ try:
+     )
+     from api.social import compare_users
+     from database import Base
+-    from models import Binder, BinderCard, Card, CollectionItem, Set, Setting, User, WishlistItem
++    from models import Binder, BinderCard, Card, CollectionItem, FriendSettings, Set, Setting, User, WishlistItem
+     from schemas import DeckProbabilityResponse
+     from services import public_profile as pp
+     DEPS = True
+@@ -183,6 +183,12 @@ class PublicWishlistDeckTests(unittest.TestCase):
+     def test_trade_matches_respect_owner_profile_and_visibility(self):
+         self.db.add(CollectionItem(user_id=self.viewer.id, card_id="sv1-1_en", quantity=2, variant="Normal", condition="NM", lang="en"))
+         self.db.commit()
++        # Comparing shows what the other person owns, so it needs their collection to be shared (services/friends.py).
++        with self.assertRaises(HTTPException) as private:
++            compare_users(self.owner.id, price_field="price_trend", db=self.db, current_user=self.viewer)
++        self.assertEqual(private.exception.status_code, 404)
++        self.db.add(FriendSettings(user_id=self.owner.id, collection_sharing="public"))
++        self.db.commit()
+         result = compare_users(self.owner.id, price_field="price_trend", db=self.db, current_user=self.viewer)
+         self.assertEqual(len(result["trade_suggestions"]), 1)
+         self.owner.wishlist_visibility = "private"
+diff --git a/docs/BACKEND.md b/docs/BACKEND.md
+index bb49a58..a85307c 100644
+--- a/docs/BACKEND.md
++++ b/docs/BACKEND.md
+@@ -143,13 +143,38 @@ responses.
+ | GET | `/api/analytics/trades-summary` | Aggregate trade counts, totals, and deltas |
+ | GET | `/api/analytics/investment-tracker` | Portfolio history |
+ | GET | `/api/analytics/new-sets` | Analytics new sets |
+-| GET | `/api/social/leaderboard` | Multi-user leaderboard |
+-| GET | `/api/social/compare/{user_id}` | Multi-user comparison |
+-| GET | `/api/social/achievements/{user_id}` | Achievement progress |
++| GET | `/api/social/leaderboard` | Multi-user leaderboard of the viewer and the people who share their collection with them, without anyone's invested amount or profit ([Friends](FRIENDS.md)) |
++| GET | `/api/social/compare/{user_id}` | Multi-user comparison, without invested amounts or profit; the other user's collection must be shared with the viewer |
++| GET | `/api/social/achievements/{user_id}` | Achievement progress; the user's collection must be shared with the viewer (your own always works) |
+ | GET | `/api/github/contributors` | Public GitHub contributors feed |
+ | GET | `/api/community/supporters` | Fresh, strictly validated public supporter registry projection; returns `503` with `Cache-Control: no-store` on any upstream or validation failure |
+ | GET | `/api/github/rescue-donations` | Rescue donation total from `RESCUE_DONATIONS.csv` |
+ 
++### Friends, Sharing, and Trading
++
++Multi-user mode only. Everything is private until its owner chooses; privacy is enforced here, not by clients. See
++[`FRIENDS.md`](FRIENDS.md) for the rules, the older routes they apply to, and the response shapes.
++
++| Method | Path | Notes |
++|--------|------|-------|
++| GET | `/api/friends/me` | Your invite code, sharing levels, and counts; also how a client detects the feature |
++| PUT | `/api/friends/me/sharing` | Choose Private, Friends, or Public for Collection, Wishlist, and For Trade independently |
++| POST | `/api/friends/me/invite-code` | Replace your invite code |
++| GET | `/api/friends/` | Friends and pending requests |
++| POST | `/api/friends/requests` | Ask a user to be friends by username or invite code |
++| POST | `/api/friends/requests/{request_id}/accept` | Accept a request made to you |
++| POST | `/api/friends/requests/{request_id}/decline` | Decline a request made to you |
++| DELETE | `/api/friends/requests/{request_id}` | Cancel your own request |
++| DELETE | `/api/friends/{user_id}` | End a friendship |
++| GET | `/api/friends/trade-list` | Your collection rows marked For Trade |
++| PUT | `/api/friends/trade-list/{collection_item_id}` | Mark some copies of a collection row For Trade (0 removes) |
++| DELETE | `/api/friends/trade-list/{collection_item_id}` | Take a row off your For Trade list |
++| GET | `/api/friends/{user_id}/profile` | Who they are to you and which sections you may open |
++| GET | `/api/friends/{user_id}/collection` | Their shared collection |
++| GET | `/api/friends/{user_id}/wishlist` | Their shared wishlist |
++| GET | `/api/friends/{user_id}/trade-list` | Their For Trade cards |
++| GET | `/api/friends/{user_id}/trade-match` | They have / you want and you have / they want |
++
+ ### Pokédex, Profiles, and Public Sharing
+ 
+ | Method | Path | Notes |
+diff --git a/docs/FRIENDS.md b/docs/FRIENDS.md
+new file mode 100644
+index 0000000..4ebfc7e
+--- /dev/null
++++ b/docs/FRIENDS.md
+@@ -0,0 +1,123 @@
++# Friends, sharing and trading
++
++Friends lets the users of one PokéCollector server see what each other chooses to share, and find cards worth swapping.
++It needs **multi-user mode**: with it off nobody has to sign in, so nothing could be kept private, and every Friends route
++answers `403`.
++
++Nothing is shared until its owner chooses. A fresh install, an upgraded one and a brand-new user all start with everything
++private.
++
++## What a user can share
++
++Three sections, each with its own setting:
++
++| Section | What other people can see |
++|---------|---------------------------|
++| **Collection** | The cards the user owns: card, number of copies, condition, variant, language, and the card's market price from the catalogue |
++| **Wishlist** | The cards the user wants and how many |
++| **For Trade** | Only the cards the user has marked For Trade, and how many copies of each |
++
++Each section is **private** (only the user), **friends** (the user's accepted friends) or **public** (every signed-in user of
++this server, not the open internet). The three are independent: a user can share their For Trade list with friends and keep
++the rest private.
++
++What never leaves its owner, whatever the settings: what was paid for a card, what has been invested in a collection and
++what came of it (profit or loss, as an amount or a percentage, or whether someone is in profit), when a card was added,
++scan photos, product purchases and links to them, price alerts and target prices on the wishlist, custom (hand-made)
++cards, and anything about decks or binders (those have their own public-profile switches).
++
++These settings are separate from the public-profile settings under `/api/profile`. Those control the anonymous
++`/api/public` pages and are not changed by this feature.
++
++## Friends
++
++* A user finds another by **username** or **invite code**. Every user has one invite code (`K7MQ9-XWD3H`); making a new one
++  stops the old one working and does not end any friendship.
++* Asking someone sends a **friend request**. A request shares nothing. The other person **accepts** or **declines**
++  (a declined request just disappears; the asker is not told). Accepting does not share anything either: each side still
++  chooses what their friends can see.
++* If two people ask each other, they become friends at once.
++* Either person can **end** a friendship. Whatever was shared with friends stops being shared immediately.
++* A user can have at most 25 unanswered requests at a time.
++
++## For Trade
++
++A copy is For Trade only when its owner marks it, one collection row (card + variant + condition + language) at a time, and
++says how many of that row's copies are on offer. Duplicates are never marked automatically. The number others see is never
++more than the owner currently holds; if copies are removed, the mark shrinks with them and does not come back when more
++copies are added later.
++
++## Trade match
++
++`GET /api/friends/{user_id}/trade-match` compares the signed-in user with one other person:
++
++* **They have / you want** - their For Trade cards that are on your wishlist. Needs their For Trade list shared with you.
++* **You have / they want** - your For Trade cards that are on their wishlist. Needs their wishlist shared with you.
++
++A half that the other person does not share with you is empty and flagged (`can_see_their_trade_list`,
++`can_see_their_wishlist`), so the answer never hints at what is behind it. Cards match by exact catalogue id, so a German
++and an English printing are different cards.
++
++## Where privacy is enforced
++
++On the server, for every request, in `services/friends.py` (`can_view`, `owners_visible_to`, `require_view`). The router
++and the older endpoints below all ask it. A client that hides a tab it was not allowed to open gets no more than one that
++asks for it anyway. Admins get no special view through these routes.
++
++A person who may not see something is told as little as possible: a **friend** gets `403` ("ash hasn't shared their
++collection with you"); **anyone else** gets `404 User not found`, the same answer as for a user who does not exist.
++
++Responses carry `Cache-Control: private, no-store`.
++
++### Older endpoints that now follow the same settings
++
++Before this feature, any signed-in user could read any other user's whole collection. These now require the owner to share
++their collection with the viewer:
++
++| Route | Now |
++|-------|-----|
++| `GET /api/collection/user/{user_id}` | `404` unless shared with the viewer. What the owner paid and when they added each card are left out for everyone but the owner. |
++| `GET /api/social/leaderboard` | Ranks the viewer and the people who share their collection with the viewer, by what the collections are worth. A row has the username, number of cards, value at market prices, best card, sets completed and similar counts. It never has an invested amount or a profit or loss (the viewer's own row included). |
++| `GET /api/social/compare/{user_id}` | `404` unless that user's collection is shared with the viewer. Neither side carries an invested amount or a profit or loss. |
++| `GET /api/social/achievements/{user_id}` | `404` unless that user's collection is shared with the viewer (your own always works). Another person's list leaves out the Investor badge, which says whether they are in profit. |
++
++On the website this means the Leaderboard lists only people who have chosen to share, and "view collection" works only for
++them. Because the server no longer sends the invested and profit figures, the P&L column that the website's Leaderboard and
++Compare pages still draw reads +0.00; hiding the column needs a change to those two pages, which this update does not make.
++
++## API
++
++All routes are under `/api/friends` and need a signed-in user. `{user_id}` is the other person's id.
++
++| Method | Path | Notes |
++|--------|------|-------|
++| GET | `/me` | Your invite code, what you share, counts. A client uses it to find out the server has Friends. |
++| PUT | `/me/sharing` | `{"collection": "friends", "wishlist": "private", "trade": "public"}`; names only what changes. Unknown sections or levels are `422`. |
++| POST | `/me/invite-code` | New invite code; the old one stops working. |
++| GET | `/` | `friends` (with what each lets you see), `incoming` and `outgoing` requests. |
++| POST | `/requests` | `{"username": "misty"}` or `{"invite_code": "K7MQ9-XWD3H"}`. `status` is `pending`, or `accepted` if they had asked you first. |
++| POST | `/requests/{id}/accept` | Only the person who was asked. |
++| POST | `/requests/{id}/decline` | Only the person who was asked. |
++| DELETE | `/requests/{id}` | Take back your own unanswered request. |
++| DELETE | `/{user_id}` | End a friendship. |
++| GET | `/trade-list` | Your collection rows marked For Trade: `collection_item_id`, `quantity`, `owned`. |
++| PUT | `/trade-list/{collection_item_id}` | `{"quantity": 2}`; 0 takes the row off. At most the copies you hold. |
++| DELETE | `/trade-list/{collection_item_id}` | Same as quantity 0. |
++| GET | `/{user_id}/profile` | Who they are to you and which sections you may open. |
++| GET | `/{user_id}/collection` | Their shared collection. `for_trade_quantity` is `null` unless their For Trade list is shared with you too. |
++| GET | `/{user_id}/wishlist` | Their shared wishlist. |
++| GET | `/{user_id}/trade-list` | Their For Trade cards. |
++| GET | `/{user_id}/trade-match` | See above. |
++
++Cards in every response have the shape of the catalogue card the rest of the API returns (`CardWithSet`), with its prices:
++the catalogue and its pricing are shared, nothing is copied.
++
++## Storage
++
++Three new tables, created on start-up; no existing table or column is changed:
++
++* `friend_settings` - one row per user that has opened Friends: the three sharing levels (default `private`) and the invite code
++* `friend_links` - one row per pair of users: a request waiting, or an accepted friendship
++* `trade_list` - copies of a collection row marked For Trade
++
++Deleting a user removes their rows. Removing a collection row removes its For Trade mark.
+-- 
+2.43.0
+

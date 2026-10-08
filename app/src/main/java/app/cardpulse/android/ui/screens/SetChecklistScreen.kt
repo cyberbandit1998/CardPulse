@@ -69,6 +69,7 @@ import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.CARD_ASPECT
 import app.cardpulse.android.ui.GreyscaleFilter
 import app.cardpulse.android.ui.RemoteImage
+import app.cardpulse.android.ui.WishlistHeart
 import app.cardpulse.android.ui.theme.extras
 
 /**
@@ -219,12 +220,25 @@ private fun ChecklistFilters(selected: ChecklistFilter, tally: ChecklistTally, o
 }
 
 /**
+ * A card of the checklist with a heart on the corner of its picture, to put the card on the wishlist or take it off. Owned
+ * cards can be wished for too: you may want more copies. The heart sits beside the tile's column rather than in it, because
+ * the column is read out as one phrase for the whole card and the heart is a button of its own.
+ */
+@Composable
+private fun ChecklistTile(entry: ChecklistEntry, serverUrl: String, onClick: (() -> Unit)?, modifier: Modifier = Modifier) {
+    Box(modifier) {
+        ChecklistTileBody(entry, serverUrl, onClick, Modifier.fillMaxWidth())
+        WishlistHeart(entry.card.id, entry.card.name, Modifier.align(Alignment.TopStart).padding(2.dp), onPicture = true)
+    }
+}
+
+/**
  * One card. Owned: its picture in full colour with a tick (and "×2" for more copies). Missing: the picture drained of colour
  * and faded. Both say so in words under the name as well, so colour is never the only difference. An owned card can be
  * pressed for its details ([onClick]).
  */
 @Composable
-private fun ChecklistTile(entry: ChecklistEntry, serverUrl: String, onClick: (() -> Unit)?, modifier: Modifier = Modifier) {
+private fun ChecklistTileBody(entry: ChecklistEntry, serverUrl: String, onClick: (() -> Unit)?, modifier: Modifier = Modifier) {
     val owned = entry.owned
     val pictureShape = RoundedCornerShape(8.dp)
     Column(

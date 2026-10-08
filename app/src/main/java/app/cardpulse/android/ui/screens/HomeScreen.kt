@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Layers
@@ -62,6 +63,12 @@ fun HomeScreen(
     /** A set was tapped: open its checklist. Gets the set's id (such as "sv3_en"). */
     onOpenSet: (String) -> Unit = {},
     onRemove: (item: CollectionItemDto, wholeRow: Boolean, done: (String?) -> Unit) -> Unit = { _, _, done -> done(null) },
+    /** The heart in the header: the wishlist. Without it the header has no such button. */
+    onOpenWishlist: (() -> Unit)? = null,
+    /** The row that opens Friends and trading, when given: what it says under its title, and how many requests are waiting. */
+    friendsNote: String = "",
+    friendsRequests: Int = 0,
+    onOpenFriends: (() -> Unit)? = null,
 ) {
     val money = remember(state.prefs.currency, state.prefs.rateFromEur) {
         MoneyFormatter(state.prefs.currency, state.prefs.rateFromEur)
@@ -80,6 +87,12 @@ fun HomeScreen(
     var explainCost by remember { mutableStateOf(false) }
     // Everything sits 16 dp in from the edges except the carousel, which runs to them so cards slide out under them.
     val inset = Modifier.padding(horizontal = 16.dp)
+    // The way into Friends sits under the numbers, or under the note when nothing has loaded.
+    val friendsRow: LazyListScope.() -> Unit = {
+        if (onOpenFriends != null) {
+            item(key = "friends") { HomeFriendsRow(friendsNote, friendsRequests, onOpenFriends, inset) }
+        }
+    }
 
     LazyColumn(
         modifier = modifier,
@@ -89,7 +102,13 @@ fun HomeScreen(
     ) {
         item {
             Column {
-                HomeHeader(connected = !state.offline, onRefresh = onRefresh, onOpenSettings = onOpenSettings, modifier = inset)
+                HomeHeader(
+                    connected = !state.offline,
+                    onRefresh = onRefresh,
+                    onOpenSettings = onOpenSettings,
+                    modifier = inset,
+                    onOpenWishlist = onOpenWishlist,
+                )
                 if (state.dashboardLoading || state.collectionLoading) {
                     LinearProgressIndicator(inset.fillMaxWidth().padding(top = 8.dp))
                 }
@@ -142,6 +161,8 @@ fun HomeScreen(
                 }
             }
 
+            friendsRow()
+
             val recents = dashboard.recentAdditions.mapNotNull { recent -> byId[recent.collectionItemId] }
             if (recents.isNotEmpty()) {
                 item {
@@ -191,6 +212,7 @@ fun HomeScreen(
                     modifier = inset,
                 )
             }
+            friendsRow()
         }
     }
 

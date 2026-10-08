@@ -1,8 +1,9 @@
-**Every set in the Sets tab, a checklist for each, filters in Sets and Collection, and a calmer Portfolio.**
+**Friends and trading, with your own privacy settings.**
 
-- **The Sets tab lists every set your server has,** not only the ones you own cards from. Each shows how much you own, such as 18 / 132, and 0 / 230 for a set you have nothing from yet. Filter it with **All, Owned, Incomplete or Complete**, search by name, series or the code on the cards (try "OBF"), and sort by progress, name or cards.
-- **Tap a set to open its checklist.** Every card of the set in order: the ones you own are in full colour with a tick (and "×2" for more copies), the ones you are missing are greyed out and say "Missing". The chips All, Owned and Missing narrow it; an owned card opens its details; "Open my cards in Collection" jumps to your cards from that set. Tapping a set on Home opens its checklist too.
-- **A Filter in Collection,** next to Recent, Name and Set: rarity, condition, variant (holo, reverse holo…), how much a card is worth, how many copies, and the entries with no purchase price. It only offers what your collection has.
-- **Portfolio:** "+$115.02 (+68246.7%) over 1M" is now "+$115.02 over 1M" when the month began with almost nothing; the percentage comes back once there is something real to measure from. The chart is a little shorter, so more of the breakdown is on the screen.
+- **A new row on Home: Friends & trading.** Add friends by username or invite code; they accept or decline, and a request shares nothing by itself.
+- **Everything starts private.** In Friends → Sharing you choose, for your collection, your wishlist and your For Trade cards one at a time, whether it is **Private**, **Friends only** or **Public** (everyone with an account on your server, but not the internet).
+- **For Trade is up to you.** Open a card in your Collection and offer its copies one at a time ("2 of 4 for trade"). Nothing is ever offered automatically, not even duplicates, and never more than you hold.
+- **A friend's page opens on the Trade match:** the cards they have for trade that you want, and the cards you have for trade that they want. Then their For Trade list, wishlist and collection, as far as they share them. Tap any card for its details; the heart puts it on your own wishlist.
+- **Your server needs a small update first.** A phone app can't keep one person's cards private from another, so the server has to. The update and the steps to install it are in the `server` folder of this repository. Until it is installed the Friends screen says so, and everything else works as before. The update also makes the website's Leaderboard, compare and "view collection" follow the same sharing settings, and the Leaderboard no longer shows anyone's invested amount or profit.
 
 If anything looks wrong on your phone, tell me which screen it was.

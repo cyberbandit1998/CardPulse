@@ -1,0 +1,11 @@
+{
+  "user": {
+    "id": 4,
+    "username": "gary",
+    "avatar_id": 0
+  },
+  "they_have_you_want": [],
+  "you_have_they_want": [],
+  "can_see_their_trade_list": false,
+  "can_see_their_wishlist": false
+}

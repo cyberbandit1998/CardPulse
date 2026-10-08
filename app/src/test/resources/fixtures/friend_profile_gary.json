@@ -1,0 +1,14 @@
+{
+  "user": {
+    "id": 4,
+    "username": "gary",
+    "avatar_id": 0
+  },
+  "is_friend": true,
+  "request": null,
+  "shared": {
+    "collection": false,
+    "wishlist": false,
+    "trade": false
+  }
+}

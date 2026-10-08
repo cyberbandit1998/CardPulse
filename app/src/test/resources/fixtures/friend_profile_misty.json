@@ -1,0 +1,14 @@
+{
+  "user": {
+    "id": 2,
+    "username": "misty",
+    "avatar_id": 121
+  },
+  "is_friend": true,
+  "request": null,
+  "shared": {
+    "collection": true,
+    "wishlist": true,
+    "trade": true
+  }
+}

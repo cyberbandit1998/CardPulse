@@ -1,0 +1,16 @@
+{
+  "detail": [
+    {
+      "type": "value_error",
+      "loc": [
+        "body"
+      ],
+      "msg": "Value error, Send either a username or an invite code",
+      "input": {},
+      "ctx": {
+        "error": {}
+      },
+      "url": "https://errors.pydantic.dev/2.13/v/value_error"
+    }
+  ]
+}
