@@ -77,8 +77,9 @@ The app warns you if it connects to a server in single-user mode.
   A friend's page opens on the **Trade match**: the cards they have for trade that are on your wishlist, and the cards you
   have for trade that are on theirs; then their For Trade list, wishlist and collection, as far as they share them.
   Tapping a card opens its details, with the heart that puts it on your own wishlist. **Your server decides who sees what,
-  on every request**, so a friend can never read what you did not share, whatever app they use; what you paid, your price
-  alerts, your photos and cards made by hand are never shared at all. This needs Multi-User Mode and a small update to
+  on every request**, so a friend can never read what you did not share, whatever app they use; what you paid (and the
+  invested amount and profit worked out from it), when you added a card, your price alerts, your photos and cards made by
+  hand are never shared at all, not even in the website's Leaderboard. This needs Multi-User Mode and a small update to
   your PokéCollector server: see [`server/`](server/README.md). Without them the Friends screen says so and the rest of
   the app is unchanged.
 - **Sets:** every set your server lists, each as "owned / total" (18 / 132, or 0 / 230 for a set you have no cards from

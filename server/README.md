@@ -26,8 +26,8 @@ PokéCollector has no friends, sharing settings or trade lists of its own. This 
   for trade that are on theirs.
 - **A person who may not see something gets nothing.** A friend who has not been given access is refused (`403`); anyone
   else is told the person or list does not exist (`404`), so a private account looks like a missing one.
-- **What never leaves its owner:** what was paid, when a card was added, scan photos, price alerts and target prices,
-  and cards made by hand.
+- **What never leaves its owner:** what was paid, the amount invested and the profit or loss worked out from it, when a
+  card was added, scan photos, price alerts and target prices, and cards made by hand.
 - **The same card and price data.** Friends' lists are rows of the catalogue and prices your server already has; nothing
   is copied.
 
@@ -35,13 +35,22 @@ It adds three small tables (`friend_settings`, `friend_links`, `trade_list`), cr
 table or row is changed. The details, the endpoints and the exact privacy rules are in `docs/FRIENDS.md`, which the update
 adds to the project.
 
-### One thing changes on the website
+### What changes on the website
 
 PokéCollector already had a few routes that let **any signed-in user read another user's whole collection** (the
 leaderboard's *view collection*, *compare* and *achievements*). Leaving them as they are would have made the new settings
 meaningless, so they now follow the same setting. In practice: a user who has not shared their collection no longer
-appears in the website's Leaderboard for others, and cannot be compared with or opened. The website's own screens are not
-changed otherwise, and there are no new screens on the website.
+appears in the website's Leaderboard for others, and cannot be compared with or opened. The older *view collection* route
+also used to send what the owner paid and the date each card was added, along with the cards; it no longer does, for
+anyone but the owner.
+
+The Leaderboard and Compare also **stop carrying anyone's invested amount or profit**, your own included. They keep to
+things like the username, the number of cards, what the collection is worth, the best card and the sets completed. In
+another person's achievements the *Investor* badge, which says whether they are in profit, is left out too (your own list
+keeps it). The website still draws a P&L column on its Leaderboard and Compare pages; with the figures gone it reads
++0.00. Hiding the column needs a change to those two pages, which this update does not make.
+
+The website's own screens are otherwise not changed, and there are no new screens on the website.
 
 ## What you need
 

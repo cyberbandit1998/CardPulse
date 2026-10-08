@@ -1,4 +1,4 @@
-From 25711a45f7506c27d9575241f1a9626b189b5196 Mon Sep 17 00:00:00 2001
+From eae934d0fb63c691aa0f8007ae3111afabe377d8 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 7 Oct 2026 18:33:09 +0000
 Subject: [PATCH] feat: friends, per-section sharing and For Trade lists
@@ -15,8 +15,10 @@ price alerts, photos and custom cards never leave their owner.
 
 The older endpoints that let any signed-in user read another user's whole collection now follow the same setting:
 GET /api/collection/user/{id}, and the social leaderboard, compare and achievements routes. What someone paid and when
-they added a card are left out of the first for everyone but the owner. Two upstream tests that relied on that are updated
-to share the collection first.
+they added a card are left out of the first for everyone but the owner. The leaderboard, a comparison and another person's
+achievements never carry an invested amount or a profit or loss (the Investor badge says whether someone is in profit, so
+it is left out of another person's list). Two upstream tests that relied on the old behaviour are updated to share the
+collection first.
 
 Adds three tables (friend_settings, friend_links, trade_list), created on start-up; no existing table changes.
 Documented in docs/FRIENDS.md.
@@ -27,19 +29,19 @@ Claude-Session: https://claude.ai/code/session_01384BC8nHuYg1SpN4faoQoG
  README.md                                    |   6 +-
  backend/api/auth.py                          |  10 +
  backend/api/collection.py                    |  19 +-
- backend/api/friends.py                       | 489 ++++++++++++
- backend/api/social.py                        |  11 +-
+ backend/api/friends.py                       | 489 +++++++++++
+ backend/api/social.py                        |  30 +-
  backend/main.py                              |   3 +-
  backend/models.py                            |  83 ++
  backend/services/friends.py                  | 591 ++++++++++++++
  backend/tests/friends_world.py               | 185 +++++
  backend/tests/test_custom_card_ownership.py  |   8 +
- backend/tests/test_friends.py                | 774 +++++++++++++++++++
- backend/tests/test_friends_http.py           | 239 ++++++
+ backend/tests/test_friends.py                | 818 +++++++++++++++++++
+ backend/tests/test_friends_http.py           | 262 ++++++
  backend/tests/test_public_wishlists_decks.py |   8 +-
  docs/BACKEND.md                              |  31 +-
- docs/FRIENDS.md                              | 122 +++
- 15 files changed, 2569 insertions(+), 10 deletions(-)
+ docs/FRIENDS.md                              | 123 +++
+ 15 files changed, 2653 insertions(+), 13 deletions(-)
  create mode 100644 backend/api/friends.py
  create mode 100644 backend/services/friends.py
  create mode 100644 backend/tests/friends_world.py
@@ -48,7 +50,7 @@ Claude-Session: https://claude.ai/code/session_01384BC8nHuYg1SpN4faoQoG
  create mode 100644 docs/FRIENDS.md
 
 diff --git a/README.md b/README.md
-index de9080c..fcd8be4 100644
+index de9080c..2c48896 100644
 --- a/README.md
 +++ b/README.md
 @@ -110,8 +110,9 @@ A **Real Deck** represents cards that have actually been set aside. It accepts o
@@ -58,7 +60,7 @@ index de9080c..fcd8be4 100644
 -- Leaderboard, trainer comparison, and achievements in multi-user mode
 -- View other trainers' collections from the Leaderboard
 +- Friends and trading in multi-user mode: add friends by username or invite code, choose for the collection, the Wishlist and the For Trade list on their own whether they are private, friends-only or public (everything starts private), mark individual copies For Trade, and compare two users' For Trade lists and Wishlists - see [`docs/FRIENDS.md`](docs/FRIENDS.md)
-+- Leaderboard, trainer comparison, and achievements in multi-user mode, limited to users who share their collection with you
++- Leaderboard, trainer comparison, and achievements in multi-user mode, limited to users who share their collection with you and never showing what anyone paid or made
 +- View the collections of trainers who share them with you from the Leaderboard
  - Optional public trainer profiles with trainer-name URLs, a public directory, individually shared collection Binders and Decks, configurable Wishlist visibility, and opt-in market values
  - Public Wishlists expose catalogue details and requested quantities only; public Decks reuse the read-only Deck composition, validation, analytics, and probability views without exposing ownership or allocation data
@@ -656,10 +658,10 @@ index 0000000..bdbaad0
 +    fr.remove_friend(db, current_user, friend_id)
 +    return {"ok": True}
 diff --git a/backend/api/social.py b/backend/api/social.py
-index 8746ade..6c347df 100644
+index 8746ade..81bde71 100644
 --- a/backend/api/social.py
 +++ b/backend/api/social.py
-@@ -11,6 +11,7 @@ from models import Card, CollectionItem, ProductPurchase, Set, User, WishlistIte
+@@ -11,12 +11,18 @@ from models import Card, CollectionItem, ProductPurchase, Set, User, WishlistIte
  from services.card_values import effective_market_price, normalize_price_field
  from services.card_visibility import visible_card_filter
  from services.digital_sets import digital_sets_enabled
@@ -667,7 +669,30 @@ index 8746ade..6c347df 100644
  from services.public_profile_feature import public_profiles_enabled
  from services.portfolio_valuation import calculate_portfolio_valuation
  
-@@ -392,7 +393,9 @@ def get_leaderboard(
+ router = APIRouter()
+ 
+ 
++# Figures worked out from what someone paid. They are theirs alone: the leaderboard, a comparison and other people's
++# achievements never carry them, whatever the person shares (docs/FRIENDS.md).
++PRIVATE_STATS = frozenset({"total_invested", "pnl", "pnl_pct", "positive_pnl_flag"})
++
++
+ ACHIEVEMENTS = [
+     {
+         "id": "first_card",
+@@ -181,6 +187,11 @@ ACHIEVEMENTS = [
+ ]
+ 
+ 
++def _shareable(stats: dict) -> dict:
++    """A trainer's stats without the figures that come from what they paid (invested, profit or loss, in profit or not)."""
++    return {key: value for key, value in stats.items() if key not in PRIVATE_STATS}
++
++
+ def _card_payload(card: Card | None):
+     """Catalogue detail for a card shown on someone else's profile.
+ 
+@@ -392,13 +403,16 @@ def get_leaderboard(
      db: Session = Depends(get_db),
      current_user: User = Depends(get_current_user),
  ):
@@ -678,7 +703,15 @@ index 8746ade..6c347df 100644
      leaderboard = sorted(
          stats.values(),
          key=lambda entry: (entry["total_value"], entry["total_cards"], entry["unique_cards"]),
-@@ -414,6 +417,9 @@ def compare_users(
+         reverse=True,
+     )
+-    return leaderboard
++    # Ranked by what the collections are worth, and shown without what anyone paid or made (the viewer's own row included).
++    return [_shareable(entry) for entry in leaderboard]
+ 
+ 
+ @router.get("/compare/{user_id}")
+@@ -414,6 +428,9 @@ def compare_users(
      other_user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
      if not other_user:
          raise HTTPException(status_code=404, detail="User not found")
@@ -688,7 +721,18 @@ index 8746ade..6c347df 100644
  
      stats = _load_user_stats(db, [current_user.id, user_id], price_field=price_field)
      if current_user.id not in stats or user_id not in stats:
-@@ -539,6 +545,9 @@ def get_achievements(
+@@ -520,8 +537,8 @@ def compare_users(
+             break
+ 
+     return {
+-        "user_a": stats[current_user.id],
+-        "user_b": stats[user_id],
++        "user_a": _shareable(stats[current_user.id]),
++        "user_b": _shareable(stats[user_id]),
+         "overlap": overlap,
+         "only_a": only_a,
+         "only_b": only_b,
+@@ -539,6 +556,9 @@ def get_achievements(
      user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
      if not user:
          raise HTTPException(status_code=404, detail="User not found")
@@ -698,6 +742,15 @@ index 8746ade..6c347df 100644
  
      stats = _load_user_stats(db, [user_id], price_field=price_field).get(user_id)
      if not stats:
+@@ -546,6 +566,8 @@ def get_achievements(
+ 
+     achievements = []
+     for config in ACHIEVEMENTS:
++        if user_id != current_user.id and config["metric"] in PRIVATE_STATS:
++            continue  # "Investor" says whether someone is in profit, which is theirs to know
+         progress = stats.get(config["metric"], 0)
+         unlocked = progress >= config["target"]
+         achievements.append({
 diff --git a/backend/main.py b/backend/main.py
 index 59e84d7..9a19f4c 100644
 --- a/backend/main.py
@@ -1626,10 +1679,10 @@ index 0439d79..3d35ddc 100644
              current_user=self.other,
 diff --git a/backend/tests/test_friends.py b/backend/tests/test_friends.py
 new file mode 100644
-index 0000000..7583b83
+index 0000000..150d695
 --- /dev/null
 +++ b/backend/tests/test_friends.py
-@@ -0,0 +1,774 @@
+@@ -0,0 +1,818 @@
 +import json
 +import unittest
 +from unittest.mock import patch
@@ -2382,6 +2435,50 @@ index 0000000..7583b83
 +        self.world.share(self.ash, collection="friends")
 +        self.assertEqual(get_achievements(self.ash.id, price_field="price_trend", db=self.db, current_user=self.misty)["username"], "ash")
 +
++    # --- what was paid, and what came of it, is not part of any of this ----------------------------------------------
++
++    PRIVATE_FIGURES = {"total_invested", "pnl", "pnl_pct", "positive_pnl_flag"}
++
++    def test_the_leaderboard_never_carries_what_anyone_paid_or_made(self):
++        self.world.share(self.ash, collection="friends")
++        board = get_leaderboard(price_field="price_trend", db=self.db, current_user=self.misty)
++        self.assertEqual({entry["username"] for entry in board}, {"misty", "ash"})
++        for entry in board:  # the viewer's own row too
++            self.assertEqual(self.PRIVATE_FIGURES & set(entry), set(), entry["username"])
++            # What it may still show: who they are, how much they have and what it is worth.
++            for key in ("user_id", "username", "total_cards", "unique_cards", "total_value", "sets_completed", "set_diversity"):
++                self.assertIn(key, entry)
++        self.assertEqual(self.PRIVATE_FIGURES & keys_in(board), set())
++
++    def test_the_leaderboard_is_still_in_order_of_what_the_collections_are_worth(self):
++        self.world.share(self.ash, collection="friends")
++        board = get_leaderboard(price_field="price_trend", db=self.db, current_user=self.misty)
++        values = [entry["total_value"] for entry in board]
++        self.assertEqual(values, sorted(values, reverse=True))
++
++    def test_a_comparison_leaves_out_what_either_side_paid_or_made(self):
++        self.world.share(self.ash, collection="friends")
++        result = compare_users(self.ash.id, price_field="price_trend", db=self.db, current_user=self.misty)
++        for side in ("user_a", "user_b"):
++            self.assertEqual(self.PRIVATE_FIGURES & set(result[side]), set(), side)
++            self.assertIn("total_value", result[side])
++        self.assertEqual(self.PRIVATE_FIGURES & keys_in(result), set())
++
++    def test_someone_elses_achievements_do_not_say_whether_they_are_in_profit(self):
++        self.world.share(self.ash, collection="friends")
++
++        def achievements(viewer):
++            return get_achievements(self.ash.id, price_field="price_trend", db=self.db, current_user=viewer)
++
++        own = achievements(self.ash)
++        theirs = achievements(self.misty)
++        self.assertIn("investor", [item["id"] for item in own["achievements"]])  # your own list is yours
++        self.assertNotIn("investor", [item["id"] for item in theirs["achievements"]])
++        # Everything else is still there, and the counts agree with the list.
++        self.assertEqual(theirs["total"], len(theirs["achievements"]))
++        self.assertEqual(theirs["total"], own["total"] - 1)
++        self.assertEqual(self.PRIVATE_FIGURES & keys_in(theirs), set())
++
 +
 +# ---------------------------------------------------------------------------------------------------------------------
 +# Deleting a user
@@ -2406,10 +2503,10 @@ index 0000000..7583b83
 +    unittest.main()
 diff --git a/backend/tests/test_friends_http.py b/backend/tests/test_friends_http.py
 new file mode 100644
-index 0000000..ab556e4
+index 0000000..6fe9278
 --- /dev/null
 +++ b/backend/tests/test_friends_http.py
-@@ -0,0 +1,239 @@
+@@ -0,0 +1,262 @@
 +import unittest
 +from unittest.mock import patch
 +
@@ -2646,6 +2743,29 @@ index 0000000..ab556e4
 +        self.assertEqual(self.get(f"/api/social/compare/{self.world.misty.id}", self.world.brock).status_code, 404)
 +        self.assertEqual(self.get(f"/api/social/achievements/{self.world.misty.id}", self.world.brock).status_code, 404)
 +
++    def test_the_social_routes_carry_nothing_worked_out_from_what_was_paid(self):
++        private = {"total_invested", "pnl", "pnl_pct", "positive_pnl_flag"}
++
++        def keys(value):
++            if isinstance(value, dict):
++                return set(value) | {key for inner in value.values() for key in keys(inner)}
++            if isinstance(value, list):
++                return {key for inner in value for key in keys(inner)}
++            return set()
++
++        ash, misty = self.world.ash, self.world.misty
++        self.world.share(ash, collection="friends")
++        board = self.get("/api/social/leaderboard", misty).json()
++        self.assertEqual({entry["username"] for entry in board}, {"misty", "ash"})
++        self.assertEqual(private & keys(board), set())
++        self.assertIn("total_value", board[0])
++        compare = self.get(f"/api/social/compare/{ash.id}", misty).json()
++        self.assertEqual(private & keys(compare), set())
++        theirs = self.get(f"/api/social/achievements/{ash.id}", misty).json()
++        self.assertNotIn("investor", [item["id"] for item in theirs["achievements"]])
++        own = self.get(f"/api/social/achievements/{ash.id}", ash).json()
++        self.assertIn("investor", [item["id"] for item in own["achievements"]])
++
 +
 +if __name__ == "__main__":
 +    unittest.main()
@@ -2676,7 +2796,7 @@ index 58b06db..3476a52 100644
          self.assertEqual(len(result["trade_suggestions"]), 1)
          self.owner.wishlist_visibility = "private"
 diff --git a/docs/BACKEND.md b/docs/BACKEND.md
-index bb49a58..53618c0 100644
+index bb49a58..a85307c 100644
 --- a/docs/BACKEND.md
 +++ b/docs/BACKEND.md
 @@ -143,13 +143,38 @@ responses.
@@ -2686,8 +2806,8 @@ index bb49a58..53618c0 100644
 -| GET | `/api/social/leaderboard` | Multi-user leaderboard |
 -| GET | `/api/social/compare/{user_id}` | Multi-user comparison |
 -| GET | `/api/social/achievements/{user_id}` | Achievement progress |
-+| GET | `/api/social/leaderboard` | Multi-user leaderboard of the viewer and the people who share their collection with them ([Friends](FRIENDS.md)) |
-+| GET | `/api/social/compare/{user_id}` | Multi-user comparison; the other user's collection must be shared with the viewer |
++| GET | `/api/social/leaderboard` | Multi-user leaderboard of the viewer and the people who share their collection with them, without anyone's invested amount or profit ([Friends](FRIENDS.md)) |
++| GET | `/api/social/compare/{user_id}` | Multi-user comparison, without invested amounts or profit; the other user's collection must be shared with the viewer |
 +| GET | `/api/social/achievements/{user_id}` | Achievement progress; the user's collection must be shared with the viewer (your own always works) |
  | GET | `/api/github/contributors` | Public GitHub contributors feed |
  | GET | `/api/community/supporters` | Fresh, strictly validated public supporter registry projection; returns `503` with `Cache-Control: no-store` on any upstream or validation failure |
@@ -2723,10 +2843,10 @@ index bb49a58..53618c0 100644
  | Method | Path | Notes |
 diff --git a/docs/FRIENDS.md b/docs/FRIENDS.md
 new file mode 100644
-index 0000000..dea5a0a
+index 0000000..4ebfc7e
 --- /dev/null
 +++ b/docs/FRIENDS.md
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,123 @@
 +# Friends, sharing and trading
 +
 +Friends lets the users of one PokéCollector server see what each other chooses to share, and find cards worth swapping.
@@ -2750,9 +2870,10 @@ index 0000000..dea5a0a
 +this server, not the open internet). The three are independent: a user can share their For Trade list with friends and keep
 +the rest private.
 +
-+What never leaves its owner, whatever the settings: what was paid for a card, when it was added, scan photos, product
-+purchases and links to them, price alerts and target prices on the wishlist, custom (hand-made) cards, and anything about
-+decks or binders (those have their own public-profile switches).
++What never leaves its owner, whatever the settings: what was paid for a card, what has been invested in a collection and
++what came of it (profit or loss, as an amount or a percentage, or whether someone is in profit), when a card was added,
++scan photos, product purchases and links to them, price alerts and target prices on the wishlist, custom (hand-made)
++cards, and anything about decks or binders (those have their own public-profile switches).
 +
 +These settings are separate from the public-profile settings under `/api/profile`. Those control the anonymous
 +`/api/public` pages and are not changed by this feature.
@@ -2805,13 +2926,13 @@ index 0000000..dea5a0a
 +| Route | Now |
 +|-------|-----|
 +| `GET /api/collection/user/{user_id}` | `404` unless shared with the viewer. What the owner paid and when they added each card are left out for everyone but the owner. |
-+| `GET /api/social/leaderboard` | Ranks the viewer and the people who share their collection with the viewer. |
-+| `GET /api/social/compare/{user_id}` | `404` unless that user's collection is shared with the viewer. |
-+| `GET /api/social/achievements/{user_id}` | `404` unless that user's collection is shared with the viewer (your own always works). |
++| `GET /api/social/leaderboard` | Ranks the viewer and the people who share their collection with the viewer, by what the collections are worth. A row has the username, number of cards, value at market prices, best card, sets completed and similar counts. It never has an invested amount or a profit or loss (the viewer's own row included). |
++| `GET /api/social/compare/{user_id}` | `404` unless that user's collection is shared with the viewer. Neither side carries an invested amount or a profit or loss. |
++| `GET /api/social/achievements/{user_id}` | `404` unless that user's collection is shared with the viewer (your own always works). Another person's list leaves out the Investor badge, which says whether they are in profit. |
 +
 +On the website this means the Leaderboard lists only people who have chosen to share, and "view collection" works only for
-+them. A user who shares their collection is shown on the Leaderboard with the figures it has always shown, including their
-+total invested and profit/loss.
++them. Because the server no longer sends the invested and profit figures, the P&L column that the website's Leaderboard and
++Compare pages still draw reads +0.00; hiding the column needs a change to those two pages, which this update does not make.
 +
 +## API
 +
