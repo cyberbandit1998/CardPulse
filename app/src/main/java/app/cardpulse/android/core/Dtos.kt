@@ -420,6 +420,8 @@ data class ScanJobDto(
     @SerialName("expires_at") val expiresAt: String? = null,
     @SerialName("error_message") val errorMessage: String? = null,
     val items: List<ScanItemDto> = emptyList(),
+    /** What the user may still scan today. Sent by a server that has the daily scan limits; null otherwise. */
+    @SerialName("scan_limit") val scanLimit: ScanAllowanceDto? = null,
 )
 
 @Serializable

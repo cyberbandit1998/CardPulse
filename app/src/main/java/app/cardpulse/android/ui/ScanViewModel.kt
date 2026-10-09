@@ -87,7 +87,13 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         session.clearHandled()
         _state.update { it.copy(stage = ScanStage.RAPID, openId = null, message = null) }
         refresh()
+        refreshAllowance()
         if (reviewFirst) openOldestReady()
+    }
+
+    /** Asks the server how many scans are left today (the daily scan limit), for the line on the camera. */
+    fun refreshAllowance() {
+        viewModelScope.launch { session.refreshAllowance() }
     }
 
     fun leaveRapid() = _state.update { it.copy(stage = ScanStage.HOME, openId = null) }

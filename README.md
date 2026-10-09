@@ -106,6 +106,14 @@ The app warns you if it connects to a server in single-user mode.
   Results collect in a tray along the bottom. Photos are kept on the phone until they upload, so a dropped connection or
   a closed app doesn't lose a card, and scans left on the server are picked up again. A scan that keeps spinning can be
   cancelled from its tile; that also deletes it on your server.
+- **Daily scan limit:** an admin of your PokéCollector server can limit how many cards each person may have read by the
+  AI scanner in a day (on the website: a default for everyone, a limit for one person, or none). The camera shows what is
+  left, such as "23 of 100 scans used today", or "Unlimited scans" when there is no limit. At the limit it says "Daily scan
+  limit reached" and when scans start again (at the server's midnight, shown in your phone's time), and the shutter waits
+  instead of taking photos the server would turn away; a photo that was turned away stays in the tray and can be sent again
+  after the reset. **The limit is kept by your server, never by the app**, so it holds for the website and every other
+  client alike. It needs a small update to your PokéCollector server (the second one in [`server/`](server/README.md));
+  without it the camera shows nothing about limits and everything works as before.
 - **Check before adding:** tap a result to see your photo beside the match, then confirm the condition, variant,
   language, quantity and purchase price it will be added with. One tap adds it and the next waiting result opens. The
   condition and variant you used last are suggested for the next card.

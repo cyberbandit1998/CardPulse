@@ -1,0 +1,9 @@
+{
+  "daily_limit": null,
+  "unlimited": true,
+  "used": 12,
+  "remaining": null,
+  "resets_at": "2026-10-10T00:00:00+02:00",
+  "resets_in_seconds": 43200,
+  "timezone": "Europe/Berlin"
+}

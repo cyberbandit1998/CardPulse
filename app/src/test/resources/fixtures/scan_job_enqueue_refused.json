@@ -1,0 +1,11 @@
+{
+  "detail": "Daily scan limit reached. Scans reset at midnight (Europe/Berlin).",
+  "code": "scan_limit_reached",
+  "daily_limit": 100,
+  "unlimited": false,
+  "used": 100,
+  "remaining": 0,
+  "resets_at": "2026-10-10T00:00:00+02:00",
+  "resets_in_seconds": 43200,
+  "timezone": "Europe/Berlin"
+}

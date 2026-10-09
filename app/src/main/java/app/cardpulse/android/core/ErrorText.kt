@@ -43,7 +43,8 @@ private fun HttpException.httpMessage(): String {
         409 -> detail ?: "That conflicts with the server's current state."
         413 -> "That upload is too large for the server."
         422 -> detail ?: "The server rejected that request."
-        429 -> "Too many requests. Wait a minute and try again."
+        // The daily scan limit is a 429 too, but waiting a minute does not help: the server's own words say when it starts over.
+        429 -> if (scanLimitAllowance() != null) (detail ?: DAILY_LIMIT_MESSAGE) else "Too many requests. Wait a minute and try again."
         502, 503, 504, 521, 522, 523, 524 ->
             "The server is unreachable or too slow (HTTP $status). If you use a tunnel or proxy, check that it is running."
         in 500..599 -> detail ?: "The server had a problem (HTTP $status)."

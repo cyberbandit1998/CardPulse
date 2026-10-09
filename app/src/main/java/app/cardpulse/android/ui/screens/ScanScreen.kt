@@ -38,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -47,24 +48,37 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import app.cardpulse.android.camera.CameraPreview
 import app.cardpulse.android.camera.CaptureController
 import app.cardpulse.android.core.AddEdits
 import app.cardpulse.android.core.CollectionIndex
+import app.cardpulse.android.core.DAILY_LIMIT_MESSAGE
 import app.cardpulse.android.core.Ownership
+import app.cardpulse.android.core.ScanAllowanceDto
 import app.cardpulse.android.core.ScanEntry
 import app.cardpulse.android.core.SessionState
 import app.cardpulse.android.core.TileState
 import app.cardpulse.android.core.isInFlight
+import app.cardpulse.android.core.isUsedUp
 import app.cardpulse.android.core.ownershipOf
+import app.cardpulse.android.core.parseServerInstant
+import app.cardpulse.android.core.resetText
 import app.cardpulse.android.core.tileState
 import app.cardpulse.android.core.toReview
+import app.cardpulse.android.core.usageText
 import app.cardpulse.android.ui.AppState
 import app.cardpulse.android.ui.Banner
 import app.cardpulse.android.ui.ScanState
 import app.cardpulse.android.ui.ScanViewModel
+import kotlinx.coroutines.delay
+import java.time.Duration
+import java.time.Instant
 
 /**
  * The camera, over whichever tab is showing. It is opened by the round button in the bottom bar, and when it closes the
@@ -128,7 +142,25 @@ private fun RapidScreen(
 
     BackHandler { if (scan.openId != null) vm.closePanel() else vm.leaveRapid() }
 
+    // The clock behind "Scans reset at midnight (in 5 h)", moved on every half minute while the camera is open.
+    val now by produceState(Instant.now()) {
+        while (true) {
+            delay(CLOCK_TICK_MS)
+            value = Instant.now()
+        }
+    }
+    // The count starts again when the day does, so ask again then: what was last heard is a day old by that time.
+    val resetAt = session.allowance?.let { parseServerInstant(it.resetsAt) }
+    LaunchedEffect(resetAt) {
+        if (resetAt != null) {
+            delay(Duration.between(Instant.now(), resetAt).toMillis().coerceAtLeast(0) + AFTER_RESET_MS)
+            vm.refreshAllowance()
+        }
+    }
+
     RapidScreenContent(
+        allowance = session.allowance,
+        now = now,
         entries = session.entries,
         openId = scan.openId,
         message = session.message ?: scan.message,
@@ -197,9 +229,14 @@ fun RapidScreenContent(
     preview: @Composable () -> Unit,
     actions: RapidActions,
     modifier: Modifier = Modifier,
+    /** What the user may still scan today (the server's daily scan limit); null when the server has none to say. */
+    allowance: ScanAllowanceDto? = null,
+    now: Instant = Instant.now(),
 ) {
     val toReview = entries.count { it.tileState() == TileState.READY }
     val open = openId?.let { id -> entries.firstOrNull { it.id == id } }
+    // Scans are refused by the server at the limit, so the shutter only saves the user a photo that would be turned away.
+    val limitReached = allowance?.isUsedUp(now) == true
 
     BoxWithConstraints(modifier.fillMaxSize().background(Color.Black)) {
         val panelMaxHeight = maxHeight * 0.82f
@@ -228,6 +265,7 @@ fun RapidScreenContent(
                     )
                 }
             }
+            if (allowance != null) ScanAllowanceNotice(allowance, now)
             message?.let { Banner(it, isError = true, onDismiss = actions.dismissMessage) }
             if (entries.isEmpty()) {
                 Text(
@@ -270,7 +308,7 @@ fun RapidScreenContent(
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                     TextButton(onClick = actions.done) { Text("Done", color = Color.White, maxLines = 1) }
                 }
-                ShutterButton(enabled = canShoot && !capturing, onClick = actions.shutter)
+                ShutterButton(enabled = canShoot && !capturing && !limitReached, onClick = actions.shutter)
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
                     Button(
                         onClick = actions.review,
@@ -307,6 +345,53 @@ fun RapidScreenContent(
                     .navigationBarsPadding()
                     .heightIn(max = panelMaxHeight),
             )
+        }
+    }
+}
+
+/** How often the clock behind "(in 5 h 12 min)" moves on. */
+private const val CLOCK_TICK_MS = 30_000L
+
+/** A moment after the reset, so the server has started the new day when it is asked. */
+private const val AFTER_RESET_MS = 1_000L
+
+/**
+ * How many scans are used today, such as "23 of 100 scans used today", or "Unlimited scans" for a user with no limit. At the
+ * limit it also says so, and when scans start again: the server refuses a photo then, and nothing here would explain why.
+ */
+@Composable
+private fun ScanAllowanceNotice(allowance: ScanAllowanceDto, now: Instant, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            allowance.usageText(),
+            color = Color.White,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier
+                .clip(RoundedCornerShape(16.dp))
+                .background(Color(0x99000000))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+        if (allowance.isUsedUp(now)) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.errorContainer)
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                    // Said out loud when it appears: a screen reader user otherwise finds out from a shutter that does nothing.
+                    .semantics { liveRegion = LiveRegionMode.Polite },
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    DAILY_LIMIT_MESSAGE,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                allowance.resetText(now)?.let {
+                    Text(it, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
         }
     }
 }

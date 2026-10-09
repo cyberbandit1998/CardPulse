@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import app.cardpulse.android.core.AddEdits
 import app.cardpulse.android.core.CardLanguages
 import app.cardpulse.android.core.Conditions
+import app.cardpulse.android.core.DAILY_LIMIT_MESSAGE
 import app.cardpulse.android.core.MoneyInput
 import app.cardpulse.android.core.Ownership
 import app.cardpulse.android.core.ScanEntry
@@ -59,6 +60,7 @@ import app.cardpulse.android.core.TileState
 import app.cardpulse.android.core.Variants
 import app.cardpulse.android.core.details
 import app.cardpulse.android.core.headline
+import app.cardpulse.android.core.isDailyLimitMessage
 import app.cardpulse.android.core.isInFlight
 import app.cardpulse.android.core.progressNote
 import app.cardpulse.android.core.recognizedSummary
@@ -447,8 +449,10 @@ private fun ColumnScope.AttentionContent(
             Text(
                 progress?.title ?: when (state) {
                     TileState.NO_MATCH -> "The scanner couldn't match this card"
-                    TileState.FAILED -> "The scanner couldn't read this card"
-                    TileState.SEND_FAILED -> "This photo hasn't reached your server"
+                    TileState.FAILED ->
+                        if (isDailyLimitMessage(entry.item?.error)) DAILY_LIMIT_MESSAGE else "The scanner couldn't read this card"
+                    TileState.SEND_FAILED ->
+                        if (isDailyLimitMessage(entry.uploadError)) DAILY_LIMIT_MESSAGE else "This photo hasn't reached your server"
                     else -> "Still working on this one…"
                 },
                 style = MaterialTheme.typography.titleSmall,

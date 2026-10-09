@@ -31,6 +31,7 @@ import app.cardpulse.android.core.PriceBackend
 import app.cardpulse.android.core.ResolveAndAddRequest
 import app.cardpulse.android.core.ResolveAndAddResponse
 import app.cardpulse.android.core.ResolveRequest
+import app.cardpulse.android.core.ScanAllowanceDto
 import app.cardpulse.android.core.ScanBackend
 import app.cardpulse.android.core.ScanItemDto
 import app.cardpulse.android.core.ScanJobDto
@@ -285,6 +286,8 @@ class Repository(
     override suspend fun enqueue(photo: File): ScanJobDto = enqueueScan(listOf(photo), individual = true)
 
     override suspend fun scanJobs(): List<ScanJobDto> = api.scanJobs().jobs
+
+    override suspend fun scanAllowance(): ScanAllowanceDto = api.scanAllowance()
 
     override suspend fun scanJob(jobId: Int): ScanJobDto = api.scanJob(jobId)
 

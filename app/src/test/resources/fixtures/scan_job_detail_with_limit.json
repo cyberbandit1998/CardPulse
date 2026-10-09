@@ -1,0 +1,49 @@
+{
+  "id": 1,
+  "status": "pending",
+  "total": 1,
+  "failed": 0,
+  "processing": 0,
+  "pending": 1,
+  "retrying": 0,
+  "done": 0,
+  "processed": 0,
+  "active": 1,
+  "attention": 0,
+  "failed_attention": 0,
+  "next_retry_at": null,
+  "retry_reason": null,
+  "unresolved": 0,
+  "created_at": "2026-10-09T15:43:13.151160",
+  "finished_at": null,
+  "expires_at": "2026-10-23T15:43:13.151160",
+  "error_message": null,
+  "items": [
+    {
+      "id": 1,
+      "position": 0,
+      "batch_mode": false,
+      "status": "pending",
+      "resolved": false,
+      "attempts": 0,
+      "transient_failures": 0,
+      "recognized": null,
+      "matches": null,
+      "error": null,
+      "has_image": true,
+      "next_attempt_at": "2026-10-09T15:43:13.151160",
+      "retry_reason": null,
+      "created_at": "2026-10-09T15:43:13.151160",
+      "updated_at": "2026-10-09T15:43:13.151160"
+    }
+  ],
+  "scan_limit": {
+    "daily_limit": 100,
+    "unlimited": false,
+    "used": 24,
+    "remaining": 76,
+    "resets_at": "2026-10-10T00:00:00+02:00",
+    "resets_in_seconds": 43200,
+    "timezone": "Europe/Berlin"
+  }
+}

@@ -1,9 +1,8 @@
-**Search the whole catalogue, from Home.**
+**Your daily scans, on the camera.**
 
-- **A search bar under the header on Home.** It opens a search of every card your server knows, not only the ones you own. The sliders at its end choose what to look at before you start.
-- **One box, and chips for what it looks at:** All (the default), Pokémon, Artist, Set and Number. All looks at names, artists, sets, card numbers and rarities together: "Pikachu" finds every Pikachu in every set, an artist's name finds every card they drew, "30th Celebration" finds that set's cards, and "130/128" finds the card with that number in the set that prints 128 cards.
-- **Each card is a row you know from the wishlist:** picture, name, set, number, rarity, who drew it (left out when the catalogue doesn't say), what it costs now, how many copies you own, and a heart. A card opens as a page.
-- **The artist's name is a link.** On a found card, on a card in your collection and on a card on your wishlist, tapping the artist opens the search for every card they drew.
-- Nothing needs installing on your server: this uses PokéCollector's own card search.
+- **How many scans you have left today.** The rapid-scan camera says, for example, "23 of 100 scans used today", or "Unlimited scans" if your server puts no limit on you.
+- **At the limit** it says "Daily scan limit reached" and when scans start again (at your server's midnight, shown in your phone's time). The shutter waits instead of taking photos your server would turn away, and a photo that was turned away stays in the tray to be sent again after the reset.
+- **The limit is set on your server, not in the app.** An admin chooses the default limit, and a limit for each person (or none, admins included), on the PokéCollector website: Settings → AI / Card Scanner, and Settings → Users, where each person's use today is shown too. The server checks it right before a photo is read, so it holds for the website and every app alike. Only photos the scanner starts to read are counted: opening the camera, a photo that is turned away first, and the scanner's own retries are not.
+- This needs the second update in the `server/` folder (it also needs the website and backend rebuilt, and your time zone set so the day starts at your midnight). Without it the camera shows nothing about limits and everything works as before.
 
 If anything looks wrong on your phone, tell me which screen it was.

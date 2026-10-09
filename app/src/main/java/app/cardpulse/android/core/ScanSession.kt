@@ -22,6 +22,8 @@ import java.util.concurrent.atomic.AtomicLong
 /** What the scan session needs from the server. The real one is `Repository`; tests use a fake. */
 interface ScanBackend {
     suspend fun enqueue(photo: File): ScanJobDto
+    /** What the user may still scan today. Null from a backend that has no daily scan limits. */
+    suspend fun scanAllowance(): ScanAllowanceDto? = null
     suspend fun scanJobs(): List<ScanJobDto>
     suspend fun scanJob(jobId: Int): ScanJobDto
     suspend fun resolveAndAdd(jobId: Int, itemId: Int, request: ResolveAndAddRequest): ResolveAndAddResponse
@@ -113,6 +115,8 @@ data class SessionState(
     val entries: List<ScanEntry> = emptyList(),
     val loading: Boolean = false,
     val message: String? = null,
+    /** What the user may still scan today, as the server last said. Null until it has, and for a server without scan limits. */
+    val allowance: ScanAllowanceDto? = null,
 )
 
 /** Results waiting for the user to confirm, newest first. */
@@ -262,6 +266,23 @@ class ScanSession(
 
     fun dismissMessage() = mutableState.update { it.copy(message = null) }
 
+    /**
+     * Asks the server what is left of today's scans. A server without the daily scan limits has no such route (404), which
+     * leaves nothing to show; any other failure (no network, say) keeps what was last heard, since a count that is a little
+     * old is still more use than a hole.
+     */
+    suspend fun refreshAllowance() {
+        attempt { backend.scanAllowance() }
+            .onSuccess { fresh -> mutableState.update { it.copy(allowance = fresh) } }
+            .onFailure { error ->
+                if (error is HttpException && error.code() in NO_SUCH_ROUTE) mutableState.update { it.copy(allowance = null) }
+            }
+    }
+
+    private fun noteAllowance(fresh: ScanAllowanceDto?) {
+        if (fresh != null) mutableState.update { it.copy(allowance = fresh) }
+    }
+
     // --- choosing ---------------------------------------------------------------------------------
 
     fun select(entryId: Long, index: Int) = update(entryId) { entry ->
@@ -369,6 +390,13 @@ class ScanSession(
                 return
             }
             failure = result.exceptionOrNull()
+            // No scan left today: asking again in a second changes nothing. The server says how many were used and when
+            // the day starts over, which is what the camera shows.
+            val reached = (failure as? HttpException)?.scanLimitAllowance()
+            if (reached != null) {
+                noteAllowance(reached)
+                break
+            }
             // A rejected photo or a missing scanner key won't improve by asking again; a busy or unreachable server might.
             if (failure is HttpException && failure.code() in 400..499 && failure.code() != 408 && failure.code() != 429) break
         }
@@ -381,6 +409,7 @@ class ScanSession(
             val sent = File(photo.parentFile, "sent-" + photo.name.removePrefix("scan-"))
             if (photo.renameTo(sent)) sent else photo
         }
+        noteAllowance(job.scanLimit)
         var recorded = false
         mutableState.update { s ->
             recorded = s.entries.any { it.id == entryId }
@@ -446,6 +475,8 @@ class ScanSession(
 
     private fun merge(job: ScanJobDto) = mutableState.update { s ->
         s.copy(
+            // The count moves as photos start to be read, and every poll of a job says where it is now.
+            allowance = job.scanLimit ?: s.allowance,
             entries = s.entries.mapNotNull { entry ->
                 if (entry.jobId != job.id) return@mapNotNull entry
                 val known = entry.item
@@ -494,5 +525,7 @@ class ScanSession(
 
     private companion object {
         const val MAX_RESUMED = 200
+        /** What an older server answers for a route it does not have. */
+        val NO_SUCH_ROUTE = setOf(404, 405)
     }
 }

@@ -23,6 +23,7 @@ import app.cardpulse.android.core.OwnTradeListDto
 import app.cardpulse.android.core.ResolveAndAddRequest
 import app.cardpulse.android.core.ResolveAndAddResponse
 import app.cardpulse.android.core.ResolveRequest
+import app.cardpulse.android.core.ScanAllowanceDto
 import app.cardpulse.android.core.ScanItemDto
 import app.cardpulse.android.core.ScanJobDto
 import app.cardpulse.android.core.ScanJobListDto
@@ -280,6 +281,10 @@ interface PokeApi {
 
     @GET("api/cards/recognize/jobs")
     suspend fun scanJobs(): ScanJobListDto
+
+    /** What the user may still scan today. A server without the daily scan limits has no such route (404). */
+    @GET("api/scan-limits/me")
+    suspend fun scanAllowance(): ScanAllowanceDto
 
     @GET("api/cards/recognize/jobs/{job}")
     suspend fun scanJob(@Path("job") jobId: Int): ScanJobDto
