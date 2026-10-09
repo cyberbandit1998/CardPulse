@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -166,6 +167,16 @@ class SearchBehaviourTest {
         for (scope in SearchScope.entries) compose.onNodeWithText(scope.label).assertExists()
         compose.onNodeWithText("All").assertIsSelected()
         compose.onNodeWithText("Artist").assertExists()
+    }
+
+    @Test
+    fun theFiveChipsStayOnOneLineEvenOnAPhoneTooNarrowForAllOfThem() {
+        showSearch(CatalogSearchState())
+
+        // Together they are wider than this 360dp screen, so the row scrolls rather than wrapping Number onto a line of its own.
+        val tops = SearchScope.entries.map { compose.onNodeWithText(it.label).getBoundsInRoot().top }
+
+        assertEquals("The chips' tops: $tops", 1, tops.distinct().size)
     }
 
     @Test

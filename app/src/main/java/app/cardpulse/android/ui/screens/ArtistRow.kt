@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -37,11 +38,13 @@ internal fun ArtistRow(artist: String?, modifier: Modifier = Modifier, onSearch:
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("Artist", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        // The accent colour and an underline say it can be pressed; the label says what it does.
+        // The accent colour and an underline say it can be pressed; the label says what it does. The press area reaches 8dp past the
+        // text each way, and the whole of it is moved 8dp to the right so that the name's own edge lines up with the other rows' values.
         Text(
             name,
             modifier = Modifier
                 .padding(start = 16.dp)
+                .offset(x = 8.dp)
                 .weight(1f, fill = false)
                 .clip(RoundedCornerShape(8.dp))
                 .clickable(role = Role.Button, onClickLabel = "Show every card by $name") {

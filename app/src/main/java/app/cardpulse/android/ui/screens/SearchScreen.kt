@@ -3,6 +3,7 @@ package app.cardpulse.android.ui.screens
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -119,7 +122,6 @@ fun SearchScreen(app: AppState, vm: SearchViewModel, onClose: () -> Unit, modifi
  * found as rows like the wishlist's: picture, name, set, number, artist, rarity, price, how many are owned, and a heart. A card
  * opens as a page; the artist on it is a way back here, for every card they drew.
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SearchContent(
     state: CatalogSearchState,
@@ -177,8 +179,10 @@ fun SearchContent(
                 modifier = Modifier.weight(1f).focusRequester(focus),
             )
         }
-        FlowRow(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        // One row, scrolling sideways when it is wider than the screen: the five chips need about 354dp and a 360dp phone leaves
+        // 328dp, so wrapping would drop Number onto a line of its own under the others.
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).selectableGroup().padding(horizontal = 16.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SearchScope.entries.forEach { option ->
