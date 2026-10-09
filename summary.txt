@@ -1,0 +1,7 @@
+Installed app-release.apk (3.7 MB).
+The app is not debuggable.
+The sign-in screen appeared (12 s).
+Tapped Test connection with https://httpbin.org/anything (25 s).
+The reply was read into the app's own classes: "That address answered, but it doesn't look like a PokéCollector server." (34 s).
+The app is still running and did not crash.
+RESULT: start-up and a first server call: OK; JSON read with shrunk code: verified.
