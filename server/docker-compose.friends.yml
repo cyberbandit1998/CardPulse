@@ -1,5 +1,6 @@
 # Builds PokéCollector's backend and website from the updated source (see README.md in this folder) instead of pulling the
-# published images. Use it together with your own docker-compose.yml, which everything else comes from:
+# published images. It covers both updates in this folder (Friends & trading, and the daily scan limits). Use it together
+# with your own docker-compose.yml, which everything else comes from:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.friends.yml up -d --build backend frontend
 #
@@ -7,11 +8,15 @@ services:
   backend:
     image: pokecollector-backend:friends
     build:
-      # The folder made in step 2, with the update applied. Relative to the folder of your docker-compose.yml.
+      # The folder made in step 2, with the updates applied. Relative to the folder of your docker-compose.yml.
       context: ../pokecollector-src
       dockerfile: backend/Dockerfile
+    environment:
+      # The server's time zone. The daily scan limits start over at its local midnight, and a container is on UTC unless it is
+      # told otherwise. Set TZ in the .env file next to your docker-compose.yml, for example TZ=Europe/Berlin (README, step 5).
+      TZ: ${TZ:-}
 
-  # The website. Its Leaderboard and Compare pages are changed too, so it is built from the same folder.
+  # The website. Its Leaderboard, Compare and Settings pages are changed too, so it is built from the same folder.
   frontend:
     image: pokecollector-frontend:friends
     build:

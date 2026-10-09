@@ -1,0 +1,3770 @@
+From b74012b491bc06b700cace7c9969562bb31a5349 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 9 Oct 2026 15:20:39 +0000
+Subject: [PATCH] feat: daily scan limits per user, managed from the website
+
+An admin can limit how many cards each user may have read by the vision model (Gemini, or an OpenAI-compatible service such
+as Groq) per day: a default for everyone, a limit of their own for a user, or unlimited (an admin can be unlimited too).
+
+The limit is enforced by the server, right before the model is asked, so the website, the CardPulse app and any other client
+are held to it. One scan is one photo whose recognition starts. Opening the scanner, a photo that is turned away before it is
+read (not an image, too big, no API key, a scanner that has to be tested again), matching, the second opinion from Gemini and
+the queue's own retries are not counted; a photo that is read again with Retry is. Photos read together count one scan each,
+and a group that no longer fits is read photo by photo instead. The count is one conditional UPDATE, so concurrent requests
+cannot pass the limit, and a queued photo carries a marker so the queue's retries never count it twice.
+
+The day is the server's local date: usage starts again at the server's local midnight (in Docker, UTC unless TZ is set), is
+stored in the database and survives restarts. A user with no scans left gets HTTP 429 with the daily limit, scans used, scans
+remaining and the reset time (and Retry-After); the 429 carries a code that tells it from the rate limiter's. Queueing photos
+and Retry are refused up front; photos already queued that no longer fit are marked failed, not retried by themselves.
+
+GET /api/scan-limits/me (everyone); /settings, /users and PUT /users/{id} (admins only). Settings -> General -> AI / Card
+Scanner gets the default limit, an unlimited switch and the server's time zone and next reset; Settings -> Users shows each
+user's limit (default, custom or unlimited) and what they have used today, e.g. 34 / 100 today.
+
+Nothing changes until an admin chooses a number: the default is unlimited. Adds three tables (scan_usage,
+scan_limit_overrides, scan_item_charges), created on start-up; no existing table changes. Two upstream composite-processor
+tests that use a stand-in session now stub the count. Documented in docs/SCAN_LIMITS.md.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01384BC8nHuYg1SpN4faoQoG
+---
+ backend/api/recognize.py                      |   16 +-
+ backend/api/scan_jobs.py                      |   17 +-
+ backend/api/scan_limits.py                    |  106 ++
+ backend/main.py                               |    7 +-
+ backend/models.py                             |   55 +
+ backend/services/scan_limits.py               |  410 +++++++
+ backend/services/scan_queue.py                |   25 +
+ backend/tests/scan_limits_world.py            |  102 ++
+ backend/tests/test_scan_limits.py             |  580 +++++++++
+ backend/tests/test_scan_limits_http.py        | 1062 +++++++++++++++++
+ backend/tests/test_scan_queue.py              |    5 +
+ docs/SCAN_LIMITS.md                           |  111 ++
+ frontend/src/api/client.js                    |    6 +
+ .../src/components/ScanLimitSettingsCard.jsx  |  153 +++
+ frontend/src/components/ScanLimits.test.jsx   |  117 ++
+ .../src/components/UserScanLimitControl.jsx   |  100 ++
+ frontend/src/i18n/de.js                       |   25 +
+ frontend/src/i18n/en.js                       |   25 +
+ frontend/src/pages/Settings.jsx               |   41 +-
+ frontend/src/utils/scanLimits.js              |   53 +
+ frontend/src/utils/scanLimits.test.js         |   83 ++
+ frontend/tests/visual/scan-limits.spec.js     |  269 +++++
+ 22 files changed, 3362 insertions(+), 6 deletions(-)
+ create mode 100644 backend/api/scan_limits.py
+ create mode 100644 backend/services/scan_limits.py
+ create mode 100644 backend/tests/scan_limits_world.py
+ create mode 100644 backend/tests/test_scan_limits.py
+ create mode 100644 backend/tests/test_scan_limits_http.py
+ create mode 100644 docs/SCAN_LIMITS.md
+ create mode 100644 frontend/src/components/ScanLimitSettingsCard.jsx
+ create mode 100644 frontend/src/components/ScanLimits.test.jsx
+ create mode 100644 frontend/src/components/UserScanLimitControl.jsx
+ create mode 100644 frontend/src/utils/scanLimits.js
+ create mode 100644 frontend/src/utils/scanLimits.test.js
+ create mode 100644 frontend/tests/visual/scan-limits.spec.js
+
+diff --git a/backend/api/recognize.py b/backend/api/recognize.py
+index da2833f..07317dd 100644
+--- a/backend/api/recognize.py
++++ b/backend/api/recognize.py
+@@ -43,6 +43,7 @@ from sqlalchemy.orm import Session
+ from api.auth import get_current_user
+ from database import get_db
+ from models import Card, Setting, UserSetting, User, Set
++from services.scan_limits import charge_scans
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -1410,8 +1411,13 @@ async def _recognize_with_provider(
+     trace: ScanTrace | None = None,
+     prewarm_candidates: bool = False,
+     on_recognized: Callable[[dict], None] | None = None,
++    before_provider_call: Callable[[], None] | None = None,
+ ) -> dict:
+-    """Recognize one already-sanitized image with an explicit provider."""
++    """Recognize one already-sanitized image with an explicit provider.
++
++    ``before_provider_call`` runs once everything that can refuse the scan without reading it has passed (timeout, capability,
++    credential) and just before the model is asked: that is where the daily scan limit counts the scan, or stops it with a 429.
++    """
+     request_timeout_seconds = resolve_scanner_request_timeout(
+         db, user_id, provider.name
+     )
+@@ -1429,6 +1435,9 @@ async def _recognize_with_provider(
+             detail=provider.missing_credential_message(),
+         )
+ 
++    if before_provider_call:
++        before_provider_call()
++
+     image_b64 = base64.b64encode(image_bytes).decode()
+     try:
+         async with httpx.AsyncClient(timeout=request_timeout_seconds) as client:
+@@ -1498,6 +1507,7 @@ async def recognize_sanitized_card(
+     prewarm_candidates: bool = False,
+     on_recognized: Callable[[dict], None] | None = None,
+     rate_limit_priority: str = "interactive",
++    before_provider_call: Callable[[], None] | None = None,
+ ) -> dict:
+     """Recognize one already-sanitized image for direct and queued scans.
+ 
+@@ -1526,6 +1536,8 @@ async def recognize_sanitized_card(
+         on_recognized=lambda card_info: notify_recognized(
+             card_info, fallback_used=False
+         ),
++        # Only the first read counts as the scan: the second opinion from Gemini below is part of the same one.
++        before_provider_call=before_provider_call,
+     )
+     if result.get("recognized") is not None:
+         result["recognized"]["_gemini_fallback_used"] = False
+@@ -1643,6 +1655,8 @@ async def recognize_card(
+             sanitized.data,
+             sanitized.content_type,
+             trace=trace,
++            # The daily scan limit: counted just before the model is asked, a 429 if there is none left.
++            before_provider_call=lambda: charge_scans(db, current_user.id),
+         )
+     finally:
+         trace.save()
+diff --git a/backend/api/scan_jobs.py b/backend/api/scan_jobs.py
+index 3a80caf..c35a07f 100644
+--- a/backend/api/scan_jobs.py
++++ b/backend/api/scan_jobs.py
+@@ -15,6 +15,7 @@ from api.auth import get_current_user
+ from database import get_db
+ from models import ScanJob, ScanJobItem, User
+ from schemas import CollectionItemCreate, CollectionItemResponse
++from services import scan_limits
+ from services.scan_candidate_images import fetch_and_cache_candidate_image
+ from services.scan_queue import (
+     drain_scan_queue,
+@@ -139,6 +140,11 @@ async def enqueue_scan_job(
+     except (TypeError, ValueError, json.JSONDecodeError):
+         raise HTTPException(status_code=400, detail="Invalid individual scan selection.")
+ 
++    # The daily scan limit: nothing is stored or queued for a user who has no scans left, and they are told when it starts over.
++    # A user with some left may queue more photos than that: scans are counted when each photo starts to be read (see
++    # services/scan_limits.py), and the photos that no longer fit are marked failed then, to be read again with Retry.
++    scan_limits.ensure_scans_available(db, current_user.id)
++
+     # A composite asks the model to read several cards out of one image, which
+     # needs the same multi-image capability visual verification does. A model
+     # that already failed that probe (or was saved in acknowledged limited
+@@ -164,7 +170,7 @@ async def enqueue_scan_job(
+         raise HTTPException(status_code=400, detail=str(exc))
+ 
+     background_tasks.add_task(drain_scan_queue, max_items=len(files))
+-    return job_progress(db, job)
++    return {**job_progress(db, job), "scan_limit": scan_limits.current_allowance(db, current_user.id).payload()}
+ 
+ 
+ @router.get("/recognize/jobs")
+@@ -210,7 +216,12 @@ def get_scan_job(
+         .order_by(ScanJobItem.position.asc())
+         .all()
+     )
+-    return {**job_progress(db, job), "items": [_item_payload(item) for item in items]}
++    # The user's scans for today ride along, so a client that polls a job anyway sees the count move without another request.
++    return {
++        **job_progress(db, job),
++        "items": [_item_payload(item) for item in items],
++        "scan_limit": scan_limits.current_allowance(db, current_user.id).payload(),
++    }
+ 
+ 
+ @router.get("/recognize/jobs/{job_id}/items/{item_id}/image")
+@@ -391,6 +402,8 @@ async def retry_scan_job_item(
+     current_user: User = Depends(get_current_user),
+ ):
+     item = _get_own_item(db, job_id, item_id, current_user)
++    # Reading a photo again is another scan.
++    scan_limits.ensure_scans_available(db, current_user.id)
+     try:
+         retry_scan_item(db, item)
+     except (ValueError, ScanUploadError) as exc:
+diff --git a/backend/api/scan_limits.py b/backend/api/scan_limits.py
+new file mode 100644
+index 0000000..f4643fe
+--- /dev/null
++++ b/backend/api/scan_limits.py
+@@ -0,0 +1,106 @@
++"""Daily scan limits: what the signed-in user has left today, and the administrator's controls over it.
++
++The rules (what counts as a scan, when a day starts, which limit a user has) are in services/scan_limits.py and, written out
++for people, in docs/SCAN_LIMITS.md. Enforcement is not here: it happens where the vision model is asked (api/recognize.py and
++services/scan_queue.py), so no request can read a card without it. This module only reports the numbers and lets an admin
++change the limits.
++"""
++
++from typing import Literal, Optional
++
++from fastapi import APIRouter, Depends, HTTPException, Response
++from pydantic import BaseModel, Field, model_validator
++from sqlalchemy.orm import Session
++
++from api.auth import get_current_user
++from database import get_db
++from models import User
++from services import scan_limits as limits
++
++
++def _private_response(response: Response) -> None:
++    """These numbers are one user's own: a shared cache must not keep them."""
++    response.headers["Cache-Control"] = "private, no-store"
++
++
++router = APIRouter(dependencies=[Depends(_private_response)])
++
++
++def require_admin(current_user: User = Depends(get_current_user)) -> User:
++    if current_user.role != "admin":
++        raise HTTPException(status_code=403, detail="Admin access required")
++    return current_user
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Every signed-in user: what is left today
++# ---------------------------------------------------------------------------------------------------------------------
++
++@router.get("/me")
++def my_scan_allowance(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
++    """The user's limit for today (``null`` is unlimited), what they have used, what is left and when it starts over."""
++    return limits.current_allowance(db, current_user.id).payload()
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Administrators: the default, and each user's own setting
++# ---------------------------------------------------------------------------------------------------------------------
++
++class DefaultLimitRequest(BaseModel):
++    default_unlimited: Optional[bool] = None
++    default_limit: Optional[int] = Field(default=None, ge=0, le=limits.MAX_DAILY_LIMIT)
++
++    @model_validator(mode="after")
++    def something_to_change(self):
++        if self.default_unlimited is None and self.default_limit is None:
++            raise ValueError("Send default_unlimited, default_limit or both.")
++        return self
++
++
++class UserLimitRequest(BaseModel):
++    mode: Literal["default", "custom", "unlimited"]
++    # The number of a custom limit. With "unlimited" it is only remembered, for when the user is given a limit again.
++    limit: Optional[int] = Field(default=None, ge=0, le=limits.MAX_DAILY_LIMIT)
++
++    @model_validator(mode="after")
++    def a_custom_limit_needs_a_number(self):
++        if self.mode == "custom" and self.limit is None:
++            raise ValueError("A custom limit needs a number: send limit.")
++        return self
++
++
++@router.get("/settings")
++def get_default_limit(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
++    """The default limit and the time zone and moment the day starts over (Settings → Scanner)."""
++    return limits.settings_payload(db)
++
++
++@router.put("/settings")
++def put_default_limit(
++    data: DefaultLimitRequest,
++    db: Session = Depends(get_db),
++    admin: User = Depends(require_admin),
++):
++    limits.set_default_limit(db, unlimited=data.default_unlimited, limit=data.default_limit)
++    db.commit()
++    return limits.settings_payload(db)
++
++
++@router.get("/users")
++def get_user_limits(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
++    """Every user with their setting (default, custom or unlimited), the limit that applies and today's usage."""
++    return {**limits.settings_payload(db), "users": limits.users_overview(db)}
++
++
++@router.put("/users/{user_id}")
++def put_user_limit(
++    user_id: int,
++    data: UserLimitRequest,
++    db: Session = Depends(get_db),
++    admin: User = Depends(require_admin),
++):
++    if db.get(User, user_id) is None:
++        raise HTTPException(status_code=404, detail="User not found")
++    limits.set_user_limit(db, user_id, data.mode, data.limit)
++    db.commit()
++    return limits.user_overview(db, user_id)
+diff --git a/backend/main.py b/backend/main.py
+index 9a19f4c..e31fb1b 100644
+--- a/backend/main.py
++++ b/backend/main.py
+@@ -148,7 +148,7 @@ async def debug_request_logging(request: Request, call_next):
+     return response
+ 
+ # Include routers
+-from api import auth, cards, collection, sets, wishlist, binders, decks, dashboard, analytics, sync, products, trades, export, backup, settings, images, social, pokedex, public, profile, scan_jobs, community, friends
++from api import auth, cards, collection, sets, wishlist, binders, decks, dashboard, analytics, sync, products, trades, export, backup, settings, images, social, pokedex, public, profile, scan_jobs, community, friends, scan_limits
+ from api.github import router as github_router
+ from api.recognize import router as recognize_router
+ 
+@@ -183,6 +183,7 @@ async def login_rate_limit(request: Request, call_next):
+ app.include_router(cards.router, prefix="/api/cards", tags=["cards"])
+ app.include_router(recognize_router, prefix="/api/cards", tags=["recognize"])
+ app.include_router(scan_jobs.router, prefix="/api/cards", tags=["scan-jobs"])
++app.include_router(scan_limits.router, prefix="/api/scan-limits", tags=["scan-limits"])
+ app.include_router(collection.router, prefix="/api/collection", tags=["collection"])
+ app.include_router(sets.router, prefix="/api/sets", tags=["sets"])
+ app.include_router(wishlist.router, prefix="/api/wishlist", tags=["wishlist"])
+@@ -205,6 +206,10 @@ app.include_router(profile.router, prefix="/api/profile", tags=["profile"])
+ app.include_router(github_router, prefix="/api/github", tags=["github"])
+ app.include_router(community.router, prefix="/api/community", tags=["community"])
+ 
++# Answers a user who has no scans left today with the 429 that carries the numbers (services/scan_limits.py).
++from services.scan_limits import register_scan_limit_handler
++register_scan_limit_handler(app)
++
+ 
+ @app.get("/api/health")
+ def health_check():
+diff --git a/backend/models.py b/backend/models.py
+index 2c21fc6..88766f7 100644
+--- a/backend/models.py
++++ b/backend/models.py
+@@ -900,3 +900,58 @@ class TradeListEntry(Base):
+     __table_args__ = (
+         CheckConstraint("quantity >= 1", name="ck_trade_list_quantity_positive"),
+     )
++
++
++class ScanUsage(Base):
++    """How many cards one user has had read by the vision model on one day (the server's local date).
++
++    The day is part of the key, so a new day starts at zero by itself: nothing has to run at midnight, and a restart of the
++    backend loses nothing. Rows of earlier days are kept and are small (one per user and day).
++    """
++
++    __tablename__ = "scan_usage"
++
++    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
++    day = Column(Date, primary_key=True)
++    used = Column(Integer, nullable=False, default=0)
++    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
++
++    __table_args__ = (
++        CheckConstraint("used >= 0", name="ck_scan_usage_used_non_negative"),
++    )
++
++
++class ScanLimitOverride(Base):
++    """A user's own daily scan limit. A user without a row uses the default limit.
++
++    ``unlimited`` lifts the limit for the user, an admin included (admins are limited like anyone else until they are set here).
++    Otherwise ``daily_limit`` is the number of scans a day; 0 switches scanning off for that user. A limit that is kept while
++    ``unlimited`` is on is only remembered for the admin page, and is not used.
++    """
++
++    __tablename__ = "scan_limit_overrides"
++
++    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
++    unlimited = Column(Boolean, nullable=False, default=False)
++    daily_limit = Column(Integer, nullable=True)
++    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
++
++    __table_args__ = (
++        CheckConstraint("daily_limit IS NULL OR daily_limit >= 0", name="ck_scan_limit_overrides_limit_non_negative"),
++        CheckConstraint("unlimited OR daily_limit IS NOT NULL", name="ck_scan_limit_overrides_has_limit"),
++    )
++
++
++class ScanItemCharge(Base):
++    """Marks a queued photo as already counted, so that the retries the queue makes on its own never count it twice.
++
++    One row per photo, written in the same transaction that adds it to the day's usage, and removed when the owner asks for the
++    photo to be read again (that is a new scan). It goes with the photo when the photo's job is deleted.
++    """
++
++    __tablename__ = "scan_item_charges"
++
++    item_id = Column(Integer, ForeignKey("scan_job_items.id", ondelete="CASCADE"), primary_key=True)
++    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
++    day = Column(Date, nullable=False)
++    charged_at = Column(DateTime, default=func.now(), nullable=False)
+diff --git a/backend/services/scan_limits.py b/backend/services/scan_limits.py
+new file mode 100644
+index 0000000..e38da90
+--- /dev/null
++++ b/backend/services/scan_limits.py
+@@ -0,0 +1,410 @@
++"""Daily scan limits: how many cards each user may have read by the vision model in a day.
++
++One *scan* is one photo whose card the vision model is asked to read, whichever provider reads it (Gemini, or an
++OpenAI-compatible endpoint such as Groq). The limit is kept and checked here, on the server, immediately before the model is
++asked, so a client that ignores it, or an older app, gets nothing that the website would not give it.
++
++What counts
++
++* Counted: a photo at the moment its recognition starts (the first request to the model), once, however the read turns out.
++* Not counted: opening the scanner or the camera, a photo the server turns away before it reads anything (too big, not an
++  image, nobody signed in, no API key set up), matching a card that was read with the catalogue, the checks the server makes
++  with the model's help afterwards (comparing pictures, the optional second opinion from Gemini), and the retries the queue
++  makes by itself when the model or the network fails.
++* Counted again: a photo whose owner asks for it to be read again (Retry), because that is another request to the model.
++
++When a day starts
++
++The day is the server's local date, so a new day starts at the server's local midnight. In Docker that is the container's
++time zone, which is UTC unless TZ is set (see docs/SCAN_LIMITS.md). Usage is stored in the database, so a restart of the
++backend loses nothing; a new day needs no job to run, because it is a new row that starts at zero.
++
++Which limit a user has
++
++A user's own setting wins (``ScanLimitOverride``): a number of their own, or unlimited. A user without one has the default,
++which is a number or unlimited, and is unlimited until an administrator chooses a number, so installing this changes nothing by
++itself. Admins are limited like everyone else until they are set to unlimited.
++"""
++
++from __future__ import annotations
++
++import datetime
++import os
++import time
++from dataclasses import dataclass
++from typing import Iterable, Optional
++
++from fastapi import HTTPException
++from fastapi.responses import JSONResponse
++from sqlalchemy import update
++from sqlalchemy.dialects import postgresql, sqlite
++from sqlalchemy.orm import Session
++from sqlalchemy.sql import func
++
++from models import ScanItemCharge, ScanLimitOverride, ScanUsage, Setting, User
++
++# The administrator's choice for everyone who has no limit of their own, kept with the other global settings.
++DEFAULT_UNLIMITED_SETTING = "scan_limit_default_unlimited"
++DEFAULT_LIMIT_SETTING = "scan_limit_default"
++
++# What the admin page offers as the number before anyone has chosen one (it is not applied while the default is unlimited).
++SUGGESTED_DEFAULT_LIMIT = 100
++MAX_DAILY_LIMIT = 100_000
++
++MODE_DEFAULT = "default"
++MODE_CUSTOM = "custom"
++MODE_UNLIMITED = "unlimited"
++MODES = (MODE_DEFAULT, MODE_CUSTOM, MODE_UNLIMITED)
++
++LIMIT_REACHED_CODE = "scan_limit_reached"
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Time: the server's local day
++# ---------------------------------------------------------------------------------------------------------------------
++
++def now() -> datetime.datetime:
++    """The current time in the server's own time zone. The one clock everything here reads, so tests can move it."""
++    return datetime.datetime.now().astimezone()
++
++
++def next_reset(moment: datetime.datetime) -> datetime.datetime:
++    """The next local midnight after ``moment``, with the offset that is in force then.
++
++    The C library works out the offset (``mktime`` with an unknown daylight-saving flag), so a change of the clocks between now
++    and midnight is accounted for and nothing depends on a hard-coded zone.
++    """
++    tomorrow = datetime.datetime.combine(moment.date() + datetime.timedelta(days=1), datetime.time.min)
++    return datetime.datetime.fromtimestamp(time.mktime(tomorrow.timetuple())).astimezone()
++
++
++def _is_zone_name(name: str) -> bool:
++    try:
++        import zoneinfo
++
++        zoneinfo.ZoneInfo(name)
++        return True
++    except Exception:
++        return False
++
++
++def timezone_name() -> str:
++    """The server's time zone as people know it ("Europe/Berlin"); the abbreviation in force ("UTC", "CEST") if it has no name."""
++    configured = (os.environ.get("TZ") or "").strip().lstrip(":")
++    if configured:
++        # The C library uses TZ whenever it is set, and falls back to UTC when it is not a zone it knows.
++        if _is_zone_name(configured):
++            return configured
++    else:
++        target = os.path.realpath("/etc/localtime")
++        marker = "zoneinfo/"
++        if marker in target:
++            name = target.split(marker, 1)[1]
++            if _is_zone_name(name):
++                return name
++    return now().tzname() or "UTC"
++
++
++def utc_offset_text(moment: datetime.datetime) -> str:
++    offset = moment.utcoffset() or datetime.timedelta(0)
++    minutes = int(offset.total_seconds() // 60)
++    hours, rest = divmod(abs(minutes), 60)
++    return f"{'+' if minutes >= 0 else '-'}{hours:02d}:{rest:02d}"
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# What a user may do today
++# ---------------------------------------------------------------------------------------------------------------------
++
++@dataclass(frozen=True)
++class Allowance:
++    """One user's scans for one day: the limit that applies (None when unlimited), how many are used, and when it starts over."""
++
++    daily_limit: Optional[int]
++    used: int
++    resets_at: datetime.datetime
++    as_of: datetime.datetime
++
++    @property
++    def unlimited(self) -> bool:
++        return self.daily_limit is None
++
++    @property
++    def remaining(self) -> Optional[int]:
++        return None if self.daily_limit is None else max(0, self.daily_limit - self.used)
++
++    @property
++    def exhausted(self) -> bool:
++        return self.remaining == 0
++
++    @property
++    def resets_in_seconds(self) -> int:
++        return max(0, int((self.resets_at - self.as_of).total_seconds()))
++
++    def payload(self) -> dict:
++        """What the API sends: ``null`` limit and remaining mean unlimited."""
++        return {
++            "daily_limit": self.daily_limit,
++            "unlimited": self.unlimited,
++            "used": self.used,
++            "remaining": self.remaining,
++            "resets_at": self.resets_at.isoformat(),
++            "resets_in_seconds": self.resets_in_seconds,
++            "timezone": timezone_name(),
++        }
++
++
++def limit_reached_message() -> str:
++    return f"Daily scan limit reached. Scans reset at midnight ({timezone_name()})."
++
++
++class ScanLimitReached(HTTPException):
++    """HTTP 429: the user has no scans left today. Its body carries the numbers, see :func:`register_scan_limit_handler`."""
++
++    def __init__(self, allowance: Allowance):
++        self.allowance = allowance
++        super().__init__(
++            status_code=429,
++            detail=limit_reached_message(),
++            headers={"Retry-After": str(max(1, allowance.resets_in_seconds))},
++        )
++
++    def body(self) -> dict:
++        # ``detail`` stays a plain sentence like every other error of this API, so clients that only show it still read well;
++        # ``code`` tells this 429 from the rate limiter's, which is the one that is worth retrying in a moment.
++        return {"detail": self.detail, "code": LIMIT_REACHED_CODE, **self.allowance.payload()}
++
++
++async def _scan_limit_reached_handler(request, exc: ScanLimitReached) -> JSONResponse:
++    return JSONResponse(status_code=429, content=exc.body(), headers=exc.headers)
++
++
++def register_scan_limit_handler(app) -> None:
++    """Makes a :class:`ScanLimitReached` anywhere in ``app`` answer with the full 429 body."""
++    app.add_exception_handler(ScanLimitReached, _scan_limit_reached_handler)
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# The administrator's settings
++# ---------------------------------------------------------------------------------------------------------------------
++
++def default_limit(db: Session) -> tuple[bool, int]:
++    """(unlimited, number): the default for users with no limit of their own. Unlimited until someone chooses a number."""
++    unlimited_row = db.get(Setting, DEFAULT_UNLIMITED_SETTING)
++    unlimited = True if unlimited_row is None else str(unlimited_row.value).strip().lower() == "true"
++    number_row = db.get(Setting, DEFAULT_LIMIT_SETTING)
++    try:
++        number = int(number_row.value) if number_row is not None else SUGGESTED_DEFAULT_LIMIT
++    except (TypeError, ValueError):
++        number = SUGGESTED_DEFAULT_LIMIT
++    return unlimited, min(max(number, 0), MAX_DAILY_LIMIT)
++
++
++def set_default_limit(db: Session, *, unlimited: Optional[bool] = None, limit: Optional[int] = None) -> None:
++    """Stores what is given and leaves the rest. Does not commit."""
++
++    def store(key: str, value: str) -> None:
++        row = db.get(Setting, key)
++        if row is None:
++            db.add(Setting(key=key, value=value))
++        else:
++            row.value = value
++
++    if limit is not None:
++        store(DEFAULT_LIMIT_SETTING, str(int(limit)))
++    if unlimited is not None:
++        store(DEFAULT_UNLIMITED_SETTING, "true" if unlimited else "false")
++
++
++def settings_payload(db: Session, moment: Optional[datetime.datetime] = None) -> dict:
++    """The default and when a day starts over: what Settings → Scanner shows."""
++    moment = moment or now()
++    unlimited, number = default_limit(db)
++    reset = next_reset(moment)
++    return {
++        "default_unlimited": unlimited,
++        "default_limit": number,
++        "timezone": timezone_name(),
++        "utc_offset": utc_offset_text(moment),
++        "reset_time": "00:00",
++        "next_reset_at": reset.isoformat(),
++        "seconds_until_reset": max(0, int((reset - moment).total_seconds())),
++    }
++
++
++def _resolve(override: Optional[ScanLimitOverride], default_effective: Optional[int]) -> tuple[str, Optional[int], Optional[int]]:
++    """(mode, the user's own number if they have one, the limit that applies; None is unlimited)."""
++    if override is None:
++        return MODE_DEFAULT, None, default_effective
++    if override.unlimited:
++        return MODE_UNLIMITED, override.daily_limit, None
++    return MODE_CUSTOM, override.daily_limit, override.daily_limit
++
++
++def _default_effective(db: Session) -> Optional[int]:
++    unlimited, number = default_limit(db)
++    return None if unlimited else number
++
++
++def effective_limit(db: Session, user_id: int) -> Optional[int]:
++    """The number of scans a day that applies to the user; None when they are unlimited."""
++    return _resolve(db.get(ScanLimitOverride, user_id), _default_effective(db))[2]
++
++
++def set_user_limit(db: Session, user_id: int, mode: str, limit: Optional[int] = None) -> None:
++    """Gives a user the default, a limit of their own, or no limit. Does not commit."""
++    if mode not in MODES:
++        raise ValueError(f"mode must be one of {', '.join(MODES)}")
++    row = db.get(ScanLimitOverride, user_id)
++    if mode == MODE_DEFAULT:
++        if row is not None:
++            db.delete(row)
++        return
++    if mode == MODE_CUSTOM and limit is None:
++        raise ValueError("a custom limit needs a number")
++    if row is None:
++        row = ScanLimitOverride(user_id=user_id, unlimited=False)
++        db.add(row)
++    row.unlimited = mode == MODE_UNLIMITED
++    # An unlimited user keeps the number they had (or are given), so switching back to a limit starts from it.
++    if limit is not None:
++        row.daily_limit = int(limit)
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Reading usage
++# ---------------------------------------------------------------------------------------------------------------------
++
++def used_on(db: Session, user_id: int, day: datetime.date) -> int:
++    # A query of the column, not db.get(): the number is changed by UPDATE statements, which a row already loaded in this
++    # session would not show.
++    used = db.query(ScanUsage.used).filter(ScanUsage.user_id == user_id, ScanUsage.day == day).scalar()
++    return int(used) if used is not None else 0
++
++
++def current_allowance(db: Session, user_id: int, moment: Optional[datetime.datetime] = None) -> Allowance:
++    moment = moment or now()
++    return Allowance(
++        daily_limit=effective_limit(db, user_id),
++        used=used_on(db, user_id, moment.date()),
++        resets_at=next_reset(moment),
++        as_of=moment,
++    )
++
++
++def users_overview(db: Session, moment: Optional[datetime.datetime] = None) -> list[dict]:
++    """Every user with their setting, the limit that applies and what they have used today: Settings → Users."""
++    moment = moment or now()
++    default_effective = _default_effective(db)
++    overrides = {row.user_id: row for row in db.query(ScanLimitOverride).all()}
++    used = {row.user_id: int(row.used) for row in db.query(ScanUsage).filter(ScanUsage.day == moment.date()).all()}
++    rows = []
++    for user in db.query(User).order_by(User.id.asc()).all():
++        mode, own_number, limit = _resolve(overrides.get(user.id), default_effective)
++        today = used.get(user.id, 0)
++        rows.append({
++            "id": user.id,
++            "username": user.username,
++            "role": user.role,
++            "is_active": bool(user.is_active),
++            "mode": mode,
++            "custom_limit": own_number,
++            "daily_limit": limit,
++            "unlimited": limit is None,
++            "used": today,
++            "remaining": None if limit is None else max(0, limit - today),
++        })
++    return rows
++
++
++def user_overview(db: Session, user_id: int, moment: Optional[datetime.datetime] = None) -> Optional[dict]:
++    return next((row for row in users_overview(db, moment) if row["id"] == user_id), None)
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# Counting
++# ---------------------------------------------------------------------------------------------------------------------
++
++def _insert_unless_present(db: Session, model, **values) -> bool:
++    """Adds a row unless one with the same key is there, as one statement; True when this call added it.
++
++    One statement is what makes it safe when two workers try at once: the database lets exactly one of them in.
++    """
++    dialect = db.get_bind().dialect.name
++    if dialect == "postgresql":
++        statement = postgresql.insert(model).values(**values).on_conflict_do_nothing()
++    elif dialect == "sqlite":
++        statement = sqlite.insert(model).values(**values).on_conflict_do_nothing()
++    else:  # pragma: no cover - PokéCollector runs on PostgreSQL, and its tests on SQLite
++        raise RuntimeError(f"Scan limits are not supported on {dialect}")
++    return db.execute(statement).rowcount == 1
++
++
++def _reserve(db: Session, user_id: int, day: datetime.date, amount: int, limit: Optional[int]) -> bool:
++    """Adds ``amount`` to the day's usage unless that would pass ``limit``. One conditional UPDATE, so concurrent callers are
++    serialised by the database and the limit can never be passed, however many requests arrive together."""
++    if amount <= 0:
++        return True
++    _insert_unless_present(db, ScanUsage, user_id=user_id, day=day, used=0)
++    statement = (
++        update(ScanUsage)
++        .where(ScanUsage.user_id == user_id, ScanUsage.day == day)
++        .values(used=ScanUsage.used + amount, updated_at=func.now())
++        .execution_options(synchronize_session=False)
++    )
++    if limit is not None:
++        statement = statement.where(ScanUsage.used + amount <= limit)
++    return db.execute(statement).rowcount == 1
++
++
++def charge_scans(
++    db: Session,
++    user_id: int,
++    *,
++    count: int = 1,
++    item_ids: Optional[Iterable[int]] = None,
++) -> Allowance:
++    """Counts scans that are about to be read, or raises :class:`ScanLimitReached` and counts nothing.
++
++    Call it right before the model is asked, after everything that can turn the request away without reading anything.
++
++    ``item_ids`` are queued photos: each is counted once, however often the queue tries it again, and a photo that was already
++    counted costs nothing. Without them ``count`` scans are counted (the direct scan of one photo). Either way all of them fit
++    or none is counted, so a group of photos that is too big for what is left is not half counted.
++
++    Commits; the counts and the markers become visible together.
++    """
++    moment = now()
++    day = moment.date()
++    limit = effective_limit(db, user_id)
++
++    if item_ids is None:
++        amount = max(0, int(count))
++    else:
++        # Claim each photo that is not counted yet. The marker is written first, so two workers on one photo count it once.
++        amount = sum(
++            1
++            for item_id in dict.fromkeys(item_ids)
++            if _insert_unless_present(db, ScanItemCharge, item_id=item_id, user_id=user_id, day=day)
++        )
++
++    if not _reserve(db, user_id, day, amount, limit):
++        db.rollback()  # takes the markers back too
++        raise ScanLimitReached(current_allowance(db, user_id, moment))
++    db.commit()
++    return current_allowance(db, user_id, moment)
++
++
++def ensure_scans_available(db: Session, user_id: int) -> Allowance:
++    """Raises :class:`ScanLimitReached` when the user has no scan left today; otherwise says what they have. Counts nothing."""
++    allowance = current_allowance(db, user_id)
++    if allowance.exhausted:
++        raise ScanLimitReached(allowance)
++    return allowance
++
++
++def forget_item_charges(db: Session, item_ids: Iterable[int]) -> None:
++    """Makes photos that were counted countable again, because their owner asked for them to be read again. Does not commit."""
++    ids = list(dict.fromkeys(item_ids))
++    if ids:
++        db.query(ScanItemCharge).filter(ScanItemCharge.item_id.in_(ids)).delete(synchronize_session=False)
+diff --git a/backend/services/scan_queue.py b/backend/services/scan_queue.py
+index b7cec83..24f84ce 100644
+--- a/backend/services/scan_queue.py
++++ b/backend/services/scan_queue.py
+@@ -14,6 +14,7 @@ from sqlalchemy import and_, or_
+ from sqlalchemy.orm import Session
+ 
+ from models import ScanJob, ScanJobItem, ScanQueueUserState, User
++from services.scan_limits import ScanLimitReached, charge_scans, forget_item_charges
+ from services.gemini_rate_limit import gemini_priority_scope
+ from services.scan_storage import (
+     ScanUploadError,
+@@ -541,6 +542,12 @@ async def default_scan_processor(
+                     if item_id is not None
+                     else None
+                 ),
++                # The daily scan limit. Counted once per photo, so the queue's own retries are free (see scan_limits).
++                before_provider_call=lambda: charge_scans(
++                    db,
++                    user_id,
++                    item_ids=[item_id] if item_id is not None else None,
++                ),
+             )
+     except Exception as exc:
+         trace.record_error(str(getattr(exc, "detail", exc)))
+@@ -636,6 +643,18 @@ async def default_composite_processor(
+             for position, card_info in recognized_by_position.items():
+                 traces[position].record_cached_extraction(card_info)
+         else:
++            # The daily scan limit: every photo in the group is a scan. A group that no longer fits into what is left of today
++            # is read photo by photo instead, as when the model cannot read groups, so the photos that do fit still get read
++            # and the rest are refused one at a time.
++            try:
++                charge_scans(
++                    db,
++                    user_id,
++                    count=len(images),
++                    item_ids=trace_item_ids or None,
++                )
++            except ScanLimitReached:
++                return [None] * len(images)
+             with provider.rate_limit_scope("background"):
+                 try:
+                     recognized_by_position = await recognize_composite_card_info(
+@@ -692,6 +711,10 @@ async def default_composite_processor(
+ 
+ 
+ def _scan_error_from_http(error: HTTPException) -> RuntimeError:
++    if isinstance(error, ScanLimitReached):
++        # Not the provider asking for patience: the user's day is used up, and trying again in a minute changes nothing.
++        # The photo stays on the review list as failed, and Retry reads it once there are scans again.
++        return PermanentScanError(str(error.detail))
+     if error.status_code in {429, 502, 503, 504}:
+         return TransientScanError(
+             str(error.detail),
+@@ -858,6 +881,8 @@ def retry_scan_item(db: Session, item: ScanJobItem) -> ScanJobItem:
+         raise ValueError("The stored scan photo is no longer available.")
+ 
+     now = datetime.datetime.utcnow()
++    # Asking for the photo to be read again is another scan, so the daily scan limit counts it again.
++    forget_item_charges(db, [item.id])
+     item.status = "pending"
+     item.attempts = 0
+     item.transient_failures = 0
+diff --git a/backend/tests/scan_limits_world.py b/backend/tests/scan_limits_world.py
+new file mode 100644
+index 0000000..5a0df78
+--- /dev/null
++++ b/backend/tests/scan_limits_world.py
+@@ -0,0 +1,102 @@
++"""A small world for the scan-limit tests: three people, a database, and a clock that can be moved.
++
++    ash    a trainer, the user most tests count scans for
++    misty  another trainer
++    oak    an admin
++
++The time zone and the clock are the part that is easy to get wrong, so they are controlled here. Everything in
++services/scan_limits.py reads the time through ``scan_limits.now()``, and works out the day's end with the C library, so a test
++sets the TZ environment variable (and ``time.tzset()``) as well as the instant.
++"""
++
++import datetime
++import os
++import time
++from unittest.mock import patch
++
++from sqlalchemy import create_engine
++from sqlalchemy.orm import sessionmaker
++from sqlalchemy.pool import StaticPool
++
++from database import Base
++from models import ScanJob, ScanJobItem, User
++from services import scan_limits
++
++
++def local_time(year, month, day, hour=12, minute=0, second=0) -> datetime.datetime:
++    """A moment as the server's local clock shows it, with the offset that is in force then (TZ must already be set)."""
++    naive = datetime.datetime(year, month, day, hour, minute, second)
++    return datetime.datetime.fromtimestamp(time.mktime(naive.timetuple())).astimezone()
++
++
++class ScanLimitsWorld:
++    def __init__(self):
++        # SQLite in memory by default. Point SCAN_LIMITS_TEST_DATABASE_URL at an empty PostgreSQL database to run the same
++        # tests on the database the server really uses; its tables are dropped when each test ends.
++        database_url = os.environ.get("SCAN_LIMITS_TEST_DATABASE_URL", "sqlite:///:memory:")
++        self.is_postgres = database_url.startswith("postgresql")
++        options = {"connect_args": {"check_same_thread": False}, "poolclass": StaticPool} if database_url.startswith("sqlite") else {}
++        self.engine = create_engine(database_url, **options)
++        Base.metadata.create_all(self.engine)
++        self.session_factory = sessionmaker(bind=self.engine)
++        self.db = self.session_factory()
++        self.ash = self._user("ash")
++        self.misty = self._user("misty")
++        self.oak = self._user("oak", role="admin")
++
++    def _user(self, name, role="trainer"):
++        user = User(username=name, hashed_password="x", role=role, is_active=True)
++        self.db.add(user)
++        self.db.commit()
++        return user
++
++    def photos(self, user, count):
++        """Queued photos of ``user`` (a job with ``count`` items), as their ids. The counts of queued photos point at real
++        rows, which PostgreSQL insists on."""
++        now = datetime.datetime.utcnow()
++        job = ScanJob(user_id=user.id, status="pending", created_at=now, updated_at=now, expires_at=now + datetime.timedelta(days=14))
++        self.db.add(job)
++        self.db.flush()
++        items = [
++            ScanJobItem(
++                job_id=job.id, user_id=user.id, position=position, image_path=f"{job.id}/{position}.jpg", content_type="image/jpeg",
++                byte_size=5, status="pending", resolved=False, attempts=0, transient_failures=0, next_attempt_at=now,
++                created_at=now, updated_at=now,
++            )
++            for position in range(count)
++        ]
++        self.db.add_all(items)
++        self.db.commit()
++        return [item.id for item in items]
++
++    def session(self):
++        """Another session on the same database, as the next request (or the backend after a restart) would have."""
++        return self.session_factory()
++
++    def close(self):
++        self.db.close()
++        Base.metadata.drop_all(self.engine)
++        self.engine.dispose()
++
++
++class Clock:
++    """The server's clock and time zone for one test. ``clock.at(...)`` moves it; undone when the test ends."""
++
++    def __init__(self, test_case, time_zone="Europe/Berlin"):
++        env = patch.dict(os.environ, {"TZ": time_zone})
++        env.start()
++        time.tzset()
++        self.now = None
++        patcher = patch.object(scan_limits, "now", lambda: self.now)
++        patcher.start()
++
++        def restore():
++            patcher.stop()
++            env.stop()
++            time.tzset()
++
++        test_case.addCleanup(restore)
++
++    def at(self, year, month, day, hour=12, minute=0, second=0):
++        self.now = local_time(year, month, day, hour, minute, second)
++        return self.now
+diff --git a/backend/tests/test_scan_limits.py b/backend/tests/test_scan_limits.py
+new file mode 100644
+index 0000000..dc30637
+--- /dev/null
++++ b/backend/tests/test_scan_limits.py
+@@ -0,0 +1,580 @@
++"""Daily scan limits, the rules themselves (services/scan_limits.py): who may scan how much, how a day is counted and when it
++starts over. The same rules through the HTTP API, the direct scan and the queue are in test_scan_limits_http.py."""
++
++import datetime
++import os
++import threading
++import unittest
++from unittest.mock import patch
++
++try:
++    from sqlalchemy.exc import IntegrityError
++
++    from models import ScanItemCharge, ScanLimitOverride, ScanUsage, Setting
++    from services import scan_limits as limits
++
++    from scan_limits_world import Clock, ScanLimitsWorld
++
++    DEPS = True
++except ModuleNotFoundError as error:  # pragma: no cover - lightweight environments
++    if error.name == "scan_limits_world":
++        raise
++    DEPS = False
++
++DAY = datetime.date(2026, 10, 9)
++
++
++@unittest.skipUnless(DEPS, "SQLAlchemy is not installed in this lightweight test environment")
++class ScanLimitRulesTests(unittest.TestCase):
++    def setUp(self):
++        self.world = ScanLimitsWorld()
++        self.addCleanup(self.world.close)
++        self.db = self.world.db
++        self.clock = Clock(self, "Europe/Berlin")
++        self.clock.at(2026, 10, 9, 12, 0)
++        self.ash, self.misty, self.oak = self.world.ash, self.world.misty, self.world.oak
++
++    # --- helpers ------------------------------------------------------------------------------------------------------
++
++    def set_default(self, limit=None, unlimited=False):
++        limits.set_default_limit(self.db, unlimited=unlimited, limit=limit)
++        self.db.commit()
++
++    def set_user(self, user, mode, limit=None):
++        limits.set_user_limit(self.db, user.id, mode, limit)
++        self.db.commit()
++
++    def charge(self, user, **kwargs):
++        return limits.charge_scans(self.db, user.id, **kwargs)
++
++    def allowance(self, user):
++        return limits.current_allowance(self.db, user.id)
++
++    def charge_until_refused(self, user, cap=1000):
++        done = 0
++        while done < cap:
++            try:
++                self.charge(user)
++            except limits.ScanLimitReached:
++                return done
++            done += 1
++        return done
++
++    # --- nothing changes until an administrator chooses --------------------------------------------------------------
++
++    def test_nobody_is_limited_until_an_administrator_chooses_a_number(self):
++        allowance = self.allowance(self.ash)
++        self.assertTrue(allowance.unlimited)
++        self.assertIsNone(allowance.daily_limit)
++        self.assertIsNone(allowance.remaining)
++        self.assertFalse(allowance.exhausted)
++        self.assertEqual(self.charge_until_refused(self.ash, cap=50), 50)
++        self.assertEqual(self.allowance(self.ash).used, 50)  # still counted, so the admin page can show it
++
++    def test_the_default_starts_unlimited_with_a_number_to_offer(self):
++        self.assertEqual(limits.default_limit(self.db), (True, limits.SUGGESTED_DEFAULT_LIMIT))
++
++    # --- the default limit --------------------------------------------------------------------------------------------
++
++    def test_scans_are_counted_up_to_the_limit_and_the_next_one_is_refused(self):
++        self.set_default(limit=3)
++
++        self.assertEqual(self.charge_until_refused(self.ash), 3)
++
++        allowance = self.allowance(self.ash)
++        self.assertEqual((allowance.daily_limit, allowance.used, allowance.remaining), (3, 3, 0))
++        self.assertTrue(allowance.exhausted)
++        with self.assertRaises(limits.ScanLimitReached):
++            self.charge(self.ash)
++        self.assertEqual(self.allowance(self.ash).used, 3)  # a refused scan is not counted
++
++    def test_used_and_remaining_follow_every_scan(self):
++        self.set_default(limit=5)
++        seen = []
++        for _ in range(5):
++            allowance = self.charge(self.ash)
++            seen.append((allowance.used, allowance.remaining))
++        self.assertEqual(seen, [(1, 4), (2, 3), (3, 2), (4, 1), (5, 0)])
++
++    def test_a_refusal_says_what_was_asked_in_numbers(self):
++        self.set_default(limit=2)
++        self.charge(self.ash, count=2)
++
++        with self.assertRaises(limits.ScanLimitReached) as caught:
++            self.charge(self.ash)
++
++        body = caught.exception.body()
++        self.assertEqual(caught.exception.status_code, 429)
++        self.assertEqual(body["code"], "scan_limit_reached")
++        self.assertTrue(body["detail"].startswith("Daily scan limit reached"))
++        self.assertEqual((body["daily_limit"], body["used"], body["remaining"], body["unlimited"]), (2, 2, 0, False))
++        self.assertEqual(body["resets_at"], "2026-10-10T00:00:00+02:00")
++        self.assertEqual(body["resets_in_seconds"], 12 * 3600)
++        self.assertEqual(body["timezone"], "Europe/Berlin")
++        self.assertEqual(caught.exception.headers["Retry-After"], str(12 * 3600))
++
++    def test_a_group_is_counted_all_or_nothing(self):
++        self.set_default(limit=3)
++        self.charge(self.ash, count=2)
++
++        with self.assertRaises(limits.ScanLimitReached):
++            self.charge(self.ash, count=2)  # one is left, two are needed
++
++        self.assertEqual(self.allowance(self.ash).used, 2)
++        self.charge(self.ash, count=1)  # the one that was left is still there
++        self.assertEqual(self.allowance(self.ash).used, 3)
++
++    def test_users_are_counted_separately(self):
++        self.set_default(limit=2)
++        self.assertEqual(self.charge_until_refused(self.ash), 2)
++
++        self.assertEqual(self.allowance(self.misty).used, 0)
++        self.assertEqual(self.charge_until_refused(self.misty), 2)
++        self.assertEqual(self.allowance(self.ash).used, 2)
++
++    def test_lowering_the_default_below_what_is_used_stops_scanning_without_going_negative(self):
++        self.set_default(limit=10)
++        self.charge(self.ash, count=6)
++
++        self.set_default(limit=4)
++
++        allowance = self.allowance(self.ash)
++        self.assertEqual((allowance.used, allowance.remaining), (6, 0))
++        with self.assertRaises(limits.ScanLimitReached):
++            self.charge(self.ash)
++
++    def test_raising_the_default_gives_scans_back_the_same_day(self):
++        self.set_default(limit=2)
++        self.charge(self.ash, count=2)
++
++        self.set_default(limit=5)
++
++        self.assertEqual(self.allowance(self.ash).remaining, 3)
++        self.assertEqual(self.charge_until_refused(self.ash), 3)
++
++    def test_a_default_that_is_unlimited_keeps_its_number_for_later(self):
++        self.set_default(limit=40, unlimited=False)
++        self.set_default(unlimited=True)
++
++        self.assertEqual(limits.default_limit(self.db), (True, 40))
++        self.assertTrue(self.allowance(self.ash).unlimited)
++
++        self.set_default(unlimited=False)
++        self.assertEqual(self.allowance(self.ash).daily_limit, 40)
++
++    # --- a user's own setting -----------------------------------------------------------------------------------------
++
++    def test_a_custom_limit_above_the_default_lets_that_user_scan_more(self):
++        self.set_default(limit=2)
++        self.set_user(self.ash, "custom", 5)
++
++        self.assertEqual(self.charge_until_refused(self.ash), 5)
++        self.assertEqual(self.charge_until_refused(self.misty), 2)
++
++    def test_a_custom_limit_below_the_default_holds_that_user_back(self):
++        self.set_default(limit=10)
++        self.set_user(self.ash, "custom", 1)
++
++        self.assertEqual(self.charge_until_refused(self.ash), 1)
++        self.assertEqual(self.charge_until_refused(self.misty), 10)
++
++    def test_a_custom_limit_of_zero_switches_scanning_off_for_that_user(self):
++        self.set_default(limit=10)
++        self.set_user(self.ash, "custom", 0)
++
++        with self.assertRaises(limits.ScanLimitReached):
++            self.charge(self.ash)
++        self.assertEqual(self.allowance(self.ash).used, 0)
++        self.assertEqual(self.charge_until_refused(self.misty), 10)
++
++    def test_a_custom_limit_applies_even_while_the_default_is_unlimited(self):
++        self.set_default(unlimited=True)
++        self.set_user(self.ash, "custom", 2)
++
++        self.assertEqual(self.charge_until_refused(self.ash), 2)
++        self.assertEqual(self.charge_until_refused(self.misty, cap=20), 20)
++
++    def test_going_back_to_the_default_removes_the_users_own_setting(self):
++        self.set_default(limit=2)
++        self.set_user(self.ash, "custom", 7)
++        self.set_user(self.ash, "default")
++
++        self.assertIsNone(self.db.get(ScanLimitOverride, self.ash.id))
++        self.assertEqual(self.allowance(self.ash).daily_limit, 2)
++        self.set_user(self.ash, "default")  # asking again for what already is changes nothing
++
++    def test_a_custom_limit_needs_a_number(self):
++        with self.assertRaises(ValueError):
++            limits.set_user_limit(self.db, self.ash.id, "custom", None)
++        with self.assertRaises(ValueError):
++            limits.set_user_limit(self.db, self.ash.id, "sometimes", 3)
++
++    def test_changing_a_users_limit_never_touches_what_they_have_used(self):
++        self.set_default(limit=10)
++        self.charge(self.ash, count=4)
++
++        self.set_user(self.ash, "custom", 6)
++
++        allowance = self.allowance(self.ash)
++        self.assertEqual((allowance.used, allowance.remaining), (4, 2))
++
++    # --- unlimited users ----------------------------------------------------------------------------------------------
++
++    def test_an_unlimited_user_is_never_stopped_and_reports_no_limit(self):
++        self.set_default(limit=1)
++        self.set_user(self.ash, "unlimited")
++
++        self.assertEqual(self.charge_until_refused(self.ash, cap=30), 30)
++
++        allowance = self.allowance(self.ash)
++        self.assertTrue(allowance.unlimited)
++        self.assertEqual(allowance.used, 30)
++        payload = allowance.payload()
++        self.assertIsNone(payload["daily_limit"])
++        self.assertIsNone(payload["remaining"])
++        self.assertTrue(payload["unlimited"])
++        self.assertEqual(self.charge_until_refused(self.misty), 1)  # everyone else still has the default
++
++    def test_an_admin_is_limited_like_anyone_until_set_to_unlimited(self):
++        self.set_default(limit=2)
++
++        self.assertEqual(self.charge_until_refused(self.oak), 2)
++
++        self.set_user(self.oak, "unlimited")
++        self.assertEqual(self.charge_until_refused(self.oak, cap=25), 25)
++
++    def test_an_unlimited_user_keeps_the_number_they_had_for_when_a_limit_is_chosen_again(self):
++        self.set_user(self.ash, "custom", 8)
++        self.set_user(self.ash, "unlimited")
++
++        row = self.db.get(ScanLimitOverride, self.ash.id)
++        self.assertTrue(row.unlimited)
++        self.assertEqual(row.daily_limit, 8)
++        overview = {entry["id"]: entry for entry in limits.users_overview(self.db)}[self.ash.id]
++        self.assertEqual((overview["mode"], overview["custom_limit"], overview["daily_limit"]), ("unlimited", 8, None))
++
++        self.set_user(self.ash, "custom", 8)
++        self.assertEqual(self.allowance(self.ash).daily_limit, 8)
++
++    def test_unlimited_needs_no_number(self):
++        self.set_user(self.ash, "unlimited")
++
++        row = self.db.get(ScanLimitOverride, self.ash.id)
++        self.assertTrue(row.unlimited)
++        self.assertIsNone(row.daily_limit)
++
++    # --- the overview an admin reads ----------------------------------------------------------------------------------
++
++    def test_the_overview_lists_everyone_with_their_setting_limit_and_use_today(self):
++        self.set_default(limit=100)
++        self.set_user(self.misty, "custom", 50)
++        self.set_user(self.oak, "unlimited")
++        self.charge(self.ash, count=34)
++        self.charge(self.misty, count=5)
++
++        rows = {row["username"]: row for row in limits.users_overview(self.db)}
++
++        self.assertEqual(
++            (rows["ash"]["mode"], rows["ash"]["custom_limit"], rows["ash"]["daily_limit"], rows["ash"]["used"], rows["ash"]["remaining"]),
++            ("default", None, 100, 34, 66),
++        )
++        self.assertEqual(
++            (rows["misty"]["mode"], rows["misty"]["daily_limit"], rows["misty"]["used"], rows["misty"]["remaining"]),
++            ("custom", 50, 5, 45),
++        )
++        self.assertEqual(
++            (rows["oak"]["mode"], rows["oak"]["daily_limit"], rows["oak"]["unlimited"], rows["oak"]["remaining"], rows["oak"]["role"]),
++            ("unlimited", None, True, None, "admin"),
++        )
++
++    def test_the_overview_only_counts_todays_scans(self):
++        self.set_default(limit=10)
++        self.charge(self.ash, count=7)
++        self.clock.at(2026, 10, 10, 8, 0)
++
++        rows = {row["username"]: row for row in limits.users_overview(self.db)}
++
++        self.assertEqual((rows["ash"]["used"], rows["ash"]["remaining"]), (0, 10))
++
++    def test_the_settings_payload_shows_the_default_and_when_the_day_starts_over(self):
++        self.set_default(limit=25, unlimited=False)
++
++        payload = limits.settings_payload(self.db)
++
++        self.assertEqual(
++            payload,
++            {
++                "default_unlimited": False,
++                "default_limit": 25,
++                "timezone": "Europe/Berlin",
++                "utc_offset": "+02:00",
++                "reset_time": "00:00",
++                "next_reset_at": "2026-10-10T00:00:00+02:00",
++                "seconds_until_reset": 12 * 3600,
++            },
++        )
++
++    # --- the day --------------------------------------------------------------------------------------------------------
++
++    def test_usage_is_stored_so_a_restart_of_the_backend_keeps_the_count(self):
++        self.set_default(limit=5)
++        self.charge(self.ash, count=3)
++
++        after_restart = self.world.session()
++        try:
++            allowance = limits.current_allowance(after_restart, self.ash.id)
++            self.assertEqual((allowance.used, allowance.remaining), (3, 2))
++        finally:
++            after_restart.close()
++        self.assertEqual(self.db.get(ScanUsage, (self.ash.id, DAY)).used, 3)
++
++    def test_a_new_day_starts_at_zero_at_the_servers_local_midnight(self):
++        self.set_default(limit=2)
++        self.clock.at(2026, 10, 9, 23, 59, 59)
++        self.assertEqual(self.charge_until_refused(self.ash), 2)
++        with self.assertRaises(limits.ScanLimitReached):
++            self.charge(self.ash)
++
++        self.clock.at(2026, 10, 10, 0, 0, 0)
++
++        allowance = self.allowance(self.ash)
++        self.assertEqual((allowance.used, allowance.remaining), (0, 2))
++        self.assertEqual(self.charge_until_refused(self.ash), 2)
++
++    def test_one_second_before_midnight_the_day_is_still_the_same(self):
++        self.set_default(limit=1)
++        self.clock.at(2026, 10, 9, 0, 0, 0)
++        self.charge(self.ash)
++
++        self.clock.at(2026, 10, 9, 23, 59, 59)
++
++        self.assertTrue(self.allowance(self.ash).exhausted)
++
++    def test_yesterdays_usage_is_kept_when_the_day_changes(self):
++        self.set_default(limit=5)
++        self.charge(self.ash, count=3)
++
++        self.clock.at(2026, 10, 10, 9, 0)
++        self.charge(self.ash, count=1)
++
++        self.assertEqual(self.db.get(ScanUsage, (self.ash.id, datetime.date(2026, 10, 9))).used, 3)
++        self.assertEqual(self.db.get(ScanUsage, (self.ash.id, datetime.date(2026, 10, 10))).used, 1)
++
++    def test_the_day_is_the_servers_local_day_not_the_utc_day(self):
++        self.clock = Clock(self, "America/Los_Angeles")
++        self.set_default(limit=1)
++        # 17:30 in Los Angeles is already the next day in UTC. For the server it is still the 9th.
++        self.clock.at(2026, 10, 9, 17, 30)
++        self.charge(self.ash)
++        self.assertEqual(self.clock.now.astimezone(datetime.timezone.utc).date(), datetime.date(2026, 10, 10))
++
++        self.assertTrue(self.allowance(self.ash).exhausted)
++        self.assertEqual(self.db.get(ScanUsage, (self.ash.id, DAY)).used, 1)
++
++        self.clock.at(2026, 10, 10, 0, 0, 1)  # local midnight has passed
++        self.assertFalse(self.allowance(self.ash).exhausted)
++
++    def test_the_reset_follows_the_servers_time_zone(self):
++        self.set_default(limit=1)
++
++        self.clock = Clock(self, "Asia/Tokyo")
++        self.clock.at(2026, 10, 9, 12, 0)
++        self.assertEqual(self.allowance(self.ash).payload()["resets_at"], "2026-10-10T00:00:00+09:00")
++        self.assertEqual(self.allowance(self.ash).payload()["timezone"], "Asia/Tokyo")
++
++        self.clock = Clock(self, "UTC")
++        self.clock.at(2026, 10, 9, 12, 0)
++        self.assertEqual(self.allowance(self.ash).payload()["resets_at"], "2026-10-10T00:00:00+00:00")
++
++    def test_the_reset_is_midnight_on_the_day_the_clocks_go_forward(self):
++        self.clock.at(2026, 3, 28, 12, 0)  # Saturday; the clocks go forward at 02:00 on Sunday
++        self.assertEqual(limits.next_reset(self.clock.now).isoformat(), "2026-03-29T00:00:00+01:00")
++
++        self.clock.at(2026, 3, 29, 0, 30)  # a day of 23 hours: 22.5 hours of it are left
++        reset = limits.next_reset(self.clock.now)
++        self.assertEqual(reset.isoformat(), "2026-03-30T00:00:00+02:00")
++        self.assertEqual(self.allowance(self.ash).resets_in_seconds, int(22.5 * 3600))
++
++    def test_the_reset_is_midnight_on_the_day_the_clocks_go_back(self):
++        self.clock.at(2026, 10, 25, 0, 30)  # a day of 25 hours: 24.5 hours of it are left
++        reset = limits.next_reset(self.clock.now)
++        self.assertEqual(reset.isoformat(), "2026-10-26T00:00:00+01:00")
++        self.assertEqual(self.allowance(self.ash).resets_in_seconds, int(24.5 * 3600))
++
++    def test_the_time_zone_is_reported_by_name(self):
++        self.assertEqual(limits.timezone_name(), "Europe/Berlin")
++        self.clock = Clock(self, "Asia/Tokyo")
++        self.assertEqual(limits.timezone_name(), "Asia/Tokyo")
++
++    def test_a_time_zone_the_server_does_not_know_is_not_reported_as_if_it_did(self):
++        self.clock = Clock(self, "Nowhere/Land")
++        self.clock.at(2026, 10, 9, 12, 0)
++        self.assertNotEqual(limits.timezone_name(), "Nowhere/Land")
++
++    def test_the_utc_offset_is_written_with_a_sign_and_minutes(self):
++        self.clock = Clock(self, "Asia/Kolkata")
++        self.clock.at(2026, 10, 9, 12, 0)
++        self.assertEqual(limits.utc_offset_text(self.clock.now), "+05:30")
++        self.clock = Clock(self, "America/Los_Angeles")
++        self.clock.at(2026, 10, 9, 12, 0)
++        self.assertEqual(limits.utc_offset_text(self.clock.now), "-07:00")
++
++    # --- queued photos: one photo is one scan --------------------------------------------------------------------------
++
++    def test_a_queued_photo_is_counted_once_however_often_the_queue_tries_it_again(self):
++        self.set_default(limit=5)
++        (photo,) = self.world.photos(self.ash, 1)
++
++        self.charge(self.ash, item_ids=[photo])
++        self.charge(self.ash, item_ids=[photo])
++        self.charge(self.ash, item_ids=[photo])
++
++        self.assertEqual(self.allowance(self.ash).used, 1)
++        self.assertIsNotNone(self.db.get(ScanItemCharge, photo))
++
++    def test_a_photo_that_was_counted_still_goes_through_when_the_day_is_used_up(self):
++        self.set_default(limit=1)
++        counted, another = self.world.photos(self.ash, 2)
++        self.charge(self.ash, item_ids=[counted])
++        self.assertTrue(self.allowance(self.ash).exhausted)
++
++        self.charge(self.ash, item_ids=[counted])  # the queue's own retry of the photo that already counted
++
++        self.assertEqual(self.allowance(self.ash).used, 1)
++        with self.assertRaises(limits.ScanLimitReached):
++            self.charge(self.ash, item_ids=[another])  # a different photo is a different scan
++
++    def test_a_group_of_photos_counts_each_photo_that_is_not_counted_yet(self):
++        self.set_default(limit=10)
++        first, second, third = self.world.photos(self.ash, 3)
++        self.charge(self.ash, item_ids=[first])
++
++        self.charge(self.ash, item_ids=[first, second, third], count=3)
++
++        self.assertEqual(self.allowance(self.ash).used, 3)  # the first was counted before: only the other two are new
++
++    def test_a_group_that_does_not_fit_leaves_no_photo_marked_as_counted(self):
++        self.set_default(limit=2)
++        first, second, third, fourth = self.world.photos(self.ash, 4)
++        self.charge(self.ash, item_ids=[first])
++
++        with self.assertRaises(limits.ScanLimitReached):
++            self.charge(self.ash, item_ids=[second, third, fourth], count=3)
++
++        self.assertEqual(self.allowance(self.ash).used, 1)
++        for item_id in (second, third, fourth):
++            self.assertIsNone(self.db.get(ScanItemCharge, item_id))
++        self.charge(self.ash, item_ids=[second])  # and the one that does fit can still be counted
++        self.assertEqual(self.allowance(self.ash).used, 2)
++
++    def test_forgetting_a_photos_charge_makes_it_countable_again(self):
++        self.set_default(limit=5)
++        (photo,) = self.world.photos(self.ash, 1)
++        self.charge(self.ash, item_ids=[photo])
++
++        limits.forget_item_charges(self.db, [photo])
++        self.db.commit()
++        self.charge(self.ash, item_ids=[photo])
++
++        self.assertEqual(self.allowance(self.ash).used, 2)
++
++    def test_the_count_a_photo_leaves_behind_does_not_change_the_default_for_others(self):
++        self.set_default(limit=2)
++        self.charge(self.ash, item_ids=self.world.photos(self.ash, 2))
++
++        self.assertEqual(self.charge_until_refused(self.misty), 2)
++
++    # --- looking without counting -----------------------------------------------------------------------------------
++
++    def test_checking_for_scans_counts_nothing(self):
++        self.set_default(limit=2)
++
++        for _ in range(5):
++            limits.ensure_scans_available(self.db, self.ash.id)
++
++        self.assertEqual(self.allowance(self.ash).used, 0)
++
++    def test_checking_refuses_a_user_with_no_scans_left(self):
++        self.set_default(limit=1)
++        self.charge(self.ash)
++
++        with self.assertRaises(limits.ScanLimitReached):
++            limits.ensure_scans_available(self.db, self.ash.id)
++        limits.ensure_scans_available(self.db, self.misty.id)
++
++    # --- more than one request at a time ---------------------------------------------------------------------------------
++
++    def test_two_requests_for_the_last_scan_are_not_both_allowed(self):
++        """Each request has a session of its own, as in the server. The conditional UPDATE is what decides, not the order in
++        which they looked."""
++        self.set_default(limit=1)
++        first, second = self.world.session(), self.world.session()
++        try:
++            # Both look first (both see one scan left), then both ask to count it.
++            self.assertEqual(limits.current_allowance(first, self.ash.id).remaining, 1)
++            self.assertEqual(limits.current_allowance(second, self.ash.id).remaining, 1)
++            limits.charge_scans(first, self.ash.id)
++            with self.assertRaises(limits.ScanLimitReached):
++                limits.charge_scans(second, self.ash.id)
++        finally:
++            first.close()
++            second.close()
++        self.assertEqual(self.allowance(self.ash).used, 1)
++
++    @unittest.skipUnless(os.environ.get("SCAN_LIMITS_TEST_DATABASE_URL", "").startswith("postgresql"), "needs PostgreSQL")
++    def test_many_threads_asking_at_once_never_pass_the_limit(self):
++        self.set_default(limit=7)
++        successes, refused, errors = [], [], []
++        gate = threading.Barrier(12)
++
++        def worker():
++            session = self.world.session()
++            try:
++                gate.wait()
++                try:
++                    limits.charge_scans(session, self.ash.id)
++                    successes.append(1)
++                except limits.ScanLimitReached:
++                    refused.append(1)
++            except Exception as error:  # pragma: no cover - reported below
++                errors.append(error)
++            finally:
++                session.close()
++
++        threads = [threading.Thread(target=worker) for _ in range(12)]
++        for thread in threads:
++            thread.start()
++        for thread in threads:
++            thread.join()
++
++        self.assertEqual(errors, [])
++        self.assertEqual((len(successes), len(refused)), (7, 5))
++        self.assertEqual(self.allowance(self.ash).used, 7)
++
++    # --- what the database itself refuses ------------------------------------------------------------------------------
++
++    @unittest.skipIf(os.environ.get("SCAN_LIMITS_TEST_DATABASE_URL", "").startswith("sqlite"), "")
++    def test_the_tables_refuse_numbers_that_make_no_sense(self):
++        self.db.add(ScanUsage(user_id=self.ash.id, day=DAY, used=-1))
++        with self.assertRaises(IntegrityError):
++            self.db.commit()
++        self.db.rollback()
++        self.db.add(ScanLimitOverride(user_id=self.ash.id, unlimited=False, daily_limit=None))
++        with self.assertRaises(IntegrityError):
++            self.db.commit()
++        self.db.rollback()
++        self.db.add(ScanLimitOverride(user_id=self.ash.id, unlimited=False, daily_limit=-3))
++        with self.assertRaises(IntegrityError):
++            self.db.commit()
++        self.db.rollback()
++
++    def test_a_bad_stored_default_falls_back_to_something_sensible(self):
++        self.db.add(Setting(key=limits.DEFAULT_LIMIT_SETTING, value="lots"))
++        self.db.add(Setting(key=limits.DEFAULT_UNLIMITED_SETTING, value="false"))
++        self.db.commit()
++
++        self.assertEqual(limits.default_limit(self.db), (False, limits.SUGGESTED_DEFAULT_LIMIT))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/backend/tests/test_scan_limits_http.py b/backend/tests/test_scan_limits_http.py
+new file mode 100644
+index 0000000..bc13a5b
+--- /dev/null
++++ b/backend/tests/test_scan_limits_http.py
+@@ -0,0 +1,1062 @@
++"""Daily scan limits where they act: the HTTP API, the direct scan, the upload that queues photos, and the queue that reads them.
++
++The rules (what counts, the day, which limit applies) are tested in test_scan_limits.py. This file is about the places the
++count is taken, and what a client sees: the 429 with its numbers, what is *not* counted, and that the vision model is not asked
++when there are no scans left.
++"""
++
++import asyncio
++import contextlib
++import datetime
++import io
++import os
++import tempfile
++import unittest
++from pathlib import Path
++from unittest.mock import AsyncMock, MagicMock, Mock, patch
++
++try:
++    from fastapi import FastAPI, HTTPException
++    from fastapi.testclient import TestClient
++    from PIL import Image
++
++    from api import auth as auth_api
++    from api import recognize as recognize_api
++    from api import scan_jobs as scan_jobs_api
++    from api import scan_limits as scan_limits_api
++    from api.recognize import recognize_sanitized_card
++    from database import get_db
++    from models import ScanItemCharge, ScanJob, ScanJobItem, ScanQueueUserState, ScanUsage, UserSetting
++    from services import scan_limits as limits
++    from services import scan_queue
++    from services.auth import create_access_token
++    from services.scan_queue import claim_next_scan_item, retry_scan_item
++
++    from scan_limits_world import Clock, ScanLimitsWorld
++
++    DEPS = True
++except ModuleNotFoundError as error:  # pragma: no cover - lightweight environments
++    if error.name == "scan_limits_world":
++        raise
++    DEPS = False
++
++
++def jpeg_bytes():
++    image = Image.new("RGB", (80, 112), "#d92828")
++    output = io.BytesIO()
++    image.save(output, format="JPEG")
++    return output.getvalue()
++
++
++def provider_double(*, key="a-key", requires_key=True, is_gemini=True):
++    """A stand-in for the vision provider that records whether the model was asked."""
++    provider = Mock()
++    provider.name = "gemini" if is_gemini else "openai"
++    provider.is_gemini = is_gemini
++    provider.model.return_value = "vision-model"
++    provider.credential.return_value = key
++    provider.requires_credential.return_value = requires_key
++    provider.missing_credential_message.return_value = "Add your API key in Settings."
++    provider.generate_text = AsyncMock(return_value=('{"name": "Pikachu", "language": "en"}', None))
++    provider.rate_limit_scope.side_effect = lambda _priority: contextlib.nullcontext()
++    return provider
++
++
++@unittest.skipUnless(DEPS, "FastAPI/SQLAlchemy are not installed in this lightweight test environment")
++class HttpBase(unittest.TestCase):
++    """The real routers, the real sign-in and a real database, with the vision model and the background queue replaced."""
++
++    def setUp(self):
++        self.temp_dir = tempfile.TemporaryDirectory()
++        env = patch.dict(os.environ, {"SCAN_UPLOAD_DIR": self.temp_dir.name})
++        env.start()
++        self.addCleanup(env.stop)
++        self.addCleanup(self.temp_dir.cleanup)
++
++        self.world = ScanLimitsWorld()
++        self.addCleanup(self.world.close)
++        self.clock = Clock(self, "Europe/Berlin")
++        self.clock.at(2026, 10, 9, 12, 0)
++        self.ash, self.misty, self.oak = self.world.ash, self.world.misty, self.world.oak
++
++        app = FastAPI()
++        app.include_router(recognize_api.router, prefix="/api/cards")
++        app.include_router(scan_jobs_api.router, prefix="/api/cards")
++        app.include_router(scan_limits_api.router, prefix="/api/scan-limits")
++        limits.register_scan_limit_handler(app)
++
++        def override_db():
++            session = self.world.session()
++            try:
++                yield session
++            finally:
++                session.close()
++
++        app.dependency_overrides[get_db] = override_db
++        # multi_user_enabled() reads the stored setting through its own session; serve it from here instead.
++        patcher = patch.object(auth_api, "get_setting", lambda key, default=None: {"multi_user_mode": "true"}.get(key, default))
++        patcher.start()
++        self.addCleanup(patcher.stop)
++        self.client = TestClient(app)
++        self.addCleanup(self.client.close)
++
++    # --- helpers ------------------------------------------------------------------------------------------------------
++
++    def headers(self, user):
++        return {"Authorization": "Bearer " + create_access_token({"sub": str(user.id), "role": user.role})}
++
++    def get(self, path, user=None):
++        return self.client.get(path, headers=self.headers(user) if user else {})
++
++    def put(self, path, user, body):
++        return self.client.put(path, headers=self.headers(user), json=body)
++
++    def set_default(self, limit=None, unlimited=False):
++        limits.set_default_limit(self.world.db, unlimited=unlimited, limit=limit)
++        self.world.db.commit()
++
++    def set_user(self, user, mode, limit=None):
++        limits.set_user_limit(self.world.db, user.id, mode, limit)
++        self.world.db.commit()
++
++    def used(self, user):
++        self.world.db.expire_all()
++        return limits.used_on(self.world.db, user.id, self.clock.now.date())
++
++    @contextlib.contextmanager
++    def scanner(self, provider=None, *, capability="full"):
++        """The direct scan with the model replaced: `provider.generate_text` is what 'asking the model' means."""
++        provider = provider or provider_double()
++        with contextlib.ExitStack() as stack:
++            stack.enter_context(patch("api.recognize.get_provider", return_value=provider))
++            stack.enter_context(patch("api.recognize.require_scanner_capability_mode", return_value=capability))
++            stack.enter_context(patch("api.recognize.resolve_scanner_request_timeout", return_value=30))
++            stack.enter_context(patch(
++                "api.recognize.match_card_info",
++                new=AsyncMock(return_value={"recognized": {"name": "Pikachu"}, "matches": [], "_identity_confident": True}),
++            ))
++            yield provider
++
++    def scan(self, user, content=None, content_type="image/jpeg"):
++        return self.client.post(
++            "/api/cards/recognize",
++            headers=self.headers(user),
++            files={"file": ("card.jpg", jpeg_bytes() if content is None else content, content_type)},
++        )
++
++    def enqueue(self, user, photos=1):
++        with patch("api.recognize.get_gemini_key", return_value="secret-key"), patch(
++            "api.scan_jobs.drain_scan_queue", new=AsyncMock(return_value=0)
++        ):
++            return self.client.post(
++                "/api/cards/recognize/jobs",
++                headers=self.headers(user),
++                files=[("files", (f"card-{n}.jpg", jpeg_bytes(), "image/jpeg")) for n in range(photos)],
++            )
++
++    def assert_limit_reached(self, response, *, limit, used):
++        self.assertEqual(response.status_code, 429, response.text)
++        body = response.json()
++        self.assertEqual(body["code"], "scan_limit_reached")
++        self.assertTrue(body["detail"].startswith("Daily scan limit reached"), body["detail"])
++        self.assertEqual((body["daily_limit"], body["used"], body["remaining"], body["unlimited"]), (limit, used, max(0, limit - used), False))
++        self.assertEqual(body["resets_at"], "2026-10-10T00:00:00+02:00")
++        self.assertEqual(body["resets_in_seconds"], 12 * 3600)
++        self.assertEqual(body["timezone"], "Europe/Berlin")
++        self.assertEqual(response.headers["retry-after"], str(12 * 3600))
++        return body
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# What users and admins see
++# ---------------------------------------------------------------------------------------------------------------------
++
++class AllowanceApiTests(HttpBase):
++    def test_every_endpoint_needs_a_signed_in_user(self):
++        for method, path in (
++            ("GET", "/api/scan-limits/me"),
++            ("GET", "/api/scan-limits/settings"),
++            ("PUT", "/api/scan-limits/settings"),
++            ("GET", "/api/scan-limits/users"),
++            ("PUT", f"/api/scan-limits/users/{self.ash.id}"),
++        ):
++            with self.subTest(path=path, method=method):
++                self.assertEqual(self.client.request(method, path, json={}).status_code, 401)
++
++    def test_a_user_sees_what_they_have_left_today(self):
++        self.set_default(limit=100)
++        limits.charge_scans(self.world.db, self.ash.id, count=23)
++
++        response = self.get("/api/scan-limits/me", self.ash)
++
++        self.assertEqual(response.status_code, 200)
++        self.assertEqual(response.headers["cache-control"], "private, no-store")
++        self.assertEqual(
++            response.json(),
++            {
++                "daily_limit": 100,
++                "unlimited": False,
++                "used": 23,
++                "remaining": 77,
++                "resets_at": "2026-10-10T00:00:00+02:00",
++                "resets_in_seconds": 12 * 3600,
++                "timezone": "Europe/Berlin",
++            },
++        )
++
++    def test_an_unlimited_user_sees_no_limit_and_no_remainder(self):
++        self.set_default(limit=100)
++        self.set_user(self.ash, "unlimited")
++        limits.charge_scans(self.world.db, self.ash.id, count=4)
++
++        body = self.get("/api/scan-limits/me", self.ash).json()
++
++        self.assertEqual((body["unlimited"], body["daily_limit"], body["remaining"], body["used"]), (True, None, None, 4))
++
++    def test_a_server_where_nothing_was_set_up_is_unlimited(self):
++        body = self.get("/api/scan-limits/me", self.ash).json()
++        self.assertEqual((body["unlimited"], body["daily_limit"], body["used"]), (True, None, 0))
++
++    def test_users_see_only_their_own_numbers(self):
++        self.set_default(limit=10)
++        limits.charge_scans(self.world.db, self.ash.id, count=9)
++
++        self.assertEqual(self.get("/api/scan-limits/me", self.ash).json()["used"], 9)
++        self.assertEqual(self.get("/api/scan-limits/me", self.misty).json()["used"], 0)
++
++    def test_only_admins_read_or_change_the_limits(self):
++        self.set_default(limit=10)
++        attempts = (
++            ("GET", "/api/scan-limits/settings", None),
++            ("PUT", "/api/scan-limits/settings", {"default_limit": 1}),
++            ("GET", "/api/scan-limits/users", None),
++            ("PUT", f"/api/scan-limits/users/{self.ash.id}", {"mode": "unlimited"}),
++            ("PUT", f"/api/scan-limits/users/{self.misty.id}", {"mode": "custom", "limit": 999}),
++        )
++        for method, path, body in attempts:
++            with self.subTest(path=path, method=method):
++                response = self.client.request(method, path, headers=self.headers(self.ash), json=body)
++                self.assertEqual(response.status_code, 403)
++                self.assertEqual(response.json()["detail"], "Admin access required")
++
++        # None of it did anything.
++        self.assertEqual(limits.default_limit(self.world.db), (False, 10))
++        later = self.world.session()
++        try:
++            self.assertEqual(limits.current_allowance(later, self.ash.id).daily_limit, 10)
++            self.assertEqual(limits.current_allowance(later, self.misty.id).daily_limit, 10)
++        finally:
++            later.close()
++
++    # --- the default and the time zone --------------------------------------------------------------------------------
++
++    def test_an_admin_reads_the_default_and_when_the_day_starts_over(self):
++        response = self.get("/api/scan-limits/settings", self.oak)
++
++        self.assertEqual(response.status_code, 200)
++        self.assertEqual(
++            response.json(),
++            {
++                "default_unlimited": True,
++                "default_limit": limits.SUGGESTED_DEFAULT_LIMIT,
++                "timezone": "Europe/Berlin",
++                "utc_offset": "+02:00",
++                "reset_time": "00:00",
++                "next_reset_at": "2026-10-10T00:00:00+02:00",
++                "seconds_until_reset": 12 * 3600,
++            },
++        )
++
++    def test_an_admin_sets_the_default_and_it_applies_at_once(self):
++        saved = self.put("/api/scan-limits/settings", self.oak, {"default_limit": 3, "default_unlimited": False})
++
++        self.assertEqual(saved.status_code, 200)
++        self.assertEqual((saved.json()["default_limit"], saved.json()["default_unlimited"]), (3, False))
++        self.assertEqual(self.get("/api/scan-limits/me", self.ash).json()["daily_limit"], 3)
++        self.assertEqual(self.get("/api/scan-limits/settings", self.oak).json()["default_limit"], 3)
++
++    def test_the_default_can_be_changed_one_field_at_a_time(self):
++        self.put("/api/scan-limits/settings", self.oak, {"default_limit": 30, "default_unlimited": False})
++
++        only_unlimited = self.put("/api/scan-limits/settings", self.oak, {"default_unlimited": True}).json()
++        self.assertEqual((only_unlimited["default_unlimited"], only_unlimited["default_limit"]), (True, 30))
++
++        only_number = self.put("/api/scan-limits/settings", self.oak, {"default_limit": 45}).json()
++        self.assertEqual((only_number["default_unlimited"], only_number["default_limit"]), (True, 45))
++
++    def test_nonsense_for_the_default_is_refused(self):
++        for body in (
++            {},
++            {"default_limit": -1},
++            {"default_limit": limits.MAX_DAILY_LIMIT + 1},
++            {"default_limit": "lots"},
++            {"default_limit": 2.5},
++            {"default_unlimited": "maybe"},
++        ):
++            with self.subTest(body=body):
++                self.assertEqual(self.put("/api/scan-limits/settings", self.oak, body).status_code, 422)
++        self.assertEqual(limits.default_limit(self.world.db), (True, limits.SUGGESTED_DEFAULT_LIMIT))
++
++    def test_the_default_is_still_there_for_the_next_request(self):
++        self.put("/api/scan-limits/settings", self.oak, {"default_limit": 12, "default_unlimited": False})
++
++        later = self.world.session()
++        try:
++            self.assertEqual(limits.default_limit(later), (False, 12))
++        finally:
++            later.close()
++
++    def test_a_default_of_zero_is_allowed_and_switches_scanning_off_for_everyone_without_a_limit_of_their_own(self):
++        self.put("/api/scan-limits/settings", self.oak, {"default_limit": 0, "default_unlimited": False})
++        self.set_user(self.misty, "custom", 5)
++
++        with self.scanner():
++            self.assertEqual(self.scan(self.ash).status_code, 429)
++            self.assertEqual(self.scan(self.misty).status_code, 200)
++
++    # --- each user ----------------------------------------------------------------------------------------------------
++
++    def test_an_admin_sees_every_user_with_their_usage_today(self):
++        self.set_default(limit=100)
++        limits.charge_scans(self.world.db, self.ash.id, count=34)
++
++        response = self.get("/api/scan-limits/users", self.oak)
++
++        self.assertEqual(response.status_code, 200)
++        body = response.json()
++        self.assertEqual((body["default_limit"], body["timezone"]), (limits.default_limit(self.world.db)[1], "Europe/Berlin"))
++        rows = {row["username"]: row for row in body["users"]}
++        self.assertEqual(sorted(rows), ["ash", "misty", "oak"])
++        self.assertEqual(
++            {key: rows["ash"][key] for key in ("mode", "daily_limit", "used", "remaining", "unlimited")},
++            {"mode": "default", "daily_limit": 100, "used": 34, "remaining": 66, "unlimited": False},
++        )
++
++    def test_an_admin_gives_one_user_a_limit_of_their_own_or_none(self):
++        self.set_default(limit=100)
++
++        custom = self.put(f"/api/scan-limits/users/{self.ash.id}", self.oak, {"mode": "custom", "limit": 10})
++        self.assertEqual(custom.status_code, 200)
++        self.assertEqual(
++            {key: custom.json()[key] for key in ("mode", "custom_limit", "daily_limit", "unlimited")},
++            {"mode": "custom", "custom_limit": 10, "daily_limit": 10, "unlimited": False},
++        )
++        self.assertEqual(self.get("/api/scan-limits/me", self.ash).json()["daily_limit"], 10)
++        self.assertEqual(self.get("/api/scan-limits/me", self.misty).json()["daily_limit"], 100)
++
++        unlimited = self.put(f"/api/scan-limits/users/{self.ash.id}", self.oak, {"mode": "unlimited"})
++        self.assertEqual(
++            {key: unlimited.json()[key] for key in ("mode", "custom_limit", "daily_limit", "unlimited")},
++            {"mode": "unlimited", "custom_limit": 10, "daily_limit": None, "unlimited": True},
++        )
++        self.assertTrue(self.get("/api/scan-limits/me", self.ash).json()["unlimited"])
++
++        back = self.put(f"/api/scan-limits/users/{self.ash.id}", self.oak, {"mode": "default"})
++        self.assertEqual((back.json()["mode"], back.json()["daily_limit"]), ("default", 100))
++
++    def test_an_admin_can_make_an_admin_unlimited(self):
++        self.set_default(limit=2)
++        self.assertEqual(self.get("/api/scan-limits/me", self.oak).json()["daily_limit"], 2)
++
++        self.put(f"/api/scan-limits/users/{self.oak.id}", self.oak, {"mode": "unlimited"})
++
++        self.assertTrue(self.get("/api/scan-limits/me", self.oak).json()["unlimited"])
++
++    def test_nonsense_for_a_user_is_refused(self):
++        for body in (
++            {},
++            {"mode": "custom"},
++            {"mode": "custom", "limit": -5},
++            {"mode": "custom", "limit": limits.MAX_DAILY_LIMIT + 1},
++            {"mode": "custom", "limit": "ten"},
++            {"mode": "sometimes", "limit": 3},
++        ):
++            with self.subTest(body=body):
++                self.assertEqual(self.put(f"/api/scan-limits/users/{self.ash.id}", self.oak, body).status_code, 422)
++        self.assertEqual(self.get("/api/scan-limits/me", self.ash).json()["unlimited"], True)
++
++    def test_a_user_that_does_not_exist_is_not_found(self):
++        response = self.put("/api/scan-limits/users/9999", self.oak, {"mode": "unlimited"})
++        self.assertEqual((response.status_code, response.json()["detail"]), (404, "User not found"))
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# The direct scan: one photo, read now
++# ---------------------------------------------------------------------------------------------------------------------
++
++class DirectScanTests(HttpBase):
++    def test_a_scan_is_counted_when_the_model_is_asked(self):
++        self.set_default(limit=5)
++
++        with self.scanner() as provider:
++            response = self.scan(self.ash)
++
++        self.assertEqual(response.status_code, 200, response.text)
++        provider.generate_text.assert_awaited_once()
++        self.assertEqual(self.used(self.ash), 1)
++
++    def test_the_scan_after_the_last_one_is_a_429_with_the_numbers_and_the_model_is_not_asked(self):
++        self.set_default(limit=2)
++        with self.scanner() as provider:
++            self.assertEqual(self.scan(self.ash).status_code, 200)
++            self.assertEqual(self.scan(self.ash).status_code, 200)
++            refused = self.scan(self.ash)
++
++        self.assert_limit_reached(refused, limit=2, used=2)
++        self.assertEqual(provider.generate_text.await_count, 2)  # two reads, and none for the refused one
++        self.assertEqual(self.used(self.ash), 2)
++
++    def test_the_429_of_the_limit_is_not_mistaken_for_the_rate_limiters(self):
++        self.set_default(limit=0)
++
++        with self.scanner():
++            body = self.scan(self.ash).json()
++
++        self.assertEqual(body["code"], "scan_limit_reached")
++        self.assertIn("resets_at", body)
++
++    def test_unlimited_users_are_never_refused(self):
++        self.set_default(limit=1)
++        self.set_user(self.oak, "unlimited")
++
++        with self.scanner() as provider:
++            statuses = [self.scan(self.oak).status_code for _ in range(5)]
++
++        self.assertEqual(statuses, [200] * 5)
++        self.assertEqual(provider.generate_text.await_count, 5)
++        self.assertEqual(self.used(self.oak), 5)
++
++    def test_a_users_own_limit_decides_not_the_default(self):
++        self.set_default(limit=1)
++        self.set_user(self.ash, "custom", 3)
++
++        with self.scanner():
++            ash = [self.scan(self.ash).status_code for _ in range(4)]
++            misty = [self.scan(self.misty).status_code for _ in range(2)]
++
++        self.assertEqual(ash, [200, 200, 200, 429])
++        self.assertEqual(misty, [200, 429])
++
++    def test_one_users_scans_do_not_use_up_anothers(self):
++        self.set_default(limit=1)
++        with self.scanner():
++            self.assertEqual(self.scan(self.ash).status_code, 200)
++            self.assertEqual(self.scan(self.ash).status_code, 429)
++            self.assertEqual(self.scan(self.misty).status_code, 200)
++
++    def test_the_next_local_day_gives_the_scans_back(self):
++        self.set_default(limit=1)
++        with self.scanner():
++            self.assertEqual(self.scan(self.ash).status_code, 200)
++            self.clock.at(2026, 10, 9, 23, 59, 59)
++            self.assertEqual(self.scan(self.ash).status_code, 429)
++            self.clock.at(2026, 10, 10, 0, 0, 1)
++            self.assertEqual(self.scan(self.ash).status_code, 200)
++
++        self.assertEqual(self.used(self.ash), 1)  # today's own count: one scan on the 10th
++
++    # --- what is not a scan ---------------------------------------------------------------------------------------------
++
++    def test_a_photo_that_is_not_an_image_is_refused_and_not_counted(self):
++        self.set_default(limit=5)
++
++        with self.scanner() as provider:
++            response = self.scan(self.ash, content=b"this is not a picture", content_type="text/plain")
++
++        self.assertEqual(response.status_code, 400)
++        provider.generate_text.assert_not_awaited()
++        self.assertEqual(self.used(self.ash), 0)
++
++    def test_a_scan_with_nobody_signed_in_is_refused_and_not_counted(self):
++        self.set_default(limit=5)
++
++        with self.scanner() as provider:
++            response = self.client.post("/api/cards/recognize", files={"file": ("card.jpg", jpeg_bytes(), "image/jpeg")})
++
++        self.assertEqual(response.status_code, 401)
++        provider.generate_text.assert_not_awaited()
++        self.assertEqual(self.world.db.query(ScanUsage).count(), 0)
++
++    def test_a_scan_without_an_api_key_is_refused_before_the_model_and_not_counted(self):
++        self.set_default(limit=5)
++
++        with self.scanner(provider_double(key="", requires_key=True)) as provider:
++            response = self.scan(self.ash)
++
++        self.assertEqual(response.status_code, 400)
++        provider.generate_text.assert_not_awaited()
++        self.assertEqual(self.used(self.ash), 0)
++
++    def test_a_scanner_that_has_to_be_set_up_again_is_refused_before_the_model_and_not_counted(self):
++        self.set_default(limit=5)
++        provider = provider_double()
++        with contextlib.ExitStack() as stack:
++            stack.enter_context(patch("api.recognize.get_provider", return_value=provider))
++            stack.enter_context(patch("api.recognize.resolve_scanner_request_timeout", return_value=30))
++            stack.enter_context(patch(
++                "api.recognize.require_scanner_capability_mode",
++                side_effect=HTTPException(status_code=409, detail="Test and save the scanner configuration again."),
++            ))
++            response = self.scan(self.ash)
++
++        self.assertEqual(response.status_code, 409)
++        provider.generate_text.assert_not_awaited()
++        self.assertEqual(self.used(self.ash), 0)
++
++    def test_a_model_that_fails_after_it_was_asked_still_counts_as_a_scan(self):
++        # The request was made: it is an attempt, whatever came back. (The queue's own retries of one photo are free;
++        # a direct scan has no retry to be free.)
++        self.set_default(limit=5)
++        provider = provider_double()
++        provider.generate_text = AsyncMock(side_effect=HTTPException(status_code=503, detail="The model is busy."))
++
++        with self.scanner(provider):
++            response = self.scan(self.ash)
++
++        self.assertEqual(response.status_code, 503)
++        provider.generate_text.assert_awaited_once()
++        self.assertEqual(self.used(self.ash), 1)
++
++    def test_opening_the_scanner_costs_nothing(self):
++        self.set_default(limit=5)
++        for _ in range(10):
++            self.assertEqual(self.get("/api/scan-limits/me", self.ash).status_code, 200)
++            self.assertEqual(self.get("/api/cards/recognize/jobs", self.ash).status_code, 200)
++
++        self.assertEqual(self.used(self.ash), 0)
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# The upload that queues photos
++# ---------------------------------------------------------------------------------------------------------------------
++
++class QueuedUploadTests(HttpBase):
++    def test_a_user_with_no_scans_left_cannot_queue_photos_and_nothing_is_stored(self):
++        self.set_default(limit=1)
++        limits.charge_scans(self.world.db, self.ash.id)
++
++        response = self.enqueue(self.ash)
++
++        self.assert_limit_reached(response, limit=1, used=1)
++        self.assertEqual(self.world.db.query(ScanJob).count(), 0)
++        self.assertEqual(list(Path(self.temp_dir.name).rglob("*.jpg")), [])
++
++    def test_queuing_a_photo_does_not_count_it_the_count_is_taken_when_it_is_read(self):
++        self.set_default(limit=3)
++
++        response = self.enqueue(self.ash)
++
++        self.assertEqual(response.status_code, 200, response.text)
++        self.assertEqual(self.used(self.ash), 0)
++        self.assertEqual(response.json()["scan_limit"]["remaining"], 3)
++
++    def test_a_user_with_some_scans_left_may_queue_more_photos_than_that(self):
++        self.set_default(limit=2)
++
++        response = self.enqueue(self.ash, photos=5)
++
++        self.assertEqual(response.status_code, 200, response.text)
++        self.assertEqual(response.json()["total"], 5)
++
++    def test_an_unlimited_user_can_always_queue_photos(self):
++        self.set_default(limit=1)
++        self.set_user(self.ash, "unlimited")
++        limits.charge_scans(self.world.db, self.ash.id, count=10)
++
++        self.assertEqual(self.enqueue(self.ash).status_code, 200)
++
++    def test_polling_a_job_carries_the_scans_for_today(self):
++        self.set_default(limit=10)
++        job = self.enqueue(self.ash).json()
++        limits.charge_scans(self.world.db, self.ash.id, count=4)
++
++        detail = self.get(f"/api/cards/recognize/jobs/{job['id']}", self.ash).json()
++
++        self.assertEqual(
++            {key: detail["scan_limit"][key] for key in ("daily_limit", "used", "remaining", "unlimited")},
++            {"daily_limit": 10, "used": 4, "remaining": 6, "unlimited": False},
++        )
++        self.assertEqual(len(detail["items"]), 1)  # and the job itself is as it was
++
++    def test_a_job_that_is_already_queued_can_still_be_read_when_the_day_is_used_up(self):
++        self.set_default(limit=1)
++        job = self.enqueue(self.ash).json()
++        limits.charge_scans(self.world.db, self.ash.id)
++
++        self.assertEqual(self.get(f"/api/cards/recognize/jobs/{job['id']}", self.ash).status_code, 200)
++        self.assertEqual(self.get("/api/cards/recognize/jobs", self.ash).status_code, 200)
++
++    def test_reading_a_photo_again_needs_a_scan_to_be_left(self):
++        self.set_default(limit=1)
++        job = self.enqueue(self.ash).json()
++        item = self.world.db.query(ScanJobItem).filter(ScanJobItem.job_id == job["id"]).one()
++        item.status = "failed"
++        self.world.db.commit()
++        limits.charge_scans(self.world.db, self.ash.id)
++
++        with patch("api.scan_jobs.drain_scan_queue", new=AsyncMock(return_value=0)):
++            refused = self.client.post(f"/api/cards/recognize/jobs/{job['id']}/items/{item.id}/retry", headers=self.headers(self.ash))
++
++        self.assert_limit_reached(refused, limit=1, used=1)
++        self.world.db.expire_all()
++        self.assertEqual(self.world.db.get(ScanJobItem, item.id).status, "failed")  # nothing was changed
++
++        self.clock.at(2026, 10, 10, 8, 0)
++        with patch("api.scan_jobs.drain_scan_queue", new=AsyncMock(return_value=0)):
++            allowed = self.client.post(f"/api/cards/recognize/jobs/{job['id']}/items/{item.id}/retry", headers=self.headers(self.ash))
++        self.assertEqual(allowed.status_code, 200, allowed.text)
++
++    def test_the_day_that_starts_over_lets_the_user_queue_photos_again(self):
++        self.set_default(limit=1)
++        limits.charge_scans(self.world.db, self.ash.id)
++        self.assertEqual(self.enqueue(self.ash).status_code, 429)
++
++        self.clock.at(2026, 10, 10, 0, 0, 0)
++
++        self.assertEqual(self.enqueue(self.ash).status_code, 200)
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# The queue: one photo is one scan, counted once however often it is tried
++# ---------------------------------------------------------------------------------------------------------------------
++
++@unittest.skipUnless(DEPS, "FastAPI/SQLAlchemy are not installed in this lightweight test environment")
++class QueueTests(unittest.TestCase):
++    def setUp(self):
++        self.temp_dir = tempfile.TemporaryDirectory()
++        env = patch.dict(os.environ, {"SCAN_UPLOAD_DIR": self.temp_dir.name})
++        env.start()
++        self.addCleanup(env.stop)
++        self.addCleanup(self.temp_dir.cleanup)
++        self.world = ScanLimitsWorld()
++        self.addCleanup(self.world.close)
++        self.clock = Clock(self, "Europe/Berlin")
++        self.clock.at(2026, 10, 9, 12, 0)
++        self.db = self.world.db
++        self.ash, self.misty = self.world.ash, self.world.misty
++        self.provider_calls = 0
++        self.provider_error = None
++
++    # --- helpers ------------------------------------------------------------------------------------------------------
++
++    def job(self, user, positions=(0,), batch=False):
++        now = datetime.datetime.utcnow()
++        job = ScanJob(user_id=user.id, status="pending", created_at=now, updated_at=now, expires_at=now + datetime.timedelta(days=14))
++        self.db.add(job)
++        self.db.flush()
++        if self.db.get(ScanQueueUserState, user.id) is None:
++            self.db.add(ScanQueueUserState(user_id=user.id))
++        for position in positions:
++            path = Path(self.temp_dir.name) / str(job.id) / f"{position}.jpg"
++            path.parent.mkdir(parents=True, exist_ok=True)
++            path.write_bytes(b"photo")
++            self.db.add(ScanJobItem(
++                job_id=job.id, user_id=user.id, position=position, image_path=f"{job.id}/{position}.jpg",
++                content_type="image/jpeg", byte_size=5, status="pending", resolved=False, attempts=0,
++                transient_failures=0, next_attempt_at=now, created_at=now, updated_at=now, batch_mode=batch,
++            ))
++        self.db.commit()
++        return job
++
++    def used(self, user):
++        self.db.expire_all()
++        return limits.used_on(self.db, user.id, self.clock.now.date())
++
++    def item(self, item_id):
++        self.db.expire_all()
++        return self.db.get(ScanJobItem, item_id)
++
++    def make_ready(self, item_id):
++        """Makes a photo that is waiting to be retried eligible now."""
++        item = self.item(item_id)
++        item.next_attempt_at = datetime.datetime.utcnow() - datetime.timedelta(seconds=1)
++        self.db.commit()
++
++    def provider(self):
++        provider = MagicMock()
++        provider.name = "gemini"
++        provider.model.return_value = "vision-model"
++        provider.credential.return_value = "a-key"
++        provider.requires_credential.return_value = True
++        return provider
++
++    def run_worker(self, processor_kwargs=None):
++        """Claims the next photo and runs the real single-photo processor, with the model replaced by a stand-in that behaves
++        like recognize_sanitized_card: it announces the read (``before_provider_call``) and then succeeds or fails."""
++
++        async def recognize(_db, _user_id, _image, _content_type, *, before_provider_call=None, **_kwargs):
++            if before_provider_call:
++                before_provider_call()
++            self.provider_calls += 1
++            if self.provider_error is not None:
++                raise self.provider_error
++            return {"recognized": {"name": "Pikachu"}, "matches": []}
++
++        claim = claim_next_scan_item(self.db)
++        self.assertIsNotNone(claim, "nothing was ready to be claimed")
++        with patch("database.SessionLocal", self.world.session_factory), patch(
++            "services.scan_providers.get_provider", return_value=self.provider()
++        ), patch("services.scan_providers.require_scanner_capability_mode", return_value="full"), patch(
++            "services.scan_trace.create_scan_trace", return_value=MagicMock()
++        ), patch("api.recognize.recognize_sanitized_card", new=recognize):
++            asyncio.run(scan_queue.process_claimed_scan_item(claim))
++        return claim
++
++    # --- the single photo ---------------------------------------------------------------------------------------------
++
++    def test_a_photo_is_counted_when_its_read_starts(self):
++        limits.set_default_limit(self.db, unlimited=False, limit=5)
++        self.db.commit()
++        job = self.job(self.ash)
++
++        claim = self.run_worker()
++
++        self.assertEqual(self.item(claim.item_id).status, "done")
++        self.assertEqual(self.provider_calls, 1)
++        self.assertEqual(self.used(self.ash), 1)
++        self.assertEqual(job.id, self.item(claim.item_id).job_id)
++
++    def test_the_queues_own_retries_of_a_photo_are_free(self):
++        limits.set_default_limit(self.db, unlimited=False, limit=5)
++        self.db.commit()
++        self.job(self.ash)
++        self.provider_error = HTTPException(status_code=503, detail="The model is busy.")
++
++        claim = self.run_worker()
++        self.assertEqual(self.item(claim.item_id).status, "retrying")
++        self.assertEqual(self.used(self.ash), 1)
++
++        self.make_ready(claim.item_id)
++        self.run_worker()
++        self.make_ready(claim.item_id)
++        self.provider_error = None
++        self.run_worker()
++
++        self.assertEqual(self.item(claim.item_id).status, "done")
++        self.assertEqual(self.provider_calls, 3)  # the model was asked three times
++        self.assertEqual(self.used(self.ash), 1)  # and it was one scan
++
++    def test_a_photo_that_was_counted_is_retried_even_when_the_day_has_been_used_up(self):
++        limits.set_default_limit(self.db, unlimited=False, limit=1)
++        self.db.commit()
++        self.job(self.ash)
++        self.provider_error = HTTPException(status_code=503, detail="The model is busy.")
++        claim = self.run_worker()
++        self.assertTrue(limits.current_allowance(self.db, self.ash.id).exhausted)
++
++        self.make_ready(claim.item_id)
++        self.provider_error = None
++        self.run_worker()
++
++        self.assertEqual(self.item(claim.item_id).status, "done")
++        self.assertEqual(self.used(self.ash), 1)
++
++    def test_asking_for_a_photo_to_be_read_again_counts_it_again(self):
++        limits.set_default_limit(self.db, unlimited=False, limit=5)
++        self.db.commit()
++        self.job(self.ash)
++        claim = self.run_worker()
++        self.assertEqual(self.used(self.ash), 1)
++
++        retry_scan_item(self.db, self.item(claim.item_id))
++        self.assertIsNone(self.db.get(ScanItemCharge, claim.item_id))
++        self.run_worker()
++
++        self.assertEqual(self.used(self.ash), 2)
++
++    def test_a_photo_with_no_scan_left_fails_for_good_and_the_model_is_not_asked(self):
++        limits.set_default_limit(self.db, unlimited=False, limit=1)
++        self.db.commit()
++        limits.charge_scans(self.db, self.ash.id)
++        self.job(self.ash)
++
++        claim = self.run_worker()
++
++        item = self.item(claim.item_id)
++        self.assertEqual(item.status, "failed")  # not "retrying": waiting a minute would change nothing
++        self.assertTrue(item.error.startswith("Daily scan limit reached"), item.error)
++        self.assertIn("midnight", item.error)
++        self.assertEqual(item.attempts, 0)
++        self.assertEqual(item.transient_failures, 0)
++        self.assertEqual(self.provider_calls, 0)
++        self.assertEqual(self.used(self.ash), 1)
++
++    def test_a_failed_photo_is_read_after_the_reset_with_retry(self):
++        limits.set_default_limit(self.db, unlimited=False, limit=1)
++        self.db.commit()
++        limits.charge_scans(self.db, self.ash.id)
++        self.job(self.ash)
++        claim = self.run_worker()
++        self.assertEqual(self.item(claim.item_id).status, "failed")
++
++        self.clock.at(2026, 10, 10, 0, 0, 5)
++        retry_scan_item(self.db, self.item(claim.item_id))
++        self.run_worker()
++
++        self.assertEqual(self.item(claim.item_id).status, "done")
++        self.assertEqual(self.used(self.ash), 1)  # one scan on the new day
++
++    def test_photos_beyond_what_is_left_fail_one_by_one_and_the_ones_that_fit_are_read(self):
++        limits.set_default_limit(self.db, unlimited=False, limit=2)
++        self.db.commit()
++        self.job(self.ash, positions=(0, 1, 2, 3))
++
++        claims = [self.run_worker() for _ in range(4)]
++
++        statuses = [self.item(claim.item_id).status for claim in claims]
++        self.assertEqual(statuses, ["done", "done", "failed", "failed"])
++        self.assertEqual(self.provider_calls, 2)
++        self.assertEqual(self.used(self.ash), 2)
++
++    def test_another_users_photo_is_not_held_back_by_a_user_who_has_used_their_day(self):
++        limits.set_default_limit(self.db, unlimited=False, limit=1)
++        self.db.commit()
++        limits.charge_scans(self.db, self.ash.id)
++        self.job(self.ash)
++        self.job(self.misty)
++
++        claims = [self.run_worker(), self.run_worker()]
++
++        by_user = {self.item(claim.item_id).user_id: self.item(claim.item_id).status for claim in claims}
++        self.assertEqual(by_user, {self.ash.id: "failed", self.misty.id: "done"})
++
++    def test_an_unlimited_users_photos_are_all_read(self):
++        limits.set_default_limit(self.db, unlimited=False, limit=1)
++        limits.set_user_limit(self.db, self.ash.id, "unlimited")
++        self.db.commit()
++        self.job(self.ash, positions=(0, 1, 2))
++
++        claims = [self.run_worker() for _ in range(3)]
++
++        self.assertEqual([self.item(claim.item_id).status for claim in claims], ["done"] * 3)
++        self.assertEqual(self.used(self.ash), 3)
++
++    def test_a_read_that_is_answered_from_what_was_saved_asks_no_model_and_counts_nothing(self):
++        # After "the catalogue was unavailable" the queue matches the saved read again without asking the model.
++        limits.set_default_limit(self.db, unlimited=False, limit=5)
++        self.db.commit()
++        self.job(self.ash)
++        claim = claim_next_scan_item(self.db)
++        matcher = AsyncMock(return_value={"recognized": {"name": "Pikachu"}, "matches": []})
++        asked = AsyncMock()
++
++        with patch("database.SessionLocal", self.world.session_factory), patch(
++            "services.scan_providers.get_provider", return_value=self.provider()
++        ), patch("services.scan_providers.require_scanner_capability_mode", return_value="full"), patch(
++            "services.scan_trace.create_scan_trace", return_value=MagicMock()
++        ), patch("api.recognize.recognize_sanitized_card", new=asked), patch(
++            "api.recognize.match_card_info", new=matcher
++        ), patch("services.scan_queue._load_recognition_cache", return_value={claim.item_id: {"name": "Pikachu"}}):
++            item = self.item(claim.item_id)
++            item.retry_reason = "catalogue_unavailable"
++            self.db.commit()
++            claim = scan_queue.ClaimedScanItem(
++                item_id=claim.item_id, lease_token=claim.lease_token, recognition_cache_item_ids=(claim.item_id,)
++            )
++            asyncio.run(scan_queue.process_claimed_scan_item(claim))
++
++        asked.assert_not_awaited()
++        self.assertEqual(self.used(self.ash), 0)
++
++    def test_the_limits_429_is_final_for_the_queue_and_the_providers_is_not(self):
++        reached = scan_queue._scan_error_from_http(limits.ScanLimitReached(limits.current_allowance(self.db, self.ash.id)))
++        self.assertIsInstance(reached, scan_queue.PermanentScanError)
++        self.assertTrue(str(reached).startswith("Daily scan limit reached"))
++
++        providers = scan_queue._scan_error_from_http(HTTPException(status_code=429, detail="Quota exceeded"))
++        self.assertIsInstance(providers, scan_queue.TransientScanError)
++
++    # --- groups of photos -------------------------------------------------------------------------------------------------
++
++    def run_group(self, images, item_ids, composite_result=None):
++        recognized = composite_result if composite_result is not None else {
++            position: {"name": f"Card {position}", "language": "en"} for position in range(len(images))
++        }
++        composite = AsyncMock(return_value=recognized)
++        matcher = AsyncMock(return_value={"recognized": {}, "matches": [], "_identity_confident": True})
++        with patch("services.scan_providers.get_provider", return_value=self.provider()), patch(
++            "services.scan_providers.require_scanner_capability_mode", return_value="full"
++        ), patch("services.scan_providers.resolve_scanner_request_timeout", return_value=30), patch(
++            "services.scan_trace.create_scan_trace", return_value=MagicMock()
++        ), patch("services.card_composite.build_composite", return_value=b"grid"), patch(
++            "api.recognize.recognize_composite_card_info", new=composite
++        ), patch("api.recognize.match_composite_card_info", new=matcher), patch(
++            "services.scan_queue._persist_recognition_cache"
++        ), patch("services.scan_queue._load_recognition_cache", return_value={}):
++            results = asyncio.run(scan_queue.default_composite_processor(
++                self.db, self.ash.id, images, ["image/jpeg"] * len(images), job_id=1, item_ids=item_ids, lease_token="lease",
++            ))
++        return results, composite
++
++    def test_every_photo_in_a_group_is_a_scan(self):
++        limits.set_default_limit(self.db, unlimited=False, limit=10)
++        self.db.commit()
++
++        results, composite = self.run_group([b"a", b"b", b"c"], self.world.photos(self.ash, 3))
++
++        composite.assert_awaited_once()
++        self.assertEqual(len(results), 3)
++        self.assertTrue(all(result is not None for result in results))
++        self.assertEqual(self.used(self.ash), 3)
++
++    def test_a_group_that_no_longer_fits_is_read_photo_by_photo_instead(self):
++        limits.set_default_limit(self.db, unlimited=False, limit=3)
++        self.db.commit()
++        limits.charge_scans(self.db, self.ash.id, count=2)
++        photos = self.world.photos(self.ash, 3)
++
++        results, composite = self.run_group([b"a", b"b", b"c"], photos)
++
++        self.assertEqual(results, [None, None, None])  # the queue puts each photo back to be read on its own
++        composite.assert_not_awaited()
++        self.assertEqual(self.used(self.ash), 2)  # nothing was counted for the group
++        for item_id in photos:
++            self.assertIsNone(self.db.get(ScanItemCharge, item_id))
++
++    def test_a_group_with_no_scan_left_asks_no_model_either(self):
++        limits.set_default_limit(self.db, unlimited=False, limit=0)
++        self.db.commit()
++
++        results, composite = self.run_group([b"a", b"b"], self.world.photos(self.ash, 2))
++
++        self.assertEqual(results, [None, None])
++        composite.assert_not_awaited()
++        self.assertEqual(self.used(self.ash), 0)
++
++    def test_photos_of_a_group_that_were_counted_before_are_not_counted_again(self):
++        limits.set_default_limit(self.db, unlimited=False, limit=10)
++        self.db.commit()
++        first, second = self.world.photos(self.ash, 2)
++        limits.charge_scans(self.db, self.ash.id, item_ids=[first])
++
++        self.run_group([b"a", b"b"], [first, second])
++
++        self.assertEqual(self.used(self.ash), 2)  # photo 1 once, photo 2 once
++
++    def test_a_group_with_an_unlimited_user_is_always_read(self):
++        limits.set_default_limit(self.db, unlimited=False, limit=0)
++        limits.set_user_limit(self.db, self.ash.id, "unlimited")
++        self.db.commit()
++
++        results, composite = self.run_group([b"a", b"b"], self.world.photos(self.ash, 2))
++
++        composite.assert_awaited_once()
++        self.assertTrue(all(result is not None for result in results))
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# The place the count is taken: right before the model is asked
++# ---------------------------------------------------------------------------------------------------------------------
++
++@unittest.skipUnless(DEPS, "FastAPI/SQLAlchemy are not installed in this lightweight test environment")
++class CountedJustBeforeTheModelTests(unittest.IsolatedAsyncioTestCase):
++    @staticmethod
++    def provider(*, is_gemini=True, key="a-key", requires_key=True):
++        provider = provider_double(key=key, requires_key=requires_key, is_gemini=is_gemini)
++        return provider
++
++    @contextlib.contextmanager
++    def patched(self, provider, *, capability="full", matcher=None):
++        with contextlib.ExitStack() as stack:
++            stack.enter_context(patch("api.recognize.get_provider", return_value=provider))
++            stack.enter_context(patch("api.recognize.require_scanner_capability_mode", return_value=capability))
++            stack.enter_context(patch("api.recognize.resolve_scanner_request_timeout", return_value=30))
++            stack.enter_context(patch(
++                "api.recognize.match_card_info",
++                new=matcher or AsyncMock(return_value={"recognized": {}, "matches": [], "_identity_confident": True}),
++            ))
++            yield
++
++    async def test_the_hook_runs_after_the_checks_and_before_the_model(self):
++        provider = self.provider()
++        order = []
++        provider.credential.side_effect = lambda *_: order.append("credential") or "a-key"
++        provider.generate_text = AsyncMock(side_effect=lambda *_a, **_k: order.append("model") or ('{"name":"Pikachu"}', None))
++
++        with self.patched(provider):
++            await recognize_sanitized_card(object(), 7, b"image", "image/jpeg", before_provider_call=lambda: order.append("hook"))
++
++        self.assertEqual(order, ["credential", "hook", "model"])
++
++    async def test_a_refusal_from_the_hook_stops_the_model_from_being_asked(self):
++        provider = self.provider()
++
++        def refuse():
++            raise HTTPException(status_code=429, detail="no")
++
++        with self.patched(provider), self.assertRaises(HTTPException) as caught:
++            await recognize_sanitized_card(object(), 7, b"image", "image/jpeg", before_provider_call=refuse)
++
++        self.assertEqual(caught.exception.status_code, 429)
++        provider.generate_text.assert_not_awaited()
++
++    async def test_a_missing_key_never_reaches_the_hook(self):
++        provider = self.provider(key="", requires_key=True)
++        hook = Mock()
++
++        with self.patched(provider), self.assertRaises(HTTPException) as caught:
++            await recognize_sanitized_card(object(), 7, b"image", "image/jpeg", before_provider_call=hook)
++
++        self.assertEqual(caught.exception.status_code, 400)
++        hook.assert_not_called()
++
++    async def test_a_scanner_that_needs_testing_again_never_reaches_the_hook(self):
++        provider = self.provider()
++        hook = Mock()
++        with patch("api.recognize.get_provider", return_value=provider), patch(
++            "api.recognize.resolve_scanner_request_timeout", return_value=30
++        ), patch(
++            "api.recognize.require_scanner_capability_mode",
++            side_effect=HTTPException(status_code=409, detail="Test and save again."),
++        ), self.assertRaises(HTTPException):
++            await recognize_sanitized_card(object(), 7, b"image", "image/jpeg", before_provider_call=hook)
++
++        hook.assert_not_called()
++
++    async def test_the_second_opinion_from_gemini_is_part_of_the_same_scan(self):
++        # An OpenAI-compatible provider (Groq, say) that is not sure, with the Gemini fallback on: two requests are made to
++        # two models for one photo. The scan is counted once, at the first of them.
++        primary = self.provider(is_gemini=False, key="", requires_key=False)
++        gemini = self.provider(is_gemini=True)
++        results = iter([
++            {"recognized": {}, "matches": [{"id": "groq"}], "_identity_confident": False, "_identity_decision": None},
++            {"recognized": {}, "matches": [{"id": "gemini"}], "_identity_confident": True, "_identity_decision": None},
++        ])
++        matcher = AsyncMock(side_effect=lambda *a, **k: next(results))
++        hook = Mock()
++
++        with self.patched(primary, matcher=matcher), patch(
++            "api.recognize.gemini_fallback_enabled", return_value=True
++        ), patch("api.recognize.get_gemini_key", return_value="gemini-key"), patch(
++            "api.recognize.resolve_model", return_value="gemini-model"
++        ), patch("api.recognize.ScanProvider", return_value=gemini):
++            result = await recognize_sanitized_card(object(), 7, b"image", "image/jpeg", before_provider_call=hook)
++
++        self.assertEqual(result["matches"][0]["id"], "gemini")
++        primary.generate_text.assert_awaited_once()
++        gemini.generate_text.assert_awaited_once()
++        hook.assert_called_once_with()
++
++    async def test_scanning_with_groq_through_the_openai_compatible_provider_is_counted_like_any_other(self):
++        # Nothing here is specific to a provider: whichever model reads the photo, the count is taken the same way.
++        provider = self.provider(is_gemini=False, key="groq-key", requires_key=True)
++        hook = Mock()
++
++        with self.patched(provider):
++            await recognize_sanitized_card(object(), 7, b"image", "image/jpeg", before_provider_call=hook)
++
++        provider.generate_text.assert_awaited_once()
++        hook.assert_called_once_with()
++
++    async def test_without_a_hook_nothing_changes(self):
++        provider = self.provider()
++
++        with self.patched(provider):
++            result = await recognize_sanitized_card(object(), 7, b"image", "image/jpeg")
++
++        provider.generate_text.assert_awaited_once()
++        self.assertIsNotNone(result)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/backend/tests/test_scan_queue.py b/backend/tests/test_scan_queue.py
+index cc5aafc..b4474d6 100644
+--- a/backend/tests/test_scan_queue.py
++++ b/backend/tests/test_scan_queue.py
+@@ -1271,6 +1271,8 @@ class CompositeProcessorTests(unittest.IsolatedAsyncioTestCase):
+                 new=AsyncMock(return_value=composite_info),
+             ),
+             patch("api.recognize.match_composite_card_info", new=matcher),
++            # This test is not about the daily scan limit, and its session is a stand-in.
++            patch("services.scan_queue.charge_scans"),
+         ):
+             results = await scan_queue.default_composite_processor(
+                 db,
+@@ -1317,6 +1319,9 @@ class CompositeProcessorTests(unittest.IsolatedAsyncioTestCase):
+             "services.card_composite.build_composite", return_value=b"composite"
+         ), patch(
+             "api.recognize.recognize_composite_card_info", new=recognize
++        ), patch(
++            # Not about the daily scan limit, and the session is a stand-in.
++            "services.scan_queue.charge_scans"
+         ):
+             create_trace.return_value = MagicMock()
+             result = await scan_queue.default_composite_processor(
+diff --git a/docs/SCAN_LIMITS.md b/docs/SCAN_LIMITS.md
+new file mode 100644
+index 0000000..7007227
+--- /dev/null
++++ b/docs/SCAN_LIMITS.md
+@@ -0,0 +1,111 @@
++# Daily scan limits
++
++An administrator can limit how many cards each user may have read by the vision model in a day. The limit is kept and
++enforced **on the server**, right before the model is asked, so it holds for every client: the website, the CardPulse app,
++an older app, or a script that calls the API directly. The apps only show it.
++
++Nothing changes until an administrator chooses a number: the default is **unlimited**.
++
++## What counts as a scan
++
++One *scan* is one photo whose card the vision model is asked to read, whichever model reads it (Gemini, or an
++OpenAI-compatible endpoint such as OpenAI or Groq).
++
++| | |
++| --- | --- |
++| **Counted** | A photo at the moment its recognition starts: the first request to the model for it. Once, however the read turns out. |
++| **Counted again** | A photo whose owner asks for it to be read again (**Retry**). That is another request to the model. |
++| **Not counted** | Opening the scanner or the camera. A photo the server turns away before it reads anything: not an image, too big, nobody signed in, no API key set up, a scanner that has to be tested again. Matching a card that was read with the catalogue. The checks the server makes with the model's help afterwards (comparing pictures, the optional second opinion from Gemini). The retries the queue makes by itself when the model or the network fails. A read that is answered from what the queue already saved. |
++
++Photos that are scanned together (a group read as one picture) count one scan per photo. If a group no longer fits into what
++is left of the day, its photos are read one by one instead, so the ones that fit still get read.
++
++A scan that fails *after* the model was asked (the provider was busy, say) still counts once: the request was made. The queue's
++automatic retries of the same photo do not count again.
++
++## Which limit a user has
++
++1. A user's **own setting** wins: a number of their own (0 switches scanning off for that user) or *unlimited*.
++2. A user without one has the **default**: a number, or unlimited.
++
++Admins are limited like everyone else until their own setting says *unlimited*. (Settings → Users.)
++
++## When a day starts
++
++The day is the **server's local date**: usage starts again at the server's local midnight. In Docker the server's time zone is
++the backend container's, which is **UTC unless `TZ` is set**. To get your own midnight, set it for the backend, for example in
++`.env`:
++
++```
++TZ=Europe/Berlin
++```
++
++and pass it on (`docker-compose.friends.yml` from the CardPulse repository does this for you). Settings → Scanner shows the
++time zone the server is using and the next reset, so you can check it.
++
++Usage is stored in the database, so restarting the backend does not reset it. A new day needs no job to run: it is a new row
++that starts at zero. Days are kept (one small row per user and day).
++
++## When there are no scans left
++
++A request that would start a read gets **HTTP 429**:
++
++```json
++{
++  "detail": "Daily scan limit reached. Scans reset at midnight (Europe/Berlin).",
++  "code": "scan_limit_reached",
++  "daily_limit": 100,
++  "unlimited": false,
++  "used": 100,
++  "remaining": 0,
++  "resets_at": "2026-10-10T00:00:00+02:00",
++  "resets_in_seconds": 41523,
++  "timezone": "Europe/Berlin"
++}
++```
++
++with a `Retry-After` header (seconds until the reset). `code` tells it apart from the rate limiter's 429, which is the one
++that is worth retrying in a moment.
++
++* `POST /api/cards/recognize` (read one photo now): refused before the model is asked.
++* `POST /api/cards/recognize/jobs` (queue photos): refused, and nothing is stored, when the user has **no** scan left. A user
++  with some left may queue more photos than that: scans are counted when each photo starts to be read, and the photos that no
++  longer fit are marked **failed** (*"Daily scan limit reached…"*) without any request to the model. They stay on the review
++  list, and **Retry** reads them once there are scans again.
++* `POST /api/cards/recognize/jobs/{job}/items/{item}/retry`: refused when there is no scan left.
++
++## API
++
++Everything is under `/api/scan-limits`. `null` for a limit or for `remaining` means **unlimited**.
++
++| | | |
++| --- | --- | --- |
++| `GET /me` | any signed-in user | Their allowance today: `daily_limit`, `unlimited`, `used`, `remaining`, `resets_at`, `resets_in_seconds`, `timezone`. |
++| `GET /settings` | admin | The default (`default_limit`, `default_unlimited`) and when a day starts over (`timezone`, `utc_offset`, `reset_time`, `next_reset_at`, `seconds_until_reset`). |
++| `PUT /settings` | admin | `{"default_limit": 100, "default_unlimited": false}`. Either field alone is fine. The number is kept while the default is unlimited. |
++| `GET /users` | admin | The same, and `users`: for each user `mode` (`default`, `custom`, `unlimited`), `custom_limit`, the `daily_limit` that applies, `used` and `remaining` today. |
++| `PUT /users/{id}` | admin | `{"mode": "default"}`, `{"mode": "custom", "limit": 50}` or `{"mode": "unlimited"}`. |
++
++The scan endpoints that poll a job (`GET /api/cards/recognize/jobs/{id}`) and queue one (`POST …/jobs`) also carry the user's
++allowance as `scan_limit`, so a client that polls anyway sees the count move without another request.
++
++## On the website
++
++* **Settings → General → AI / card scanner** (admins): *Default daily scan limit*, with a switch for *Unlimited*, and the time
++  zone and the next reset.
++* **Settings → Users** (admins, multi-user mode): for each user *Use default*, *Custom limit* or *Unlimited*, and how much they
++  have used today (for example `34 / 100 today`).
++
++Only admins can change any of it; the API refuses everyone else with `403`.
++
++## Data
++
++Three small tables, created when the server starts. No existing table or row is changed.
++
++| Table | Holds |
++| --- | --- |
++| `scan_usage` | scans used, per user and day |
++| `scan_limit_overrides` | a user's own setting (none for users on the default) |
++| `scan_item_charges` | which queued photos were already counted, so the queue's retries do not count twice |
++
++The default limit is kept with the other global settings (`settings`: `scan_limit_default` and `scan_limit_default_unlimited`).
+diff --git a/frontend/src/api/client.js b/frontend/src/api/client.js
+index 34714d6..8c58f74 100644
+--- a/frontend/src/api/client.js
++++ b/frontend/src/api/client.js
+@@ -61,6 +61,12 @@ export const setAuthMode = (enabled) => api.put('/auth/mode', { enabled }).then(
+ export const getUsers = () => api.get('/auth/users').then(r => r.data)
+ export const createUser = (data) => api.post('/auth/users', data).then(r => r.data)
+ export const updateUser = (id, data) => api.put(`/auth/users/${id}`, data).then(r => r.data)
++
++// Daily scan limits (admins; docs/SCAN_LIMITS.md)
++export const getScanLimitSettings = () => api.get('/scan-limits/settings').then(r => r.data)
++export const updateScanLimitSettings = (data) => api.put('/scan-limits/settings', data).then(r => r.data)
++export const getScanLimitUsers = () => api.get('/scan-limits/users').then(r => r.data)
++export const updateUserScanLimit = (id, data) => api.put(`/scan-limits/users/${id}`, data).then(r => r.data)
+ export const deleteUser = (id) => api.delete(`/auth/users/${id}`).then(r => r.data)
+ export const changePassword = (data) => api.put('/auth/me/password', data).then(r => r.data)
+ export const forceChangePassword = (newPassword) => api.put('/auth/me/force-password', { new_password: newPassword }).then(r => r.data)
+diff --git a/frontend/src/components/ScanLimitSettingsCard.jsx b/frontend/src/components/ScanLimitSettingsCard.jsx
+new file mode 100644
+index 0000000..034426b
+--- /dev/null
++++ b/frontend/src/components/ScanLimitSettingsCard.jsx
+@@ -0,0 +1,153 @@
++import { useEffect, useState } from 'react'
++import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
++import { formatDistance } from 'date-fns'
++import toast from 'react-hot-toast'
++
++import { getScanLimitSettings, updateScanLimitSettings } from '../api/client'
++import {
++  MAX_DAILY_SCAN_LIMIT,
++  defaultLimitChange,
++  parseScanLimit,
++  zoneLabel,
++} from '../utils/scanLimits'
++
++// The daily scan limit for everyone who has none of their own (admins only; docs/SCAN_LIMITS.md). It sits in Settings →
++// General, in the AI / card scanner section, under the scanner's own settings. A user's own limit is set in Settings → Users.
++
++const CARD_STYLE = { background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }
++const INNER_STYLE = { background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.05)' }
++
++// The same switch as the rest of Settings (that one is private to the page).
++function Switch({ value, onChange, label, disabled = false }) {
++  return (
++    <button
++      type="button"
++      onClick={() => onChange(!value)}
++      disabled={disabled}
++      className={`relative w-11 h-6 flex-shrink-0 rounded-full transition-colors duration-200 ${
++        value ? 'bg-brand-red' : 'bg-bg-elevated border border-border'
++      } ${disabled ? 'cursor-not-allowed opacity-50' : ''}`}
++      aria-pressed={value}
++      aria-label={label}
++    >
++      <span
++        className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
++          value ? 'translate-x-5' : 'translate-x-0'
++        }`}
++      />
++    </button>
++  )
++}
++
++// The form on its own: what the server sent in, what the admin wants out. `now` is only there so tests can fix the clock.
++export function ScanLimitForm({ t, settings, saving = false, onSave, now = new Date() }) {
++  const [unlimited, setUnlimited] = useState(settings.default_unlimited)
++  const [text, setText] = useState(String(settings.default_limit))
++
++  // A save, or a change made elsewhere, brings the form back in line with the server.
++  useEffect(() => {
++    setUnlimited(settings.default_unlimited)
++    setText(String(settings.default_limit))
++  }, [settings.default_unlimited, settings.default_limit])
++
++  const limit = parseScanLimit(text)
++  const invalid = !unlimited && limit === null
++  const change = defaultLimitChange(settings, { unlimited, limit: limit ?? settings.default_limit })
++  const dirty = Object.keys(change).length > 0
++  const reset = settings.next_reset_at ? new Date(settings.next_reset_at) : null
++
++  return (
++    <div className="rounded-2xl overflow-hidden" style={CARD_STYLE} data-testid="scan-limit-default">
++      <div className="px-4 py-4 space-y-4">
++        <div>
++          <p className="text-sm font-semibold text-text-primary">{t('settings.scanLimits.title')}</p>
++          <p className="text-xs text-text-muted mt-1 max-w-2xl">{t('settings.scanLimits.desc')}</p>
++        </div>
++
++        <div className="flex items-center justify-between gap-3">
++          <div className="min-w-0">
++            <p className="text-xs font-semibold text-text-primary">{t('settings.scanLimits.unlimitedByDefault')}</p>
++            <p className="text-[11px] text-text-muted mt-0.5">{t('settings.scanLimits.unlimitedByDefaultDesc')}</p>
++          </div>
++          <Switch value={unlimited} onChange={setUnlimited} label={t('settings.scanLimits.unlimitedByDefault')} disabled={saving} />
++        </div>
++
++        <div>
++          <label htmlFor="scan-limit-default" className="text-xs font-semibold text-text-primary">
++            {t('settings.scanLimits.defaultLimit')}
++          </label>
++          <div className="mt-1.5 flex flex-wrap items-center gap-2">
++            <input
++              id="scan-limit-default"
++              type="number"
++              inputMode="numeric"
++              min="0"
++              max={MAX_DAILY_SCAN_LIMIT}
++              step="1"
++              value={text}
++              onChange={event => setText(event.target.value)}
++              disabled={unlimited || saving}
++              aria-invalid={invalid}
++              className="input w-32 text-xs"
++            />
++            <span className="text-xs text-text-muted">{t('settings.scanLimits.perUserPerDay')}</span>
++            <button
++              type="button"
++              onClick={() => onSave(change)}
++              disabled={!dirty || invalid || saving}
++              className="btn-primary text-xs"
++            >
++              {t('common.save')}
++            </button>
++          </div>
++          {invalid && <p role="alert" className="mt-1 text-[11px] text-brand-red">{t('settings.scanLimits.invalidLimit')}</p>}
++          <p className="mt-1 text-[11px] text-text-muted">{t('settings.scanLimits.defaultLimitDesc')}</p>
++        </div>
++
++        <div className="rounded-xl px-3 py-2.5" style={INNER_STYLE}>
++          <p className="text-xs font-semibold text-text-primary">{t('settings.scanLimits.resetsTitle')}</p>
++          <p className="text-[11px] text-text-muted mt-1">{t('settings.scanLimits.resetsDesc')}</p>
++          <p className="text-[11px] text-text-muted mt-1">
++            {t('settings.scanLimits.timezone')}: <span className="font-semibold text-text-primary">{zoneLabel(settings)}</span>
++          </p>
++          {reset && (
++            <p className="text-[11px] text-text-muted mt-1">
++              {t('settings.scanLimits.nextReset')}:{' '}
++              <span className="font-semibold text-text-primary">{formatDistance(reset, now, { addSuffix: true })}</span>
++              {' · '}
++              {reset.toLocaleString()}
++            </p>
++          )}
++          <p className="text-[11px] text-text-muted mt-1">{t('settings.scanLimits.timezoneHint')}</p>
++        </div>
++      </div>
++    </div>
++  )
++}
++
++export default function ScanLimitSettingsCard({ t }) {
++  const queryClient = useQueryClient()
++  const { data, isLoading, isError } = useQuery({ queryKey: ['scan-limit-settings'], queryFn: getScanLimitSettings })
++  const save = useMutation({
++    mutationFn: updateScanLimitSettings,
++    onSuccess: (saved) => {
++      queryClient.setQueryData(['scan-limit-settings'], saved)
++      // The users list shows the limit that applies to each user, which the default is part of.
++      queryClient.invalidateQueries({ queryKey: ['scan-limits-users'] })
++      toast.success(t('settings.scanLimits.saved'))
++    },
++    onError: (error) => toast.error(error.response?.data?.detail || t('common.error')),
++  })
++
++  if (isLoading) return null
++  if (isError || typeof data?.default_limit !== 'number') {
++    // An older server without the update has no such route: say so rather than showing a form that cannot work.
++    return (
++      <div className="rounded-2xl px-4 py-3" style={CARD_STYLE}>
++        <p className="text-sm font-semibold text-text-primary">{t('settings.scanLimits.title')}</p>
++        <p className="text-xs text-text-muted mt-1">{t('settings.scanLimits.unavailable')}</p>
++      </div>
++    )
++  }
++  return <ScanLimitForm t={t} settings={data} saving={save.isPending} onSave={(change) => save.mutate(change)} />
++}
+diff --git a/frontend/src/components/ScanLimits.test.jsx b/frontend/src/components/ScanLimits.test.jsx
+new file mode 100644
+index 0000000..ab6acfd
+--- /dev/null
++++ b/frontend/src/components/ScanLimits.test.jsx
+@@ -0,0 +1,117 @@
++import { renderToStaticMarkup } from 'react-dom/server'
++import { describe, expect, it } from 'vitest'
++
++import { ScanLimitForm } from './ScanLimitSettingsCard'
++import UserScanLimitControl from './UserScanLimitControl'
++
++const translations = {
++  'settings.scanLimits.title': 'Daily scan limit',
++  'settings.scanLimits.desc': 'About the limit',
++  'settings.scanLimits.unlimitedByDefault': 'Unlimited by default',
++  'settings.scanLimits.unlimitedByDefaultDesc': 'About unlimited',
++  'settings.scanLimits.defaultLimit': 'Default daily scan limit',
++  'settings.scanLimits.defaultLimitDesc': 'About the default',
++  'settings.scanLimits.perUserPerDay': 'scans per user per day',
++  'settings.scanLimits.invalidLimit': 'Enter a whole number',
++  'settings.scanLimits.resetsTitle': 'Reset',
++  'settings.scanLimits.resetsDesc': 'About the reset',
++  'settings.scanLimits.timezone': 'Server time zone',
++  'settings.scanLimits.nextReset': 'Next reset',
++  'settings.scanLimits.timezoneHint': 'About TZ',
++  'settings.scanLimits.dailyScans': 'Daily scans',
++  'settings.scanLimits.today': 'today',
++  'settings.scanLimits.unlimited': 'Unlimited',
++  'settings.scanLimits.useDefault': 'Use default',
++  'settings.scanLimits.custom': 'Custom',
++  'settings.scanLimits.customLimit': 'Custom daily scan limit',
++  'common.save': 'Save',
++}
++const t = key => translations[key] || key
++
++const settings = {
++  default_unlimited: false,
++  default_limit: 100,
++  timezone: 'Europe/Berlin',
++  utc_offset: '+02:00',
++  reset_time: '00:00',
++  next_reset_at: '2026-10-10T00:00:00+02:00',
++  seconds_until_reset: 43200,
++}
++const noon = new Date('2026-10-09T12:00:00+02:00')
++
++const render = (element) => renderToStaticMarkup(element)
++
++describe('the default limit (Settings → Scanner)', () => {
++  it('shows the number, the switch, the time zone and when the day starts over', () => {
++    const html = render(<ScanLimitForm t={t} settings={settings} onSave={() => {}} now={noon} />)
++
++    expect(html).toContain('Daily scan limit')
++    expect(html).toMatch(/<input[^>]*id="scan-limit-default"[^>]*value="100"/)
++    expect(html).toContain('aria-pressed="false"') // not unlimited
++    expect(html).toContain('Europe/Berlin (UTC+02:00)')
++    expect(html).toContain('in about 12 hours')
++    expect(html).toContain('About TZ')
++  })
++
++  it('has nothing to save until something is changed', () => {
++    const html = render(<ScanLimitForm t={t} settings={settings} onSave={() => {}} now={noon} />)
++    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Save<\/button>/)
++  })
++
++  it('shows an unlimited default with the number kept but switched off', () => {
++    const html = render(<ScanLimitForm t={t} settings={{ ...settings, default_unlimited: true }} onSave={() => {}} now={noon} />)
++
++    expect(html).toContain('aria-pressed="true"')
++    expect(html).toMatch(/<input[^>]*id="scan-limit-default"[^>]*disabled=""/)
++    expect(html).toMatch(/<input[^>]*id="scan-limit-default"[^>]*value="100"/)
++  })
++
++  it('shows a time zone without an offset when the server sent none', () => {
++    const html = render(
++      <ScanLimitForm t={t} settings={{ ...settings, utc_offset: undefined, timezone: 'UTC' }} onSave={() => {}} now={noon} />,
++    )
++    expect(html).toContain('>UTC<')
++  })
++})
++
++describe("a user's limit (Settings → Users)", () => {
++  const user = { id: 7, username: 'ash', mode: 'default', custom_limit: null, daily_limit: 100, unlimited: false, used: 34, remaining: 66 }
++  const control = (row, extra = {}) => render(<UserScanLimitControl t={t} row={row} onChange={() => {}} {...extra} />)
++
++  it('shows what the user has used today next to the limit that applies', () => {
++    const html = control(user)
++    expect(html).toContain('34 / 100 today')
++    expect(html).toContain('Daily scans')
++    expect(html).toContain('data-testid="scan-limit-7"')
++  })
++
++  it('offers the default, a limit of their own, and unlimited, with the current one chosen', () => {
++    const html = control(user)
++    expect(html).toMatch(/role="radio"[^>]*aria-checked="true"[^>]*>Use default</)
++    expect(html).toMatch(/role="radio"[^>]*aria-checked="false"[^>]*>Custom</)
++    expect(html).toMatch(/role="radio"[^>]*aria-checked="false"[^>]*>Unlimited</)
++    expect(html).not.toContain('type="number"') // the number box is only there for a limit of their own
++  })
++
++  it('shows the number of a custom limit in a box of its own, with nothing to save yet', () => {
++    const html = control({ ...user, mode: 'custom', custom_limit: 50, daily_limit: 50, used: 5 })
++
++    expect(html).toContain('5 / 50 today')
++    expect(html).toMatch(/role="radio"[^>]*aria-checked="true"[^>]*>Custom</)
++    expect(html).toMatch(/<input[^>]*type="number"[^>]*value="50"/)
++    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Save<\/button>/)
++  })
++
++  it('shows an unlimited user with the word Unlimited instead of a number to be used up', () => {
++    const html = control({ ...user, mode: 'unlimited', custom_limit: 50, daily_limit: null, unlimited: true, used: 12, remaining: null })
++
++    expect(html).toContain('12 today · Unlimited')
++    expect(html).toMatch(/role="radio"[^>]*aria-checked="true"[^>]*>Unlimited</)
++    expect(html).not.toContain('type="number"')
++  })
++
++  it('locks the choices while a change is being saved', () => {
++    const html = control(user, { busy: true })
++    expect(html.match(/disabled=""/g)).toHaveLength(3)
++  })
++})
+diff --git a/frontend/src/components/UserScanLimitControl.jsx b/frontend/src/components/UserScanLimitControl.jsx
+new file mode 100644
+index 0000000..47f720c
+--- /dev/null
++++ b/frontend/src/components/UserScanLimitControl.jsx
+@@ -0,0 +1,100 @@
++import { useEffect, useState } from 'react'
++
++import {
++  MAX_DAILY_SCAN_LIMIT,
++  SCAN_LIMIT_MODES,
++  formatScanUsage,
++  parseScanLimit,
++  startingLimit,
++} from '../utils/scanLimits'
++
++// One user's daily scan limit, under their row in Settings → Users (admins only; docs/SCAN_LIMITS.md): how much they have used
++// today, and whether they use the default limit, one of their own, or none. Choosing "Use default" or "Unlimited" saves at
++// once; a number of their own is saved with its button, so nothing half typed is ever applied.
++//
++// `row` is what the server sends for the user: mode, custom_limit, daily_limit (the limit that applies; null is unlimited),
++// used, remaining. `onChange` gets the body for the server: {mode} or {mode: 'custom', limit}.
++export default function UserScanLimitControl({ t, row, busy = false, onChange }) {
++  const [text, setText] = useState(startingLimit(row))
++
++  // What the server confirmed is what the box shows.
++  useEffect(() => {
++    setText(startingLimit(row))
++  }, [row.mode, row.custom_limit, row.daily_limit])
++
++  const typed = parseScanLimit(text)
++  const custom = row.mode === 'custom'
++  const invalid = custom && typed === null
++  const changed = custom && typed !== null && typed !== row.custom_limit
++
++  const words = { today: t('settings.scanLimits.today'), unlimited: t('settings.scanLimits.unlimited') }
++  const labels = {
++    default: t('settings.scanLimits.useDefault'),
++    custom: t('settings.scanLimits.custom'),
++    unlimited: t('settings.scanLimits.unlimited'),
++  }
++
++  const choose = (mode) => {
++    if (busy || mode === row.mode) return
++    if (mode === 'custom') {
++      if (typed === null) return
++      onChange({ mode: 'custom', limit: typed })
++      return
++    }
++    onChange({ mode })
++  }
++
++  return (
++    <div className="px-4 pb-3.5 -mt-1 flex flex-wrap items-center gap-x-3 gap-y-2" data-testid={`scan-limit-${row.id}`}>
++      <span className="text-xs text-text-muted">{t('settings.scanLimits.dailyScans')}</span>
++      <span className="text-xs font-semibold text-text-primary tabular-nums">{formatScanUsage(row, words)}</span>
++
++      <div role="radiogroup" aria-label={t('settings.scanLimits.dailyScans')} className="flex flex-wrap gap-1.5">
++        {SCAN_LIMIT_MODES.map(mode => (
++          <button
++            key={mode}
++            type="button"
++            role="radio"
++            aria-checked={row.mode === mode}
++            disabled={busy}
++            onClick={() => choose(mode)}
++            className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition-colors disabled:opacity-60 ${
++              row.mode === mode
++                ? 'bg-brand-red text-white border-brand-red'
++                : 'bg-bg-card text-text-muted border-border hover:text-text-primary'
++            }`}
++          >
++            {labels[mode]}
++          </button>
++        ))}
++      </div>
++
++      {custom && (
++        <div className="flex items-center gap-1.5">
++          <input
++            type="number"
++            inputMode="numeric"
++            min="0"
++            max={MAX_DAILY_SCAN_LIMIT}
++            step="1"
++            value={text}
++            onChange={event => setText(event.target.value)}
++            disabled={busy}
++            aria-label={t('settings.scanLimits.customLimit')}
++            aria-invalid={invalid}
++            className="input w-24 text-xs"
++          />
++          <button
++            type="button"
++            onClick={() => onChange({ mode: 'custom', limit: typed })}
++            disabled={busy || invalid || !changed}
++            className="btn-primary text-[11px] px-2.5 py-1"
++          >
++            {t('common.save')}
++          </button>
++        </div>
++      )}
++      {invalid && <span role="alert" className="text-[11px] text-brand-red">{t('settings.scanLimits.invalidLimit')}</span>}
++    </div>
++  )
++}
+diff --git a/frontend/src/i18n/de.js b/frontend/src/i18n/de.js
+index a0d4c80..7e57f25 100644
+--- a/frontend/src/i18n/de.js
++++ b/frontend/src/i18n/de.js
+@@ -1349,6 +1349,31 @@ const de = {
+       cannotDeleteSelf: 'Du kannst dich nicht selbst löschen',
+       createdAt: 'Erstellt am',
+     },
++    // Tägliche Scan-Limits (docs/SCAN_LIMITS.md)
++    scanLimits: {
++      title: 'Tägliches Scan-Limit',
++      desc: 'Wie viele Karten jeder Benutzer pro Tag vom KI-Scanner erkennen lassen darf. Der Server erzwingt das Limit; es gilt also für die Website und für die CardPulse-App gleichermaßen.',
++      unlimitedByDefault: 'Standardmäßig unbegrenzt',
++      unlimitedByDefaultDesc: 'Benutzer ohne eigenes Limit dürfen beliebig oft scannen. Ausschalten, um die Zahl darunter zu verwenden.',
++      defaultLimit: 'Standard-Limit pro Tag',
++      defaultLimitDesc: 'Für alle Benutzer ohne eigenes Limit (Einstellungen → Benutzer). 0 schaltet das Scannen aus.',
++      perUserPerDay: 'Scans pro Benutzer und Tag',
++      invalidLimit: 'Bitte eine ganze Zahl von 0 bis 100000 eingeben.',
++      saved: 'Tägliches Scan-Limit gespeichert',
++      unavailable: 'Dieser Server kennt noch keine täglichen Scan-Limits. Installiere das Scan-Limit-Update.',
++      resetsTitle: 'Zurücksetzen',
++      resetsDesc: 'Jeden Tag um Mitternacht (Serverzeit) beginnt jeder wieder bei null. Gezählt werden nur Fotos, deren Erkennung der KI-Scanner startet.',
++      timezone: 'Zeitzone des Servers',
++      nextReset: 'Nächstes Zurücksetzen',
++      timezoneHint: 'In Docker ist die Zeitzone UTC, solange TZ für den Backend-Container nicht gesetzt ist (z. B. TZ=Europe/Berlin).',
++      dailyScans: 'Tägliche Scans',
++      today: 'heute',
++      unlimited: 'Unbegrenzt',
++      useDefault: 'Standard verwenden',
++      custom: 'Eigenes Limit',
++      customLimit: 'Eigenes tägliches Scan-Limit',
++      userSaved: 'Tägliches Scan-Limit gespeichert',
++    },
+     // Sync section row labels
+     syncSetsCards: 'Sets & Karten synchronisieren',
+     interval: 'Intervall',
+diff --git a/frontend/src/i18n/en.js b/frontend/src/i18n/en.js
+index c93976b..f59e857 100644
+--- a/frontend/src/i18n/en.js
++++ b/frontend/src/i18n/en.js
+@@ -1370,6 +1370,31 @@ const en = {
+       cannotDeleteSelf: 'Cannot delete yourself',
+       createdAt: 'Created at',
+     },
++    // Daily scan limits (docs/SCAN_LIMITS.md)
++    scanLimits: {
++      title: 'Daily scan limit',
++      desc: 'How many cards each user may have read by the AI scanner per day. The server enforces it, so it holds for the website and for the CardPulse app alike.',
++      unlimitedByDefault: 'Unlimited by default',
++      unlimitedByDefaultDesc: 'Users without a limit of their own can scan as much as they like. Switch off to use the number below.',
++      defaultLimit: 'Default daily scan limit',
++      defaultLimitDesc: 'For every user who has none of their own (Settings → Users). 0 switches scanning off.',
++      perUserPerDay: 'scans per user per day',
++      invalidLimit: 'Enter a whole number from 0 to 100000.',
++      saved: 'Daily scan limit saved',
++      unavailable: 'This server has no daily scan limits yet. Install the scan-limits update to use them.',
++      resetsTitle: 'Reset',
++      resetsDesc: 'Every day at midnight, server time, everyone starts again at zero. Only photos the AI scanner starts to read are counted.',
++      timezone: 'Server time zone',
++      nextReset: 'Next reset',
++      timezoneHint: 'In Docker the time zone is UTC unless TZ is set for the backend container (for example TZ=Europe/Berlin).',
++      dailyScans: 'Daily scans',
++      today: 'today',
++      unlimited: 'Unlimited',
++      useDefault: 'Use default',
++      custom: 'Custom',
++      customLimit: 'Custom daily scan limit',
++      userSaved: 'Daily scan limit saved',
++    },
+     // Sync section row labels
+     syncSetsCards: 'Sync Sets & Cards',
+     interval: 'Interval',
+diff --git a/frontend/src/pages/Settings.jsx b/frontend/src/pages/Settings.jsx
+index 7f9d280..940f54c 100644
+--- a/frontend/src/pages/Settings.jsx
++++ b/frontend/src/pages/Settings.jsx
+@@ -1,4 +1,4 @@
+-import { useState, useRef, useEffect } from 'react'
++import { useState, useRef, useEffect, useMemo } from 'react'
+ import { useNavigate } from 'react-router-dom'
+ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+ import { Crown, RefreshCw, Download, Upload, Plus, Pencil, Trash2, User, UserCheck, UserX, Zap, Copy } from 'lucide-react'
+@@ -7,6 +7,7 @@ import {
+   downloadBackup, restoreBackup, exportCSV,
+   getSetting, setSetting, getTelegramStatus, saveSettings, setAuthMode,
+   getUsers, createUser, updateUser, deleteUser, changePassword, changeAvatar, changeUsername,
++  getScanLimitUsers, updateUserScanLimit,
+   getContributors, getSupporters, getCustomMatches, downloadDebugLog,
+   getProfile, updateProfile, deleteScanDiagnostics,
+   deleteAllCollectionCardPhotos,
+@@ -19,6 +20,8 @@ import { useConfirmDialog } from '../contexts/ConfirmDialogContext'
+ import Modal from '../components/ui/Modal'
+ import AvatarPicker from '../components/AvatarPicker'
+ import ScannerSettingsCard from '../components/ScannerSettingsCard'
++import ScanLimitSettingsCard from '../components/ScanLimitSettingsCard'
++import UserScanLimitControl from '../components/UserScanLimitControl'
+ import { formatDistanceToNow } from 'date-fns'
+ import toast from 'react-hot-toast'
+ import { TCGDEX_LANGUAGES, normalizeTcgdexLanguageCsv, tcgdexLanguageLabel } from '../utils/tcgdexLanguages'
+@@ -1206,6 +1209,7 @@ export default function Settings() {
+           <section className="space-y-1">
+             <SectionHeader title={t('settings.sectionAI')} />
+             <ScannerSettingsCard t={t} />
++            {user?.role === 'admin' && <ScanLimitSettingsCard t={t} />}
+             <SettingsCard>
+               <SettingsRow
+                 label={t('settings.geminiFallback')}
+@@ -1723,6 +1727,28 @@ function UsersTab({ t, queryClient }) {
+   const { user: currentUser } = useAuth()
+ 
+   const { data: users = [] } = useQuery({ queryKey: ['users'], queryFn: getUsers })
++  // Each user's daily scan limit and what they have used today (docs/SCAN_LIMITS.md). Without the server update the route is
++  // missing, and the users are listed as before without it.
++  const { data: scanLimits } = useQuery({
++    queryKey: ['scan-limits-users'],
++    queryFn: getScanLimitUsers,
++    refetchInterval: 30000,
++    retry: false,
++  })
++  const scanLimitByUser = useMemo(
++    () => Object.fromEntries((scanLimits?.users ?? []).map((row) => [row.id, row])),
++    [scanLimits],
++  )
++  const scanLimitMut = useMutation({
++    mutationFn: ({ id, data }) => updateUserScanLimit(id, data),
++    onSuccess: (row) => {
++      queryClient.setQueryData(['scan-limits-users'], (old) => (
++        old ? { ...old, users: old.users.map((entry) => (entry.id === row.id ? row : entry)) } : old
++      ))
++      toast.success(t('settings.scanLimits.userSaved'))
++    },
++    onError: (e) => toast.error(e.response?.data?.detail || t('common.error')),
++  })
+   const activeAdminCount = users.filter((u) => u.role === 'admin' && u.is_active).length
+   const isLastActiveAdmin = (u) => u?.role === 'admin' && u?.is_active && activeAdminCount <= 1
+ 
+@@ -1786,8 +1812,10 @@ function UsersTab({ t, queryClient }) {
+         <SettingsCard>
+           {users.map((u, i) => {
+             const lastActiveAdmin = isLastActiveAdmin(u)
++            const scanLimit = scanLimitByUser[u.id]
+             return (
+-              <SettingsRow key={u.id} label={u.username} description={`${u.role} · ${u.is_active ? t('settings.users.active') : t('settings.users.inactive')}`} last={i === users.length - 1}>
++              <div key={u.id} style={i < users.length - 1 ? { borderBottom: '1px solid rgba(255,255,255,0.05)' } : {}}>
++              <SettingsRow label={u.username} description={`${u.role} · ${u.is_active ? t('settings.users.active') : t('settings.users.inactive')}`} last>
+                 <div className="flex items-center gap-2">
+                   <button
+                     onClick={() => updateMut.mutate({ id: u.id, data: { is_active: !u.is_active } })}
+@@ -1811,6 +1839,15 @@ function UsersTab({ t, queryClient }) {
+                   )}
+                 </div>
+               </SettingsRow>
++              {scanLimit && (
++                <UserScanLimitControl
++                  t={t}
++                  row={scanLimit}
++                  busy={scanLimitMut.isPending}
++                  onChange={(data) => scanLimitMut.mutate({ id: u.id, data })}
++                />
++              )}
++              </div>
+             )
+           })}
+         </SettingsCard>
+diff --git a/frontend/src/utils/scanLimits.js b/frontend/src/utils/scanLimits.js
+new file mode 100644
+index 0000000..5fc591d
+--- /dev/null
++++ b/frontend/src/utils/scanLimits.js
+@@ -0,0 +1,53 @@
++// Daily scan limits (docs/SCAN_LIMITS.md): the small rules the admin screens share, kept out of the components so they can be
++// tested on their own.
++
++// The most the server accepts for a daily limit. Anything above is refused there too.
++export const MAX_DAILY_SCAN_LIMIT = 100000
++
++// What the number box offers before anybody has chosen a limit.
++export const SUGGESTED_SCAN_LIMIT = 100
++
++export const SCAN_LIMIT_MODES = ['default', 'custom', 'unlimited']
++
++// A whole number from 0 to MAX_DAILY_SCAN_LIMIT from what was typed, or null when it is not one. 0 is allowed: it switches
++// scanning off.
++export function parseScanLimit(text) {
++  const typed = String(text ?? '').trim()
++  if (!/^\d+$/.test(typed)) return null
++  const value = Number(typed)
++  return value <= MAX_DAILY_SCAN_LIMIT ? value : null
++}
++
++// What one user has used today, the way the Users list shows it: "34 / 100 today", or "34 today · Unlimited" without a limit.
++export function formatScanUsage(row, words) {
++  if (!row) return ''
++  const used = Number(row.used) || 0
++  if (row.unlimited || row.daily_limit == null) return `${used} ${words.today} · ${words.unlimited}`
++  return `${used} / ${row.daily_limit} ${words.today}`
++}
++
++// The number a user's box starts with: their own if they have one, else the limit that applies, else the suggestion.
++export function startingLimit(row) {
++  const known = row?.custom_limit ?? row?.daily_limit
++  return String(known ?? SUGGESTED_SCAN_LIMIT)
++}
++
++// The UTC offset the server sent ("+02:00") as it is written next to a zone name: "UTC+02:00".
++export function utcLabel(offset) {
++  return offset ? `UTC${offset}` : ''
++}
++
++// What an admin sees under "Resets": "Europe/Berlin (UTC+02:00)", and the zone alone when no offset came.
++export function zoneLabel(settings) {
++  if (!settings?.timezone) return ''
++  const offset = utcLabel(settings.utc_offset)
++  return offset ? `${settings.timezone} (${offset})` : settings.timezone
++}
++
++// The body to send for a change of the default. Only what changed is sent, so saving the number never flips the switch back.
++export function defaultLimitChange(current, draft) {
++  const change = {}
++  if (draft.unlimited !== current.default_unlimited) change.default_unlimited = draft.unlimited
++  if (draft.limit != null && draft.limit !== current.default_limit) change.default_limit = draft.limit
++  return change
++}
+diff --git a/frontend/src/utils/scanLimits.test.js b/frontend/src/utils/scanLimits.test.js
+new file mode 100644
+index 0000000..aae3ba8
+--- /dev/null
++++ b/frontend/src/utils/scanLimits.test.js
+@@ -0,0 +1,83 @@
++import { describe, expect, it } from 'vitest'
++
++import {
++  MAX_DAILY_SCAN_LIMIT,
++  defaultLimitChange,
++  formatScanUsage,
++  parseScanLimit,
++  startingLimit,
++  utcLabel,
++  zoneLabel,
++} from './scanLimits'
++
++const words = { today: 'today', unlimited: 'Unlimited' }
++
++describe('parseScanLimit', () => {
++  it('accepts whole numbers from 0 to the most the server takes, with or without spaces', () => {
++    expect(parseScanLimit('0')).toBe(0)
++    expect(parseScanLimit(' 25 ')).toBe(25)
++    expect(parseScanLimit('100')).toBe(100)
++    expect(parseScanLimit(String(MAX_DAILY_SCAN_LIMIT))).toBe(MAX_DAILY_SCAN_LIMIT)
++    expect(parseScanLimit(7)).toBe(7)
++  })
++
++  it('refuses everything else', () => {
++    for (const typed of ['', ' ', 'abc', '-1', '2.5', '1e3', '12 3', String(MAX_DAILY_SCAN_LIMIT + 1), null, undefined]) {
++      expect(parseScanLimit(typed), JSON.stringify(typed)).toBeNull()
++    }
++  })
++})
++
++describe('formatScanUsage', () => {
++  it('writes a limited user as used / limit today', () => {
++    expect(formatScanUsage({ used: 34, daily_limit: 100, unlimited: false }, words)).toBe('34 / 100 today')
++    expect(formatScanUsage({ used: 0, daily_limit: 0, unlimited: false }, words)).toBe('0 / 0 today')
++  })
++
++  it('writes an unlimited user with what they used and the word Unlimited, never a number to be used up', () => {
++    expect(formatScanUsage({ used: 12, daily_limit: null, unlimited: true }, words)).toBe('12 today · Unlimited')
++    expect(formatScanUsage({ used: 3, daily_limit: null }, words)).toBe('3 today · Unlimited')
++  })
++
++  it('says nothing for a user the server sent nothing about', () => {
++    expect(formatScanUsage(undefined, words)).toBe('')
++  })
++})
++
++describe('startingLimit', () => {
++  it("starts from the user's own number, then the limit that applies, then the suggestion", () => {
++    expect(startingLimit({ custom_limit: 8, daily_limit: 100 })).toBe('8')
++    expect(startingLimit({ custom_limit: null, daily_limit: 100 })).toBe('100')
++    expect(startingLimit({ custom_limit: null, daily_limit: null })).toBe('100')
++    expect(startingLimit(undefined)).toBe('100')
++    expect(startingLimit({ custom_limit: 0, daily_limit: 5 })).toBe('0')
++  })
++})
++
++describe('the reset', () => {
++  it('writes the offset next to the zone', () => {
++    expect(utcLabel('+02:00')).toBe('UTC+02:00')
++    expect(utcLabel('')).toBe('')
++    expect(zoneLabel({ timezone: 'Europe/Berlin', utc_offset: '+02:00' })).toBe('Europe/Berlin (UTC+02:00)')
++    expect(zoneLabel({ timezone: 'UTC' })).toBe('UTC')
++    expect(zoneLabel({})).toBe('')
++  })
++})
++
++describe('defaultLimitChange', () => {
++  const current = { default_unlimited: true, default_limit: 100 }
++
++  it('sends nothing when nothing changed', () => {
++    expect(defaultLimitChange(current, { unlimited: true, limit: 100 })).toEqual({})
++  })
++
++  it('sends only what changed, so saving the number never flips the switch', () => {
++    expect(defaultLimitChange(current, { unlimited: true, limit: 40 })).toEqual({ default_limit: 40 })
++    expect(defaultLimitChange(current, { unlimited: false, limit: 100 })).toEqual({ default_unlimited: false })
++    expect(defaultLimitChange(current, { unlimited: false, limit: 40 })).toEqual({ default_unlimited: false, default_limit: 40 })
++  })
++
++  it('keeps a number that is not a number out of the change', () => {
++    expect(defaultLimitChange(current, { unlimited: true, limit: null })).toEqual({})
++  })
++})
+diff --git a/frontend/tests/visual/scan-limits.spec.js b/frontend/tests/visual/scan-limits.spec.js
+new file mode 100644
+index 0000000..3172b8e
+--- /dev/null
++++ b/frontend/tests/visual/scan-limits.spec.js
+@@ -0,0 +1,269 @@
++import { expect, test } from '@playwright/test'
++
++// Daily scan limits in the admin screens (docs/SCAN_LIMITS.md): the default under Settings → AI / Card Scanner, and each user's
++// own limit and usage under Settings → Users. The server is replaced by a small stand-in that keeps the same rules.
++
++const ADMIN = { id: 1, username: 'oak', role: 'admin', is_active: true, must_change_password: false }
++const TRAINER = { id: 2, username: 'ash', role: 'trainer', is_active: true, must_change_password: false }
++
++const scannerConfiguration = {
++  provider: 'gemini',
++  model: 'gemini-flash-latest',
++  request_timeout_seconds: 30,
++  request_timeout_options: [30, 60, 120, 180],
++  status: 'ready',
++  visual_verification: 'automatic',
++  providers: [{
++    id: 'gemini', label: 'Gemini', models: ['gemini-flash-latest'], default_model: 'gemini-flash-latest',
++    selected_model: 'gemini-flash-latest', request_timeout_seconds: 30, requires_api_key: true, api_key_configured: true,
++    endpoint_type: 'hosted', key_help_url: null, setup_help_url: null, custom_model_allowed: false, custom_model: '',
++  }],
++}
++
++function nextMidnight() {
++  const next = new Date()
++  next.setHours(24, 0, 0, 0)
++  return next
++}
++
++async function installApi(page, signedIn = ADMIN) {
++  await page.addInitScript(user => {
++    localStorage.setItem('token', 'scan-limits-token')
++    localStorage.setItem('user', JSON.stringify(user))
++    localStorage.setItem('app_language', 'en')
++  }, signedIn)
++
++  const reset = nextMidnight()
++  let settings = {
++    default_unlimited: true,
++    default_limit: 100,
++    timezone: 'Europe/Berlin',
++    utc_offset: '+02:00',
++    reset_time: '00:00',
++    next_reset_at: reset.toISOString(),
++    seconds_until_reset: Math.round((reset - new Date()) / 1000),
++  }
++  const people = [
++    { id: 1, username: 'oak', role: 'admin', is_active: true, avatar_id: null, created_at: '2026-01-01' },
++    { id: 2, username: 'ash', role: 'trainer', is_active: true, avatar_id: null, created_at: '2026-01-02' },
++    { id: 3, username: 'misty', role: 'trainer', is_active: true, avatar_id: null, created_at: '2026-01-03' },
++  ]
++  const used = { 1: 12, 2: 34, 3: 0 }
++  const overrides = {} // user id -> {unlimited, custom_limit}
++  const writes = { settings: [], users: [] }
++
++  const row = (person) => {
++    const own = overrides[person.id]
++    const defaultLimit = settings.default_unlimited ? null : settings.default_limit
++    const mode = own ? (own.unlimited ? 'unlimited' : 'custom') : 'default'
++    const limit = !own ? defaultLimit : own.unlimited ? null : own.custom_limit
++    return {
++      id: person.id, username: person.username, role: person.role, is_active: true,
++      mode, custom_limit: own?.custom_limit ?? null, daily_limit: limit, unlimited: limit === null,
++      used: used[person.id], remaining: limit === null ? null : Math.max(0, limit - used[person.id]),
++    }
++  }
++
++  await page.route('**/api/**', async route => {
++    const request = route.request()
++    const path = new URL(request.url()).pathname
++    const method = request.method()
++    if (!path.startsWith('/api/')) return route.continue()
++    if (path === '/api/auth/mode') return route.fulfill({ json: { multi_user: true, locked: false } })
++    if (path === '/api/auth/me') return route.fulfill({ json: signedIn })
++    if (path === '/api/auth/users') return route.fulfill({ json: people })
++    if (path === '/api/settings/scanner') return route.fulfill({ json: scannerConfiguration })
++    if (path === '/api/settings/') {
++      return route.fulfill({ json: {
++        language: 'en', currency: 'EUR', price_primary: 'trend', price_display: '["trend"]',
++        scan_diagnostics_available: 'false', scan_diagnostics_deletion_available: 'false', scanner_gemini_fallback: 'false',
++      } })
++    }
++    if (path === '/api/scan-limits/settings') {
++      if (signedIn.role !== 'admin') return route.fulfill({ status: 403, json: { detail: 'Admin access required' } })
++      if (method === 'PUT') {
++        const body = request.postDataJSON()
++        writes.settings.push(body)
++        settings = { ...settings, ...body }
++      }
++      return route.fulfill({ json: settings })
++    }
++    if (path === '/api/scan-limits/users') {
++      if (signedIn.role !== 'admin') return route.fulfill({ status: 403, json: { detail: 'Admin access required' } })
++      return route.fulfill({ json: { ...settings, users: people.map(row) } })
++    }
++    const single = path.match(/^\/api\/scan-limits\/users\/(\d+)$/)
++    if (single && method === 'PUT') {
++      const id = Number(single[1])
++      const body = request.postDataJSON()
++      writes.users.push({ id, ...body })
++      if (body.mode === 'default') delete overrides[id]
++      else if (body.mode === 'custom') overrides[id] = { unlimited: false, custom_limit: body.limit }
++      else overrides[id] = { unlimited: true, custom_limit: overrides[id]?.custom_limit ?? null }
++      return route.fulfill({ json: row(people.find(person => person.id === id)) })
++    }
++    if (path === '/api/settings/exchange-rate') return route.fulfill({ json: { rate: 1 } })
++    if (path === '/api/settings/tcgdex-filter-languages') return route.fulfill({ json: { languages: [{ code: 'en', name: 'English' }] } })
++    if (path === '/api/sets/' || path === '/api/cards/custom') return route.fulfill({ json: [] })
++    if (path === '/api/cards/recognize/jobs') return route.fulfill({ json: { jobs: [] } })
++    if (path === '/api/profile/') return route.fulfill({ json: { is_profile_public: false, public_show_values: false } })
++    if (path === '/api/sync/status') return route.fulfill({ json: { is_running: false, is_price_sync_running: false } })
++    if (path.includes('contributors') || path.includes('supporters') || path.includes('custom-matches')) {
++      return route.fulfill({ json: [] })
++    }
++    if (path.includes('donations')) return route.fulfill({ json: { total: 0, donations: [] } })
++    return route.fulfill({ json: {} })
++  })
++  return { writes }
++}
++
++const noHorizontalOverflow = page => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)
++
++test.describe('the default limit under AI / Card Scanner', () => {
++  test('shows an unlimited default, the server time zone and the next reset', async ({ page }) => {
++    await installApi(page)
++    await page.goto('/settings')
++
++    const card = page.getByTestId('scan-limit-default')
++    await expect(card.getByText('Daily scan limit', { exact: true })).toBeVisible()
++    await expect(card.getByRole('button', { name: 'Unlimited by default' })).toHaveAttribute('aria-pressed', 'true')
++    await expect(card.getByLabel('Default daily scan limit')).toBeDisabled()
++    await expect(card.getByLabel('Default daily scan limit')).toHaveValue('100')
++    await expect(card.getByText('Europe/Berlin (UTC+02:00)')).toBeVisible()
++    await expect(card.getByText('Next reset:')).toBeVisible()
++    await expect(card.getByRole('button', { name: 'Save' })).toBeDisabled()
++    expect(await noHorizontalOverflow(page)).toBe(true)
++  })
++
++  test('saves a limit, and only what changed', async ({ page }) => {
++    const api = await installApi(page)
++    await page.goto('/settings')
++    const card = page.getByTestId('scan-limit-default')
++
++    await card.getByRole('button', { name: 'Unlimited by default' }).click()
++    await expect(card.getByLabel('Default daily scan limit')).toBeEnabled()
++    await card.getByLabel('Default daily scan limit').fill('50')
++    await card.getByRole('button', { name: 'Save' }).click()
++
++    await expect(page.getByText('Daily scan limit saved').first()).toBeVisible()
++    expect(api.writes.settings).toEqual([{ default_unlimited: false, default_limit: 50 }])
++    await expect(card.getByRole('button', { name: 'Save' })).toBeDisabled()
++
++    // Changing the number alone does not touch the switch.
++    await card.getByLabel('Default daily scan limit').fill('75')
++    await card.getByRole('button', { name: 'Save' }).click()
++    await expect.poll(() => api.writes.settings.length).toBe(2)
++    expect(api.writes.settings[1]).toEqual({ default_limit: 75 })
++  })
++
++  test('refuses a number that is not a whole number from 0 to 100000', async ({ page }) => {
++    const api = await installApi(page)
++    await page.goto('/settings')
++    const card = page.getByTestId('scan-limit-default')
++    await card.getByRole('button', { name: 'Unlimited by default' }).click()
++
++    for (const typed of ['-5', '2.5', '', '100001']) {
++      await card.getByLabel('Default daily scan limit').fill(typed)
++      await expect(card.getByRole('alert')).toHaveText('Enter a whole number from 0 to 100000.')
++      await expect(card.getByRole('button', { name: 'Save' })).toBeDisabled()
++    }
++    await card.getByLabel('Default daily scan limit').fill('0')
++    await expect(card.getByRole('alert')).toHaveCount(0)
++    await expect(card.getByRole('button', { name: 'Save' })).toBeEnabled() // 0 switches scanning off, and is allowed
++    expect(api.writes.settings).toEqual([])
++  })
++
++  test('is not offered to a trainer', async ({ page }) => {
++    await installApi(page, TRAINER)
++    await page.goto('/settings')
++
++    await expect(page.getByText('Card scanner', { exact: true })).toBeVisible()
++    await expect(page.getByTestId('scan-limit-default')).toHaveCount(0)
++    await expect(page.getByRole('button', { name: 'Users', exact: true })).toHaveCount(0)
++  })
++})
++
++test.describe("each user's limit under Users", () => {
++  const openUsers = async page => {
++    await page.goto('/settings')
++    await page.getByRole('button', { name: 'Users', exact: true }).click()
++  }
++
++  test('lists every user with what they have used today', async ({ page }) => {
++    await installApi(page)
++    await openUsers(page)
++
++    await expect(page.getByTestId('scan-limit-1')).toContainText('12 today · Unlimited')
++    await expect(page.getByTestId('scan-limit-2')).toContainText('34 today · Unlimited')
++    await expect(page.getByTestId('scan-limit-3')).toContainText('0 today · Unlimited')
++    for (const id of [1, 2, 3]) {
++      const choices = page.getByTestId(`scan-limit-${id}`).getByRole('radio')
++      await expect(choices).toHaveText(['Use default', 'Custom', 'Unlimited'])
++      await expect(choices.nth(0)).toHaveAttribute('aria-checked', 'true') // everyone uses the default, which is unlimited
++    }
++    expect(await noHorizontalOverflow(page)).toBe(true)
++  })
++
++  test('shows used / limit once the default is a number', async ({ page }) => {
++    await installApi(page)
++    await page.goto('/settings')
++    const card = page.getByTestId('scan-limit-default')
++    await card.getByRole('button', { name: 'Unlimited by default' }).click()
++    await card.getByLabel('Default daily scan limit').fill('100')
++    await card.getByRole('button', { name: 'Save' }).click()
++    await expect(page.getByText('Daily scan limit saved').first()).toBeVisible()
++
++    await page.getByRole('button', { name: 'Users', exact: true }).click()
++
++    await expect(page.getByTestId('scan-limit-2')).toContainText('34 / 100 today')
++    await expect(page.getByTestId('scan-limit-3')).toContainText('0 / 100 today')
++  })
++
++  test("gives a user a limit of their own, changes it, makes them unlimited, and goes back to the default", async ({ page }) => {
++    const api = await installApi(page)
++    await openUsers(page)
++    const ash = page.getByTestId('scan-limit-2')
++
++    await ash.getByRole('radio', { name: 'Custom' }).click()
++    await expect(ash.getByRole('radio', { name: 'Custom' })).toHaveAttribute('aria-checked', 'true')
++    await expect(ash).toContainText('34 / 100 today') // a custom limit that starts from the number in the box
++    expect(api.writes.users).toEqual([{ id: 2, mode: 'custom', limit: 100 }])
++
++    await ash.getByLabel('Custom daily scan limit').fill('40')
++    await ash.getByRole('button', { name: 'Save' }).click()
++    await expect(ash).toContainText('34 / 40 today')
++    expect(api.writes.users[1]).toEqual({ id: 2, mode: 'custom', limit: 40 })
++
++    await ash.getByRole('radio', { name: 'Unlimited' }).click()
++    await expect(ash).toContainText('34 today · Unlimited')
++    expect(api.writes.users[2]).toEqual({ id: 2, mode: 'unlimited' })
++    await expect(ash.getByLabel('Custom daily scan limit')).toHaveCount(0)
++
++    await ash.getByRole('radio', { name: 'Use default' }).click()
++    await expect(ash.getByRole('radio', { name: 'Use default' })).toHaveAttribute('aria-checked', 'true')
++    expect(api.writes.users[3]).toEqual({ id: 2, mode: 'default' })
++
++    // The other users were not touched.
++    await expect(page.getByTestId('scan-limit-3').getByRole('radio', { name: 'Use default' })).toHaveAttribute('aria-checked', 'true')
++  })
++
++  test('lets an admin be made unlimited like anyone else', async ({ page }) => {
++    const api = await installApi(page)
++    await openUsers(page)
++
++    await page.getByTestId('scan-limit-1').getByRole('radio', { name: 'Unlimited' }).click()
++
++    await expect(page.getByTestId('scan-limit-1').getByRole('radio', { name: 'Unlimited' })).toHaveAttribute('aria-checked', 'true')
++    expect(api.writes.users).toEqual([{ id: 1, mode: 'unlimited' }])
++  })
++
++  test('keeps working on a narrow phone', async ({ page }) => {
++    await page.setViewportSize({ width: 360, height: 800 })
++    await installApi(page)
++    await openUsers(page)
++    await page.getByTestId('scan-limit-2').getByRole('radio', { name: 'Custom' }).click()
++
++    await expect(page.getByTestId('scan-limit-2').getByLabel('Custom daily scan limit')).toBeVisible()
++    expect(await noHorizontalOverflow(page)).toBe(true)
++  })
++})
+-- 
+2.43.0
+

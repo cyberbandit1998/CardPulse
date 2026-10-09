@@ -1,10 +1,18 @@
-# The Friends update for your PokéCollector server
+# Updates for your PokéCollector server
 
-**Friends & trading** in CardPulse needs a small update to your PokéCollector server. Everything else in the app works
-without it, and the app tells you when the update is missing: **Home → Friends & trading** says *"Needs an update on your
-server"*, and the Friends screen explains what to do.
+CardPulse works with PokéCollector as it is. Two optional updates add what a phone app cannot be trusted to do alone,
+because the rules have to be kept by the server:
 
-## Why the server has to change
+| Update | Patch in this folder | What it adds | In CardPulse |
+| --- | --- | --- | --- |
+| **Friends & trading** | `0001-friends-sharing-and-for-trade-lists.patch` | Friends, what each person shares, For Trade lists | **Home → Friends & trading** says *"Needs an update on your server"* until it is installed |
+| **Daily scan limits** | `0002-daily-scan-limits.patch` | A limit on how many cards each user may have read by the AI scanner per day, set by an admin on the website | The scanner shows *"23 of 100 scans used today"* (or *Unlimited*) and, at the limit, *"Daily scan limit reached"* with when scans reset. Without the update the line is left out |
+
+**The second builds on the first**, so install them in that order; the steps below do both. Everything else in the app works
+without either. Already have the Friends update? Jump to [Adding the scan limits to a server that has the Friends
+update](#adding-the-scan-limits-to-a-server-that-has-the-friends-update).
+
+## Friends & trading: why the server has to change
 
 A phone app cannot be trusted to keep one person's cards private from another. If the server handed every collection to
 every signed-in user and the app merely *chose not to show* some of them, anyone could read them with a different app or
@@ -13,7 +21,7 @@ shows what the server agrees to send.
 
 PokéCollector has no friends, sharing settings or trade lists of its own. This update adds them.
 
-## What the update does
+## Friends & trading: what the update does
 
 - **Everything starts private.** Nobody sees anyone else's cards until its owner says so, for each list on its own:
   **collection**, **wishlist** and **For Trade** cards, each *Private*, *Friends only* or *Public*.
@@ -35,7 +43,7 @@ It adds three small tables (`friend_settings`, `friend_links`, `trade_list`), cr
 table or row is changed. The details, the endpoints and the exact privacy rules are in `docs/FRIENDS.md`, which the update
 adds to the project.
 
-### What changes on the website
+### Friends & trading: what changes on the website
 
 PokéCollector already had a few routes that let **any signed-in user read another user's whole collection** (the
 leaderboard's *view collection*, *compare* and *achievements*). Leaving them as they are would have made the new settings
@@ -55,13 +63,38 @@ Everything else on the website is as it was, and there are no new screens on it.
 collection and so on) still show you what you paid and made. Because two website pages change, **the website has to be
 rebuilt as well as the backend** (step 4).
 
+## Daily scan limits: what the update does
+
+An admin can limit how many cards each user may have read by the AI scanner in a day. The limit is kept **on the server**,
+right before the vision model (Gemini, or an OpenAI-compatible service such as Groq) is asked, so the website, the CardPulse
+app and any other client are held to it alike. The app only shows it.
+
+- **Only real reads count.** A scan counts when the server starts to read a photo. Opening the scanner or the camera does
+  not, nor does a photo the server turns away first (not an image, too big, no API key set up), nor matching the card with
+  the catalogue, nor the retries the queue makes by itself. A photo you read again with **Retry** counts again.
+- **Per user, per day, in the server's time.** Usage starts again at the server's local midnight. It is stored in the
+  database, so restarting the backend does not reset it. (In Docker the server's time zone is UTC unless you set `TZ`:
+  step 5.)
+- **A default, and exceptions.** On the website, **Settings → General → AI / Card Scanner** (admins) has the default daily
+  limit, or *unlimited*, and shows the server's time zone and the next reset. **Settings → Users** shows each user's limit:
+  *Use default*, *Custom* or *Unlimited* (an admin can be unlimited too), and what they have used today, such as
+  `34 / 100 today`. Only admins can change any of it.
+- **Nothing changes until you choose.** The default starts as *unlimited*, so installing the update limits nobody.
+- **Out of scans:** the server answers **HTTP 429** with the daily limit, the scans used, the scans remaining and the reset
+  time. Photos already waiting in the queue that no longer fit are marked failed (not retried by themselves) and can be read
+  with **Retry** after the reset.
+
+It adds three small tables (`scan_usage`, `scan_limit_overrides`, `scan_item_charges`), created when the server starts; no
+existing table or row is changed. The details and the API are in `docs/SCAN_LIMITS.md`, which the update adds to the project.
+The website's **Settings** page is changed, so **the website has to be rebuilt as well as the backend** (step 4).
+
 ## What you need
 
 - PokéCollector **1.51.0** (the version CardPulse is checked against). The update is made for it. On another version
   `git apply --check` (step 2) says whether it still fits; if it does not, it has to be adjusted first.
-- **Multi-user mode switched on.** With it off nobody has to sign in, so nothing could be kept private; the Friends
-  routes then answer `403` and the app says so. Your friends need an account on your server (PokéCollector's
-  Settings → Users).
+- **Multi-user mode switched on** for Friends. With it off nobody has to sign in, so nothing could be kept private; the
+  Friends routes then answer `403` and the app says so. Your friends need an account on your server (PokéCollector's
+  Settings → Users). The scan limits work either way, but a limit of a user's own only means something with several users.
 - A Docker Compose install, and permission to build images on the machine that runs it. The backend and the website are
   both built, so it takes several minutes and needs internet access for the packages they use.
 - `git` on that machine.
@@ -83,19 +116,21 @@ test -s "$backup_file"
 
 Do not continue if the last line fails.
 
-**2. Get PokéCollector's source for your version, and apply the update.** Anywhere that is *not* inside your PokéCollector
-folder (next to it is fine); save `0001-friends-sharing-and-for-trade-lists.patch` from this folder first:
+**2. Get PokéCollector's source for your version, and apply the updates.** Anywhere that is *not* inside your PokéCollector
+folder (next to it is fine); save the two `.patch` files from this folder first:
 
 ```bash
 git clone --branch v1.51.0 --depth 1 https://github.com/Git-Romer/pokecollector.git pokecollector-src
 cd pokecollector-src
-git apply --check /path/to/0001-friends-sharing-and-for-trade-lists.patch   # prints nothing when it fits
-git apply /path/to/0001-friends-sharing-and-for-trade-lists.patch
+for patch in 0001-friends-sharing-and-for-trade-lists 0002-daily-scan-limits; do
+  git apply --check /path/to/$patch.patch   # prints nothing when it fits
+  git apply /path/to/$patch.patch
+done
 ```
 
 **3. Tell Compose to build the backend and the website from it.** Copy `docker-compose.friends.yml` from this folder next
 to your `docker-compose.yml`, and change the two `context:` lines in it if `pokecollector-src` is not next to your
-PokéCollector folder.
+PokéCollector folder. (The file keeps its name from the first update. It also passes your time zone to the backend, step 5.)
 
 **4. Build and start the backend and the website.** Both containers are replaced; the database and your data are not
 touched. The first build takes a few minutes:
@@ -110,20 +145,56 @@ If the website shows *502 Bad Gateway* afterwards (its web server remembers wher
 docker compose -f docker-compose.yml -f docker-compose.friends.yml restart frontend
 ```
 
-**5. Check it.** In CardPulse open **Home → Friends & trading** and press **Check again** if it is already open. The
+**5. Set your time zone.** The day's scans start again at the server's local midnight. In Docker that is the backend
+container's time zone, which is **UTC unless you set one**, so a limit would start over at midnight UTC instead of yours. Put
+your zone in the `.env` file next to your `docker-compose.yml` (the names are the usual ones, such as `Europe/Berlin`,
+`America/New_York` or `Asia/Tokyo`):
+
+```
+TZ=Europe/Berlin
+```
+
+and start the backend again so it picks it up:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.friends.yml up -d backend
+```
+
+**6. Check it.** In CardPulse open **Home → Friends & trading** and press **Check again** if it is already open. The
 screen now shows *Friends*, *Requests* and *Sharing*. Or, from the server:
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/api/friends/me
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/api/scan-limits/me
 ```
 
 (`8000` is the backend's port unless you set `BACKEND_PORT`.) `401` means the update is installed: the route exists and
 wants you to sign in. `404` means it is not. Then open the website's **Leaderboard** (and a trainer's **Compare** page
 from it): each trainer shows their value, cards and best card, and there is no profit or loss on either page. If you still
-see a P&L column, the website was not rebuilt: repeat step 4 and reload the page.
+see a P&L column, the website was not rebuilt: repeat step 4 and reload the page. For the scan limits, sign in as an admin
+and open **Settings → General**: under **AI / Card Scanner** there is a *Daily scan limit* card that names the server's time
+zone and the next reset. If the zone says UTC and yours is another, step 5 did not reach the backend.
 
-**6. Choose what you share.** Everything starts as *Private*. Open **Friends → Sharing** and set the collection, wishlist
-and For Trade list one at a time. Then add a friend by username or invite code.
+**7. Choose what you share, and what scanning costs.** Friends: everything starts as *Private*. Open **Friends → Sharing** and
+set the collection, wishlist and For Trade list one at a time. Then add a friend by username or invite code. Scan limits:
+nothing is limited yet. To limit scanning, set a *default daily scan limit* (and switch *Unlimited by default* off) in the
+card from step 6, and give individual users another limit, or none, under **Settings → Users**. **Admins are limited like
+everyone else until you set them to *Unlimited* there.**
+
+### Adding the scan limits to a server that has the Friends update
+
+Back up first (step 1). In the `pokecollector-src` folder that already has the Friends update, apply only the second patch,
+then copy the new `docker-compose.friends.yml` over the old one (it gained the time zone), set `TZ` (step 5) and rebuild:
+
+```bash
+cd pokecollector-src
+git apply --check /path/to/0002-daily-scan-limits.patch   # prints nothing when it fits
+git apply /path/to/0002-daily-scan-limits.patch
+cd ..
+docker compose -f docker-compose.yml -f docker-compose.friends.yml up -d --build backend frontend
+```
+
+Then check it (step 6) and restart the website if it shows *502 Bad Gateway* (step 4).
 
 ### Starting each time
 
@@ -145,19 +216,21 @@ docker compose up -d
 docker compose restart frontend
 ```
 
-The three tables stay in the database, unused and harmless, and Friends shows *"Needs an update on your server"* in the
-app again. To remove the tables too: `DROP TABLE friend_settings, friend_links, trade_list;`
+The tables stay in the database, unused and harmless; Friends shows *"Needs an update on your server"* in the app again, and
+nobody is limited any more. To remove them too: `DROP TABLE friend_settings, friend_links, trade_list;` for Friends, and for
+the scan limits `DROP TABLE scan_item_charges, scan_limit_overrides, scan_usage;` and
+`DELETE FROM settings WHERE key IN ('scan_limit_default', 'scan_limit_default_unlimited');`
 
 ### Updating PokéCollector later
 
-Repeat steps 2 to 4 with the new version's source. A newer PokéCollector may change the files this update touches, and
-`git apply --check` will say so before anything is changed. Keep using the update's version of `docker-compose.friends.yml`
+Repeat steps 2 to 4 with the new version's source. A newer PokéCollector may change the files these updates touch, and
+`git apply --check` will say so before anything is changed. Keep using the updates' version of `docker-compose.friends.yml`
 until then, or the server will go back to the published images.
 
 ## Licence
 
-PokéCollector is licensed under the **GNU Affero General Public License v3**, and the patch in this folder is a
-modification of it, offered under the same licence. If other people use your modified server over a network (friends
+PokéCollector is licensed under the **GNU Affero General Public License v3**, and the patches in this folder are
+modifications of it, offered under the same licence. If other people use your modified server over a network (friends
 with accounts on it are exactly that), section 13 of the licence asks you to offer them the source of your modified
 version. Linking them to PokéCollector's repository and to this folder does that. This is the licence's requirement, not
 legal advice.
