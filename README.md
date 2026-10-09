@@ -80,8 +80,8 @@ The app warns you if it connects to a server in single-user mode.
   on every request**, so a friend can never read what you did not share, whatever app they use; what you paid (and the
   invested amount and profit worked out from it), when you added a card, your price alerts, your photos and cards made by
   hand are never shared at all, not even in the website's Leaderboard. This needs Multi-User Mode and a small update to
-  your PokéCollector server: see [`server/`](server/README.md). Without them the Friends screen says so and the rest of
-  the app is unchanged.
+  your PokéCollector server (its backend, and two pages of its website): see [`server/`](server/README.md). Without them
+  the Friends screen says so and the rest of the app is unchanged.
 - **Sets:** every set your server lists, each as "owned / total" (18 / 132, or 0 / 230 for a set you have no cards from
   yet), plus any set you own cards from that the list lacks (such as one in another language). Narrow it to All, Owned,
   Incomplete (some of its cards owned) or Complete (every card owned); search by name, series or the
