@@ -73,8 +73,8 @@ app and any other client are held to it alike. The app only shows it.
   not, nor does a photo the server turns away first (not an image, too big, no API key set up), nor matching the card with
   the catalogue, nor the retries the queue makes by itself. A photo you read again with **Retry** counts again.
 - **Per user, per day, in the server's time.** Usage starts again at the server's local midnight. It is stored in the
-  database, so restarting the backend does not reset it. (In Docker the server's time zone is UTC unless you set `TZ`:
-  step 5.)
+  database, so restarting the backend does not reset it. (In Docker the server's time zone is UTC unless you set `TZ`; for
+  Michigan that is `TZ=America/Detroit`: step 5.)
 - **A default, and exceptions.** On the website, **Settings → General → AI / Card Scanner** (admins) has the default daily
   limit, or *unlimited*, and shows the server's time zone and the next reset. **Settings → Users** shows each user's limit:
   *Use default*, *Custom* or *Unlimited* (an admin can be unlimited too), and what they have used today, such as
@@ -130,7 +130,8 @@ done
 
 **3. Tell Compose to build the backend and the website from it.** Copy `docker-compose.friends.yml` from this folder next
 to your `docker-compose.yml`, and change the two `context:` lines in it if `pokecollector-src` is not next to your
-PokéCollector folder. (The file keeps its name from the first update. It also passes your time zone to the backend, step 5.)
+PokéCollector folder. (The file keeps its name from the first update. It also passes your time zone to the backend, and uses
+Michigan's, `America/Detroit`, when your `.env` sets none: step 5.)
 
 **4. Build and start the backend and the website.** Both containers are replaced; the database and your data are not
 touched. The first build takes a few minutes:
@@ -146,15 +147,16 @@ docker compose -f docker-compose.yml -f docker-compose.friends.yml restart front
 ```
 
 **5. Set your time zone.** The day's scans start again at the server's local midnight. In Docker that is the backend
-container's time zone, which is **UTC unless you set one**, so a limit would start over at midnight UTC instead of yours. Put
-your zone in the `.env` file next to your `docker-compose.yml` (the names are the usual ones, such as `Europe/Berlin`,
-`America/New_York` or `Asia/Tokyo`):
+container's time zone, which is **UTC unless you set one**, so a limit would start over at midnight UTC (8 PM in Michigan
+in summer, 7 PM in winter) instead of yours. For Michigan, put this in the `.env` file next to your `docker-compose.yml`:
 
 ```
-TZ=Europe/Berlin
+TZ=America/Detroit
 ```
 
-and start the backend again so it picks it up:
+(`America/Detroit` is Michigan's own zone: Eastern time, with the switch to and from daylight saving looked after by
+itself. The compose file from step 3 uses it when `.env` has no `TZ`, so the line is there to be explicit and to change
+later. For another place use its name, such as `Europe/Berlin` or `Asia/Tokyo`.) Start the backend again so it picks it up:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.friends.yml up -d backend
@@ -173,13 +175,72 @@ wants you to sign in. `404` means it is not. Then open the website's **Leaderboa
 from it): each trainer shows their value, cards and best card, and there is no profit or loss on either page. If you still
 see a P&L column, the website was not rebuilt: repeat step 4 and reload the page. For the scan limits, sign in as an admin
 and open **Settings → General**: under **AI / Card Scanner** there is a *Daily scan limit* card that names the server's time
-zone and the next reset. If the zone says UTC and yours is another, step 5 did not reach the backend.
+zone (*America/Detroit (UTC-04:00)* in summer, *UTC-05:00* in winter) and the next reset, which is midnight there. If it says
+UTC, step 5 did not reach the backend: check that `.env` is next to your `docker-compose.yml`, that the backend was started
+again with both compose files, and that the shell you run Compose from has no `TZ` of its own (`echo $TZ` should print
+nothing: one set there wins over `.env`). The backend's own clock shows what it is using:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.friends.yml exec backend date
+```
+
+It ends in `EDT` (summer) or `EST` (winter) when the zone is Michigan's.
 
 **7. Choose what you share, and what scanning costs.** Friends: everything starts as *Private*. Open **Friends → Sharing** and
 set the collection, wishlist and For Trade list one at a time. Then add a friend by username or invite code. Scan limits:
 nothing is limited yet. To limit scanning, set a *default daily scan limit* (and switch *Unlimited by default* off) in the
 card from step 6, and give individual users another limit, or none, under **Settings → Users**. **Admins are limited like
 everyone else until you set them to *Unlimited* there.**
+
+### Checking the usage and the 429
+
+**On screen.** On the website, **Settings → Users** shows what each user has used today, such as `34 / 100 today`, and
+**Settings → General → AI / Card Scanner → Daily scan limit** shows the default and the next reset. In CardPulse the
+**Rapid scan** camera shows *"23 of 100 scans used today"* (or *Unlimited scans*), and at the limit *"Daily scan limit
+reached"* with when scans start again.
+
+**From the server.** Sign in once and keep the token (use your own username and password; `8000` is the backend's port
+unless you set `BACKEND_PORT`; with `jq` installed, `jq -r .access_token` does what the `python3` part does):
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8000/api/auth/login --data-urlencode 'username=YOUR_USERNAME' --data-urlencode 'password=YOUR_PASSWORD' | python3 -c 'import sys, json; print(json.load(sys.stdin)["access_token"])')
+```
+
+What you have used and have left today, and when the day starts over:
+
+```bash
+curl -s http://localhost:8000/api/scan-limits/me -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{"daily_limit":100,"unlimited":false,"used":23,"remaining":77,"resets_at":"2026-10-10T00:00:00-04:00","resets_in_seconds":41025,"timezone":"America/Detroit"}
+```
+
+(`"unlimited":true` and `null` for the limit and what is left, for a user with no limit.) As an admin, the same address with
+`/api/scan-limits/users` instead lists every user with their setting, the limit that applies and what they used today, which
+is what **Settings → Users** shows.
+
+To see the **429** without using a scan or asking the model anything, give yourself a limit of 0 (**Settings → Users**, your
+row, **Custom**, `0`, **Save**) and try to queue any photo:
+
+```bash
+curl -si -X POST http://localhost:8000/api/cards/recognize/jobs -H "Authorization: Bearer $TOKEN" -F "files=@/path/to/photo.jpg"
+```
+
+```
+HTTP/1.1 429 Too Many Requests
+retry-after: 41010
+content-type: application/json
+
+{"detail":"Daily scan limit reached. Scans reset at midnight (America/Detroit).","code":"scan_limit_reached","daily_limit":0,"unlimited":false,"used":0,"remaining":0,"resets_at":"2026-10-10T00:00:00-04:00","resets_in_seconds":41010,"timezone":"America/Detroit"}
+```
+
+`retry-after` is the seconds until the reset, and `code` tells this 429 from the rate limiter's, which answers 429 too when
+something is asked too often within a minute. Put yourself back on **Use default** afterwards. To watch real scans counted
+instead, set a small limit (say 3) and scan with CardPulse or the website: the camera, `…/api/scan-limits/me` and the Users
+tab move by one for each photo the scanner starts to read, and the next photo after the last one is refused. A photo that is
+already queued when the limit is reached fails with *"Daily scan limit reached…"* and can be read again with **Retry** once
+the day has started over.
 
 ### Adding the scan limits to a server that has the Friends update
 

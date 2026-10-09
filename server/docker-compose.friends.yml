@@ -13,8 +13,9 @@ services:
       dockerfile: backend/Dockerfile
     environment:
       # The server's time zone. The daily scan limits start over at its local midnight, and a container is on UTC unless it is
-      # told otherwise. Set TZ in the .env file next to your docker-compose.yml, for example TZ=Europe/Berlin (README, step 5).
-      TZ: ${TZ:-}
+      # told otherwise. This is Michigan's, America/Detroit, unless the .env file next to your docker-compose.yml sets TZ to
+      # another zone (README, step 5).
+      TZ: ${TZ:-America/Detroit}
 
   # The website. Its Leaderboard, Compare and Settings pages are changed too, so it is built from the same folder.
   frontend:

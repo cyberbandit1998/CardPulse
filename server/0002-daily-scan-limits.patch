@@ -1,4 +1,4 @@
-From b74012b491bc06b700cace7c9969562bb31a5349 Mon Sep 17 00:00:00 2001
+From 86fa02e2909ee749ac048a4da689132685435ec9 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 9 Oct 2026 15:20:39 +0000
 Subject: [PATCH] feat: daily scan limits per user, managed from the website
@@ -18,6 +18,10 @@ stored in the database and survives restarts. A user with no scans left gets HTT
 remaining and the reset time (and Retry-After); the 429 carries a code that tells it from the rate limiter's. Queueing photos
 and Retry are refused up front; photos already queued that no longer fit are marked failed, not retried by themselves.
 
+The time zone this server is meant to run in is America/Detroit (Michigan), set with TZ=America/Detroit for the backend: the
+docs and the website's hint use it as the example, and tests cover Michigan's midnight (the 429 and the admin's card name it),
+00:00 UTC being an ordinary evening there, and both changes of the clocks (the 25-hour day in November, the 23-hour day in March).
+
 GET /api/scan-limits/me (everyone); /settings, /users and PUT /users/{id} (admins only). Settings -> General -> AI / Card
 Scanner gets the default limit, an unlimited switch and the server's time zone and next reset; Settings -> Users shows each
 user's limit (default, custom or unlimited) and what they have used today, e.g. 34 / 100 today.
@@ -34,13 +38,13 @@ Claude-Session: https://claude.ai/code/session_01384BC8nHuYg1SpN4faoQoG
  backend/api/scan_limits.py                    |  106 ++
  backend/main.py                               |    7 +-
  backend/models.py                             |   55 +
- backend/services/scan_limits.py               |  410 +++++++
+ backend/services/scan_limits.py               |  410 ++++++
  backend/services/scan_queue.py                |   25 +
  backend/tests/scan_limits_world.py            |  102 ++
- backend/tests/test_scan_limits.py             |  580 +++++++++
- backend/tests/test_scan_limits_http.py        | 1062 +++++++++++++++++
+ backend/tests/test_scan_limits.py             |  631 ++++++++++
+ backend/tests/test_scan_limits_http.py        | 1117 +++++++++++++++++
  backend/tests/test_scan_queue.py              |    5 +
- docs/SCAN_LIMITS.md                           |  111 ++
+ docs/SCAN_LIMITS.md                           |  112 ++
  frontend/src/api/client.js                    |    6 +
  .../src/components/ScanLimitSettingsCard.jsx  |  153 +++
  frontend/src/components/ScanLimits.test.jsx   |  117 ++
@@ -50,8 +54,8 @@ Claude-Session: https://claude.ai/code/session_01384BC8nHuYg1SpN4faoQoG
  frontend/src/pages/Settings.jsx               |   41 +-
  frontend/src/utils/scanLimits.js              |   53 +
  frontend/src/utils/scanLimits.test.js         |   83 ++
- frontend/tests/visual/scan-limits.spec.js     |  269 +++++
- 22 files changed, 3362 insertions(+), 6 deletions(-)
+ frontend/tests/visual/scan-limits.spec.js     |  269 ++++
+ 22 files changed, 3469 insertions(+), 6 deletions(-)
  create mode 100644 backend/api/scan_limits.py
  create mode 100644 backend/services/scan_limits.py
  create mode 100644 backend/tests/scan_limits_world.py
@@ -981,10 +985,10 @@ index 0000000..5a0df78
 +        return self.now
 diff --git a/backend/tests/test_scan_limits.py b/backend/tests/test_scan_limits.py
 new file mode 100644
-index 0000000..dc30637
+index 0000000..c19626e
 --- /dev/null
 +++ b/backend/tests/test_scan_limits.py
-@@ -0,0 +1,580 @@
+@@ -0,0 +1,631 @@
 +"""Daily scan limits, the rules themselves (services/scan_limits.py): who may scan how much, how a day is counted and when it
 +starts over. The same rules through the HTTP API, the direct scan and the queue are in test_scan_limits_http.py."""
 +
@@ -1388,6 +1392,57 @@ index 0000000..dc30637
 +        self.assertEqual(reset.isoformat(), "2026-10-26T00:00:00+01:00")
 +        self.assertEqual(self.allowance(self.ash).resets_in_seconds, int(24.5 * 3600))
 +
++    # --- Michigan, the zone this server is recommended to run in (TZ=America/Detroit) ----------------------------------
++
++    def test_a_server_on_michigan_time_starts_the_day_over_at_michigans_midnight_not_at_utc(self):
++        self.clock = Clock(self, "America/Detroit")
++        self.set_default(limit=100)
++        self.clock.at(2026, 10, 9, 12, 0)
++
++        payload = self.allowance(self.ash).payload()
++
++        self.assertEqual(payload["timezone"], "America/Detroit")
++        self.assertEqual(payload["resets_at"], "2026-10-10T00:00:00-04:00")  # daylight time: four hours behind UTC
++        self.assertEqual(payload["resets_in_seconds"], 12 * 3600)
++        self.assertEqual(limits.utc_offset_text(self.clock.now), "-04:00")
++
++    def test_midnight_utc_is_an_ordinary_evening_in_michigan(self):
++        self.clock = Clock(self, "America/Detroit")
++        self.set_default(limit=1)
++        self.clock.at(2026, 10, 9, 19, 59, 59)
++        self.charge(self.ash)
++
++        self.clock.at(2026, 10, 9, 20, 0, 0)  # 00:00 UTC on the 10th: nothing starts over
++        self.assertEqual(self.clock.now.astimezone(datetime.timezone.utc).date(), datetime.date(2026, 10, 10))
++        self.assertTrue(self.allowance(self.ash).exhausted)
++        with self.assertRaises(limits.ScanLimitReached):
++            self.charge(self.ash)
++
++        self.clock.at(2026, 10, 9, 23, 59, 59)
++        self.assertTrue(self.allowance(self.ash).exhausted)
++
++        self.clock.at(2026, 10, 10, 0, 0, 0)  # Michigan's midnight
++        self.assertFalse(self.allowance(self.ash).exhausted)
++        self.charge(self.ash)
++
++    def test_michigan_gets_the_long_day_when_the_clocks_go_back_in_november(self):
++        self.clock = Clock(self, "America/Detroit")
++        self.clock.at(2026, 10, 31, 23, 30)  # Saturday; at 02:00 on Sunday the clocks go back to 01:00
++        self.assertEqual(limits.next_reset(self.clock.now).isoformat(), "2026-11-01T00:00:00-04:00")
++
++        self.clock.at(2026, 11, 1, 0, 30)  # a day of 25 hours: 24.5 hours of it are left
++        self.assertEqual(limits.next_reset(self.clock.now).isoformat(), "2026-11-02T00:00:00-05:00")
++        self.assertEqual(self.allowance(self.ash).resets_in_seconds, int(24.5 * 3600))
++
++    def test_michigan_gets_the_short_day_when_the_clocks_go_forward_in_march(self):
++        self.clock = Clock(self, "America/Detroit")
++        self.clock.at(2026, 3, 7, 12, 0)  # Saturday; at 02:00 on Sunday the clocks go forward to 03:00
++        self.assertEqual(limits.next_reset(self.clock.now).isoformat(), "2026-03-08T00:00:00-05:00")
++
++        self.clock.at(2026, 3, 8, 0, 30)  # a day of 23 hours: 22.5 hours of it are left
++        self.assertEqual(limits.next_reset(self.clock.now).isoformat(), "2026-03-09T00:00:00-04:00")
++        self.assertEqual(self.allowance(self.ash).resets_in_seconds, int(22.5 * 3600))
++
 +    def test_the_time_zone_is_reported_by_name(self):
 +        self.assertEqual(limits.timezone_name(), "Europe/Berlin")
 +        self.clock = Clock(self, "Asia/Tokyo")
@@ -1567,10 +1622,10 @@ index 0000000..dc30637
 +    unittest.main()
 diff --git a/backend/tests/test_scan_limits_http.py b/backend/tests/test_scan_limits_http.py
 new file mode 100644
-index 0000000..bc13a5b
+index 0000000..41c096b
 --- /dev/null
 +++ b/backend/tests/test_scan_limits_http.py
-@@ -0,0 +1,1062 @@
+@@ -0,0 +1,1117 @@
 +"""Daily scan limits where they act: the HTTP API, the direct scan, the upload that queues photos, and the queue that reads them.
 +
 +The rules (what counts, the day, which limit applies) are tested in test_scan_limits.py. This file is about the places the
@@ -2097,6 +2152,61 @@ index 0000000..bc13a5b
 +            self.assertEqual(self.get("/api/cards/recognize/jobs", self.ash).status_code, 200)
 +
 +        self.assertEqual(self.used(self.ash), 0)
++
++
++# ---------------------------------------------------------------------------------------------------------------------
++# A server on Michigan time
++# ---------------------------------------------------------------------------------------------------------------------
++
++class MichiganServerTests(HttpBase):
++    """The zone this server is recommended to run in (TZ=America/Detroit): what the 429 and the admin's card say about the reset."""
++
++    def setUp(self):
++        super().setUp()
++        self.clock = Clock(self, "America/Detroit")
++        self.clock.at(2026, 10, 9, 18, 48)  # 18:48 in daylight time: five hours and twelve minutes to midnight
++        self.until_midnight = 5 * 3600 + 12 * 60
++
++    def test_the_429_names_michigans_midnight(self):
++        self.set_default(limit=1)
++        with self.scanner():
++            self.assertEqual(self.scan(self.ash).status_code, 200)
++            refused = self.scan(self.ash)
++
++        self.assertEqual(refused.status_code, 429, refused.text)
++        body = refused.json()
++        self.assertEqual(body["code"], "scan_limit_reached")
++        self.assertEqual(body["detail"], "Daily scan limit reached. Scans reset at midnight (America/Detroit).")
++        self.assertEqual((body["daily_limit"], body["used"], body["remaining"], body["unlimited"]), (1, 1, 0, False))
++        self.assertEqual(body["resets_at"], "2026-10-10T00:00:00-04:00")
++        self.assertEqual(body["resets_in_seconds"], self.until_midnight)
++        self.assertEqual(body["timezone"], "America/Detroit")
++        self.assertEqual(refused.headers["retry-after"], str(self.until_midnight))
++
++    def test_queueing_photos_at_the_limit_is_the_same_429(self):
++        self.set_default(limit=0)
++
++        refused = self.enqueue(self.ash)
++
++        self.assertEqual(refused.status_code, 429, refused.text)
++        self.assertEqual(refused.json()["resets_at"], "2026-10-10T00:00:00-04:00")
++        self.assertEqual(refused.json()["timezone"], "America/Detroit")
++
++    def test_what_a_user_is_told_and_what_the_admin_sees_agree(self):
++        self.set_default(limit=100)
++        limits.charge_scans(self.world.db, self.ash.id, count=34)
++
++        mine = self.get("/api/scan-limits/me", self.ash).json()
++        settings = self.get("/api/scan-limits/settings", self.oak).json()
++        overview = self.get("/api/scan-limits/users", self.oak).json()
++        rows = {row["username"]: row for row in overview["users"]}
++
++        self.assertEqual((mine["used"], mine["remaining"], mine["resets_at"]), (34, 66, "2026-10-10T00:00:00-04:00"))
++        self.assertEqual(
++            (settings["timezone"], settings["utc_offset"], settings["next_reset_at"], settings["seconds_until_reset"]),
++            ("America/Detroit", "-04:00", "2026-10-10T00:00:00-04:00", self.until_midnight),
++        )
++        self.assertEqual((overview["timezone"], rows["ash"]["used"], rows["ash"]["daily_limit"]), ("America/Detroit", 34, 100))
 +
 +
 +# ---------------------------------------------------------------------------------------------------------------------
@@ -2658,10 +2768,10 @@ index cc5aafc..b4474d6 100644
              result = await scan_queue.default_composite_processor(
 diff --git a/docs/SCAN_LIMITS.md b/docs/SCAN_LIMITS.md
 new file mode 100644
-index 0000000..7007227
+index 0000000..3479d4d
 --- /dev/null
 +++ b/docs/SCAN_LIMITS.md
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,112 @@
 +# Daily scan limits
 +
 +An administrator can limit how many cards each user may have read by the vision model in a day. The limit is kept and
@@ -2698,14 +2808,15 @@ index 0000000..7007227
 +
 +The day is the **server's local date**: usage starts again at the server's local midnight. In Docker the server's time zone is
 +the backend container's, which is **UTC unless `TZ` is set**. To get your own midnight, set it for the backend, for example in
-+`.env`:
++`.env` (this is Michigan time, with daylight saving looked after by itself):
 +
 +```
-+TZ=Europe/Berlin
++TZ=America/Detroit
 +```
 +
-+and pass it on (`docker-compose.friends.yml` from the CardPulse repository does this for you). Settings → Scanner shows the
-+time zone the server is using and the next reset, so you can check it.
++and pass it on (`docker-compose.friends.yml` from the CardPulse repository does this for you). Settings → General → AI / Card
++Scanner shows the time zone the server is using and the next reset, so you can check it. If it says UTC, `TZ` did not reach the
++backend container.
 +
 +Usage is stored in the database, so restarting the backend does not reset it. A new day needs no job to run: it is a new row
 +that starts at zero. Days are kept (one small row per user and day).
@@ -2716,15 +2827,15 @@ index 0000000..7007227
 +
 +```json
 +{
-+  "detail": "Daily scan limit reached. Scans reset at midnight (Europe/Berlin).",
++  "detail": "Daily scan limit reached. Scans reset at midnight (America/Detroit).",
 +  "code": "scan_limit_reached",
 +  "daily_limit": 100,
 +  "unlimited": false,
 +  "used": 100,
 +  "remaining": 0,
-+  "resets_at": "2026-10-10T00:00:00+02:00",
-+  "resets_in_seconds": 41523,
-+  "timezone": "Europe/Berlin"
++  "resets_at": "2026-10-10T00:00:00-04:00",
++  "resets_in_seconds": 18720,
++  "timezone": "America/Detroit"
 +}
 +```
 +
@@ -3215,7 +3326,7 @@ index a0d4c80..7e57f25 100644
      syncSetsCards: 'Sets & Karten synchronisieren',
      interval: 'Intervall',
 diff --git a/frontend/src/i18n/en.js b/frontend/src/i18n/en.js
-index c93976b..f59e857 100644
+index c93976b..2def846 100644
 --- a/frontend/src/i18n/en.js
 +++ b/frontend/src/i18n/en.js
 @@ -1370,6 +1370,31 @@ const en = {
@@ -3238,7 +3349,7 @@ index c93976b..f59e857 100644
 +      resetsDesc: 'Every day at midnight, server time, everyone starts again at zero. Only photos the AI scanner starts to read are counted.',
 +      timezone: 'Server time zone',
 +      nextReset: 'Next reset',
-+      timezoneHint: 'In Docker the time zone is UTC unless TZ is set for the backend container (for example TZ=Europe/Berlin).',
++      timezoneHint: 'In Docker the time zone is UTC unless TZ is set for the backend container (for example TZ=America/Detroit).',
 +      dailyScans: 'Daily scans',
 +      today: 'today',
 +      unlimited: 'Unlimited',
