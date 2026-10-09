@@ -45,12 +45,15 @@ also used to send what the owner paid and the date each card was added, along wi
 anyone but the owner.
 
 The Leaderboard and Compare also **stop carrying anyone's invested amount or profit**, your own included. They keep to
-things like the username, the number of cards, what the collection is worth, the best card and the sets completed. In
-another person's achievements the *Investor* badge, which says whether they are in profit, is left out too (your own list
-keeps it). The website still draws a P&L column on its Leaderboard and Compare pages; with the figures gone it reads
-+0.00. Hiding the column needs a change to those two pages, which this update does not make.
+the username, avatar, number of cards, what the collection is worth, the best card, the sets completed and similar
+counts. The two website pages that draw them (`Leaderboard.jsx` and `Compare.jsx`) are changed to match: **no profit or
+loss column or block, and no way to sort the Leaderboard by profit.** Nothing is shown in their place, not even a zero.
+In another person's achievements the *Investor* badge ("In the Green"), which says whether they are in profit, is left
+out too (your own list keeps it).
 
-The website's own screens are otherwise not changed, and there are no new screens on the website.
+Everything else on the website is as it was, and there are no new screens on it. Your own pages (Home, Analytics, your
+collection and so on) still show you what you paid and made. Because two website pages change, **the website has to be
+rebuilt as well as the backend** (step 4).
 
 ## What you need
 
@@ -59,8 +62,8 @@ The website's own screens are otherwise not changed, and there are no new screen
 - **Multi-user mode switched on.** With it off nobody has to sign in, so nothing could be kept private; the Friends
   routes then answer `403` and the app says so. Your friends need an account on your server (PokéCollector's
   Settings → Users).
-- A Docker Compose install, and permission to build an image on the machine that runs it (only the backend is built; it
-  takes a few minutes).
+- A Docker Compose install, and permission to build images on the machine that runs it. The backend and the website are
+  both built, so it takes several minutes and needs internet access for the packages they use.
 - `git` on that machine.
 
 ## Install it
@@ -90,16 +93,20 @@ git apply --check /path/to/0001-friends-sharing-and-for-trade-lists.patch   # pr
 git apply /path/to/0001-friends-sharing-and-for-trade-lists.patch
 ```
 
-**3. Tell Compose to build the backend from it.** Copy `docker-compose.friends.yml` from this folder next to your
-`docker-compose.yml`, and change the `context:` line in it if `pokecollector-src` is not next to your PokéCollector
-folder.
+**3. Tell Compose to build the backend and the website from it.** Copy `docker-compose.friends.yml` from this folder next
+to your `docker-compose.yml`, and change the two `context:` lines in it if `pokecollector-src` is not next to your
+PokéCollector folder.
 
-**4. Build and start the backend.** Only the backend container is replaced; the database and your data are not touched.
-The second command makes the website's web server look the backend up again (it remembers where the old one was, and
-shows *502 Bad Gateway* until it is restarted):
+**4. Build and start the backend and the website.** Both containers are replaced; the database and your data are not
+touched. The first build takes a few minutes:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.friends.yml up -d --build backend
+docker compose -f docker-compose.yml -f docker-compose.friends.yml up -d --build backend frontend
+```
+
+If the website shows *502 Bad Gateway* afterwards (its web server remembers where the old backend was), restart it:
+
+```bash
 docker compose -f docker-compose.yml -f docker-compose.friends.yml restart frontend
 ```
 
@@ -111,14 +118,16 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000/api/friends/me
 ```
 
 (`8000` is the backend's port unless you set `BACKEND_PORT`.) `401` means the update is installed: the route exists and
-wants you to sign in. `404` means it is not.
+wants you to sign in. `404` means it is not. Then open the website's **Leaderboard** (and a trainer's **Compare** page
+from it): each trainer shows their value, cards and best card, and there is no profit or loss on either page. If you still
+see a P&L column, the website was not rebuilt: repeat step 4 and reload the page.
 
 **6. Choose what you share.** Everything starts as *Private*. Open **Friends → Sharing** and set the collection, wishlist
 and For Trade list one at a time. Then add a friend by username or invite code.
 
 ### Starting each time
 
-Use the same two files whenever you start or update the server, or Compose goes back to the published image, which does
+Use the same two files whenever you start or update the server, or Compose goes back to the published images, which do
 not have the update:
 
 ```bash
@@ -129,7 +138,7 @@ docker compose -f docker-compose.yml -f docker-compose.friends.yml up -d
 
 ### Going back
 
-Start the stack without the second file, which brings back the published image:
+Start the stack without the second file, which brings back the published images:
 
 ```bash
 docker compose up -d
@@ -143,7 +152,7 @@ app again. To remove the tables too: `DROP TABLE friend_settings, friend_links, 
 
 Repeat steps 2 to 4 with the new version's source. A newer PokéCollector may change the files this update touches, and
 `git apply --check` will say so before anything is changed. Keep using the update's version of `docker-compose.friends.yml`
-until then, or the server will go back to the published image.
+until then, or the server will go back to the published images.
 
 ## Licence
 

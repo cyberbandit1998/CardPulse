@@ -1,7 +1,7 @@
-# Builds PokéCollector's backend from the updated source (see README.md in this folder) instead of pulling the published image.
-# Use it together with your own docker-compose.yml, which everything else comes from:
+# Builds PokéCollector's backend and website from the updated source (see README.md in this folder) instead of pulling the
+# published images. Use it together with your own docker-compose.yml, which everything else comes from:
 #
-#   docker compose -f docker-compose.yml -f docker-compose.friends.yml up -d --build backend
+#   docker compose -f docker-compose.yml -f docker-compose.friends.yml up -d --build backend frontend
 #
 services:
   backend:
@@ -10,3 +10,10 @@ services:
       # The folder made in step 2, with the update applied. Relative to the folder of your docker-compose.yml.
       context: ../pokecollector-src
       dockerfile: backend/Dockerfile
+
+  # The website. Its Leaderboard and Compare pages are changed too, so it is built from the same folder.
+  frontend:
+    image: pokecollector-frontend:friends
+    build:
+      context: ../pokecollector-src
+      dockerfile: frontend/Dockerfile

@@ -1,4 +1,4 @@
-From eae934d0fb63c691aa0f8007ae3111afabe377d8 Mon Sep 17 00:00:00 2001
+From c9556b42deb5b0351f088476ee5713993d888628 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 7 Oct 2026 18:33:09 +0000
 Subject: [PATCH] feat: friends, per-section sharing and For Trade lists
@@ -17,8 +17,8 @@ The older endpoints that let any signed-in user read another user's whole collec
 GET /api/collection/user/{id}, and the social leaderboard, compare and achievements routes. What someone paid and when
 they added a card are left out of the first for everyone but the owner. The leaderboard, a comparison and another person's
 achievements never carry an invested amount or a profit or loss (the Investor badge says whether someone is in profit, so
-it is left out of another person's list). Two upstream tests that relied on the old behaviour are updated to share the
-collection first.
+it is left out of another person's list), and the website's Leaderboard and Compare pages draw neither: no profit or loss
+column, block or sort option. Two upstream tests that relied on the old behaviour are updated to share the collection first.
 
 Adds three tables (friend_settings, friend_links, trade_list), created on start-up; no existing table changes.
 Documented in docs/FRIENDS.md.
@@ -40,14 +40,19 @@ Claude-Session: https://claude.ai/code/session_01384BC8nHuYg1SpN4faoQoG
  backend/tests/test_friends_http.py           | 262 ++++++
  backend/tests/test_public_wishlists_decks.py |   8 +-
  docs/BACKEND.md                              |  31 +-
- docs/FRIENDS.md                              | 123 +++
- 15 files changed, 2653 insertions(+), 13 deletions(-)
+ docs/FRIENDS.md                              | 125 +++
+ docs/FRONTEND.md                             |   4 +
+ frontend/src/pages/Compare.jsx               |   8 -
+ frontend/src/pages/Leaderboard.jsx           |  16 +-
+ frontend/src/pages/SocialPrivacy.test.jsx    | 171 ++++
+ 19 files changed, 2834 insertions(+), 33 deletions(-)
  create mode 100644 backend/api/friends.py
  create mode 100644 backend/services/friends.py
  create mode 100644 backend/tests/friends_world.py
  create mode 100644 backend/tests/test_friends.py
  create mode 100644 backend/tests/test_friends_http.py
  create mode 100644 docs/FRIENDS.md
+ create mode 100644 frontend/src/pages/SocialPrivacy.test.jsx
 
 diff --git a/README.md b/README.md
 index de9080c..2c48896 100644
@@ -2843,10 +2848,10 @@ index bb49a58..a85307c 100644
  | Method | Path | Notes |
 diff --git a/docs/FRIENDS.md b/docs/FRIENDS.md
 new file mode 100644
-index 0000000..4ebfc7e
+index 0000000..80c30bc
 --- /dev/null
 +++ b/docs/FRIENDS.md
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,125 @@
 +# Friends, sharing and trading
 +
 +Friends lets the users of one PokéCollector server see what each other chooses to share, and find cards worth swapping.
@@ -2931,8 +2936,10 @@ index 0000000..4ebfc7e
 +| `GET /api/social/achievements/{user_id}` | `404` unless that user's collection is shared with the viewer (your own always works). Another person's list leaves out the Investor badge, which says whether they are in profit. |
 +
 +On the website this means the Leaderboard lists only people who have chosen to share, and "view collection" works only for
-+them. Because the server no longer sends the invested and profit figures, the P&L column that the website's Leaderboard and
-+Compare pages still draw reads +0.00; hiding the column needs a change to those two pages, which this update does not make.
++them. Because the server no longer sends the invested and profit figures, the Leaderboard and Compare pages do not draw
++them either: no profit or loss column or block, and no way to sort the Leaderboard by profit. They show each trainer's
++username, avatar, number of cards, value, best card and sets completed (Compare also the different cards and what the two
++collections have in common).
 +
 +## API
 +
@@ -2970,6 +2977,291 @@ index 0000000..4ebfc7e
 +* `trade_list` - copies of a collection row marked For Trade
 +
 +Deleting a user removes their rows. Removing a collection row removes its For Trade mark.
+diff --git a/docs/FRONTEND.md b/docs/FRONTEND.md
+index cecbfbf..cf08ebf 100644
+--- a/docs/FRONTEND.md
++++ b/docs/FRONTEND.md
+@@ -153,11 +153,15 @@ Defined in `frontend/src/components/TabNav.jsx`.
+ 
+ - Social ranking view for multi-user mode
+ - Uses `TabNav`
++- Each trainer shows value, card count and best card; the list can be sorted by value, cards, different cards or sets completed
++- Never shows an invested amount or a profit or loss: the server does not send them ([Friends](FRIENDS.md))
+ 
+ ### `pages/Compare.jsx`
+ 
+ - Side-by-side trainer comparison
+ - Route parameter: `userId`
++- Each trainer shows value, cards, different cards, sets completed and best card, with what the two collections have in common
++- Never shows an invested amount or a profit or loss
+ 
+ ### `pages/Achievements.jsx`
+ 
+diff --git a/frontend/src/pages/Compare.jsx b/frontend/src/pages/Compare.jsx
+index 3b6c002..43648b4 100644
+--- a/frontend/src/pages/Compare.jsx
++++ b/frontend/src/pages/Compare.jsx
+@@ -33,7 +33,6 @@ function StatBlock({ label, value, accent }) {
+ }
+ 
+ function TrainerPanel({ trainer, formatPrice, t, onCardClick }) {
+-  const pnl = Number(trainer?.pnl ?? 0)
+   const bestCard = trainer?.most_valuable_card
+ 
+   return (
+@@ -53,13 +52,6 @@ function TrainerPanel({ trainer, formatPrice, t, onCardClick }) {
+         <StatBlock label={t('leaderboard.setsCompleted')} value={Number(trainer?.sets_completed ?? 0).toLocaleString()} />
+       </div>
+ 
+-      <div className="rounded-2xl border border-border bg-bg-primary/60 p-4">
+-        <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">{t('leaderboard.pnl')}</p>
+-        <p className={`mt-2 text-2xl font-black ${pnl >= 0 ? 'text-green' : 'text-brand-red'}`}>
+-          {pnl >= 0 ? '+' : ''}{formatPrice(pnl)}
+-        </p>
+-      </div>
+-
+       <div>
+         <p className="mb-2 text-[11px] uppercase tracking-[0.2em] text-text-muted">{t('leaderboard.bestCard')}</p>
+         {bestCard ? (
+diff --git a/frontend/src/pages/Leaderboard.jsx b/frontend/src/pages/Leaderboard.jsx
+index 36e7723..af4c19a 100644
+--- a/frontend/src/pages/Leaderboard.jsx
++++ b/frontend/src/pages/Leaderboard.jsx
+@@ -10,7 +10,7 @@ import { resolveCardImageUrl } from '../utils/imageUrl'
+ import { CardIdentity } from '../components/card-system'
+ import { CardModal } from '../components/CardItem'
+ 
+-const SORT_OPTIONS = ['total_value', 'total_cards', 'unique_cards', 'sets_completed', 'pnl']
++const SORT_OPTIONS = ['total_value', 'total_cards', 'unique_cards', 'sets_completed']
+ 
+ function rankLabel(rank) {
+   if (rank === 1) return '🥇'
+@@ -81,7 +81,7 @@ export default function Leaderboard() {
+               <ArrowUpDown size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+               <select className="select pl-9" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+                 {SORT_OPTIONS.map((key) => (
+-                  <option key={key} value={key}>{t(`leaderboard.${key === 'total_value' ? 'value' : key === 'total_cards' ? 'cards' : key === 'unique_cards' ? 'uniqueCards' : key === 'sets_completed' ? 'setsCompleted' : 'pnl'}`)}</option>
++                  <option key={key} value={key}>{t(`leaderboard.${key === 'total_value' ? 'value' : key === 'total_cards' ? 'cards' : key === 'unique_cards' ? 'uniqueCards' : 'setsCompleted'}`)}</option>
+                 ))}
+               </select>
+             </div>
+@@ -101,8 +101,6 @@ export default function Leaderboard() {
+         <div className="space-y-3">
+           {rows.map((trainer, index) => {
+             const bestCard = trainer.most_valuable_card
+-            const pnl = Number(trainer.pnl ?? 0)
+-            const positive = pnl >= 0
+             return (
+               <div
+                 key={trainer.user_id}
+@@ -110,7 +108,7 @@ export default function Leaderboard() {
+                 onClick={() => trainer.user_id !== currentUser?.id && navigate(`/leaderboard/compare/${trainer.user_id}`)}
+                 className={`w-full rounded-2xl border border-border bg-bg-card p-4 text-left transition-all ${trainer.user_id !== currentUser?.id ? 'hover:border-yellow/40 hover:bg-bg-elevated cursor-pointer' : ''}`}
+               >
+-                <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_35rem] lg:items-center lg:gap-6">
++                <div className="flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_28rem] lg:items-center lg:gap-6">
+                   <div className="flex min-w-0 items-start gap-3">
+                     <div className="flex h-12 min-w-12 items-center justify-center rounded-2xl bg-bg-primary text-lg font-black">
+                       {rankLabel(index + 1)}
+@@ -145,7 +143,7 @@ export default function Leaderboard() {
+                     </div>
+                   </div>
+ 
+-                  <div className="grid grid-cols-2 gap-3 lg:grid-cols-[6rem_5rem_15rem_6rem] lg:items-center lg:gap-4">
++                  <div className="grid grid-cols-2 gap-3 lg:grid-cols-[6rem_5rem_15rem] lg:items-center lg:gap-4">
+                     <div>
+                       <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">{t('leaderboard.value')}</p>
+                       <p className="mt-1 text-sm font-semibold text-yellow">{formatPrice(trainer.total_value)}</p>
+@@ -169,12 +167,6 @@ export default function Leaderboard() {
+                         <p className="mt-1 text-sm text-text-muted">-</p>
+                       )}
+                     </div>
+-                    <div>
+-                      <p className="text-[11px] uppercase tracking-[0.2em] text-text-muted">{t('leaderboard.pnl')}</p>
+-                      <p className={`mt-1 text-sm font-semibold ${positive ? 'text-green' : 'text-brand-red'}`}>
+-                        {positive ? '+' : ''}{formatPrice(pnl)}
+-                      </p>
+-                    </div>
+                   </div>
+                 </div>
+               </div>
+diff --git a/frontend/src/pages/SocialPrivacy.test.jsx b/frontend/src/pages/SocialPrivacy.test.jsx
+new file mode 100644
+index 0000000..343f1e2
+--- /dev/null
++++ b/frontend/src/pages/SocialPrivacy.test.jsx
+@@ -0,0 +1,171 @@
++import { createElement } from 'react'
++import { renderToStaticMarkup } from 'react-dom/server'
++import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
++import { Route, Routes, StaticRouter } from 'react-router-dom'
++import { describe, expect, it, vi } from 'vitest'
++import Compare from './Compare'
++import Leaderboard from './Leaderboard'
++
++vi.mock('../api/client', () => ({
++  getLeaderboard: vi.fn(),
++  compareUsers: vi.fn(),
++}))
++
++vi.mock('../contexts/SettingsContext', () => ({
++  useSettings: () => ({
++    t: key => key,
++    formatPrice: value => `$${Number(value).toFixed(2)}`,
++    pricePrimaryField: 'price_trend',
++  }),
++}))
++
++vi.mock('../contexts/AuthContext', () => ({
++  useAuth: () => ({ multiUser: true, user: { id: 1 } }),
++}))
++
++vi.mock('../components/card-system', () => ({
++  CardIdentity: ({ name, subtext }) => createElement('div', { 'data-best-card': true }, name, ' ', subtext),
++}))
++
++vi.mock('../components/CardItem', () => ({
++  CardModal: () => null,
++}))
++
++// Figures worked out from what someone paid. They are the owner's alone, so neither page may draw them. An older
++// server still sends them, which is why they are fed in here as well as left out.
++const PAID_FIGURES = { total_invested: 4321.98, pnl: 8765.43, pnl_pct: 61.25, positive_pnl_flag: 1 }
++const PAID_FIGURE_TEXT = ['4321.98', '8765.43', '61.25']
++
++const trainer = (overrides = {}) => ({
++  user_id: 2,
++  username: 'misty',
++  avatar_id: 121,
++  role: 'user',
++  total_cards: 321,
++  unique_cards: 200,
++  total_value: 1234.5,
++  most_valuable_card: { card_id: 'base1-4_en', name: 'Charizard', price_market: 250 },
++  sets_completed: 3,
++  set_diversity: 12,
++  wishlist_count: 4,
++  sold_products_count: 0,
++  illustration_rare_flag: 0,
++  public_handle: null,
++  ...overrides,
++})
++
++function renderPage({ location, path, element, queryKey, data }) {
++  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
++  queryClient.setQueryData(queryKey, data)
++  return renderToStaticMarkup(
++    createElement(
++      QueryClientProvider,
++      { client: queryClient },
++      createElement(
++        StaticRouter,
++        { location },
++        createElement(Routes, null, createElement(Route, { path, element })),
++      ),
++    ),
++  )
++}
++
++const renderLeaderboard = rows => renderPage({
++  location: '/leaderboard',
++  path: '/leaderboard',
++  element: createElement(Leaderboard),
++  queryKey: ['leaderboard', 'price_trend'],
++  data: rows,
++})
++
++const renderCompare = comparison => renderPage({
++  location: '/leaderboard/compare/2',
++  path: '/leaderboard/compare/:userId',
++  element: createElement(Compare),
++  queryKey: ['compare', '2', 'price_trend'],
++  data: comparison,
++})
++
++function expectNothingFromWhatWasPaid(markup) {
++  expect(markup).not.toContain('leaderboard.pnl')
++  expect(markup).not.toContain('P&amp;L')
++  for (const figure of PAID_FIGURE_TEXT) expect(markup).not.toContain(figure)
++  // A profit or a loss is drawn with a sign in front of an amount, and a missing one used to read +$0.00.
++  expect(markup).not.toMatch(/[+-]\$\d/)
++}
++
++describe('Leaderboard page', () => {
++  const sharedRows = [trainer(), trainer({ user_id: 1, username: 'ash', total_value: 900.25, total_cards: 111 })]
++
++  it('has no profit or loss column when the server leaves the figures out', () => {
++    const markup = renderLeaderboard(sharedRows)
++
++    expectNothingFromWhatWasPaid(markup)
++  })
++
++  it('draws nothing from what someone paid even when the server still sends it', () => {
++    const markup = renderLeaderboard(sharedRows.map(row => ({ ...row, ...PAID_FIGURES })))
++
++    expectNothingFromWhatWasPaid(markup)
++  })
++
++  it('keeps the username, avatar, value, card count and best card', () => {
++    const markup = renderLeaderboard(sharedRows)
++
++    expect(markup).toContain('misty')
++    expect(markup).toContain('ash')
++    expect(markup).toContain('/121.gif')
++    expect(markup).toContain('leaderboard.value')
++    expect(markup).toContain('$1234.50')
++    expect(markup).toContain('leaderboard.cards')
++    expect(markup).toContain('321')
++    expect(markup).toContain('leaderboard.bestCard')
++    expect(markup).toContain('Charizard')
++    expect(markup).toContain('$250.00')
++  })
++
++  it('cannot be sorted by profit or loss', () => {
++    const markup = renderLeaderboard(sharedRows)
++    const sortChoices = [...markup.matchAll(/<option value="([^"]+)"/g)].map(match => match[1])
++
++    expect(sortChoices).toEqual(['total_value', 'total_cards', 'unique_cards', 'sets_completed'])
++  })
++})
++
++describe('Compare page', () => {
++  const comparison = (paid = {}) => ({
++    user_a: trainer({ user_id: 1, username: 'ash', total_value: 900.25, total_cards: 111, unique_cards: 90, sets_completed: 1, ...paid }),
++    user_b: trainer({ ...paid }),
++    overlap: 5,
++    only_a: 7,
++    only_b: 9,
++    trade_suggestions: [],
++  })
++
++  it('has no profit or loss block when the server leaves the figures out', () => {
++    const markup = renderCompare(comparison())
++
++    expectNothingFromWhatWasPaid(markup)
++  })
++
++  it('draws nothing from what someone paid even when the server still sends it', () => {
++    const markup = renderCompare(comparison(PAID_FIGURES))
++
++    expectNothingFromWhatWasPaid(markup)
++  })
++
++  it('keeps both trainers, their value, cards, sets and best card', () => {
++    const markup = renderCompare(comparison())
++
++    expect(markup).toContain('ash')
++    expect(markup).toContain('misty')
++    expect(markup).toContain('$900.25')
++    expect(markup).toContain('$1234.50')
++    expect(markup).toContain('leaderboard.cards')
++    expect(markup).toContain('leaderboard.uniqueCards')
++    expect(markup).toContain('leaderboard.setsCompleted')
++    expect(markup).toContain('leaderboard.bestCard')
++    expect(markup).toContain('Charizard')
++    expect(markup).toContain('compare.cardsInCommon')
++  })
++})
 -- 
 2.43.0
 
