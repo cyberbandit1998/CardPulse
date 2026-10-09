@@ -57,6 +57,17 @@ The app warns you if it connects to a server in single-user mode.
   the server's own list of your most valuable cards, never a fixed one). Every list has a "See all", tapping a card
   opens its details, and tapping a set opens its checklist. A heart in the header opens your wishlist. A one-line warning
   says when some cards have no purchase price, which makes the gain look larger than it is.
+- **Search:** a search bar under Home's header opens a search of your server's **whole catalogue**, not only the cards you
+  own. One box, and chips for what to look at: **All** (the default), **Pokémon**, **Artist**, **Set** and **Number**. All
+  looks at a card's or Pokémon's name, its artist or illustrator, its set's name or code, its collector number, and its
+  rarity, and puts the closest match first (a set named in full, then names, then artists, then the rest). A number can be
+  typed as printed, with the size of its set ("125/197"), which finds that set's card; "OBF 125" (a set code and a number)
+  and "Pikachu 58" (a name and a number) work too. Each card is a row like the wishlist's: picture, name, set, number,
+  rarity, who drew it (left out when the catalogue has no artist for the card), what it costs now, how many copies you own
+  and a heart for the wishlist. A card opens as a page; on it, and on the details of a card in your collection or on your
+  wishlist, the **artist's name is a link**: it opens the search for every card they drew. The cards come a page at a time
+  as you scroll, in the language you chose on the server. The sliders at the end of the bar choose what to look at before
+  you start typing. This uses PokéCollector's own card search, so there is nothing to install on the server.
 - **Wishlist:** the cards you want, kept by your PokéCollector server, so its website and every phone show the same list.
   A heart on a card puts it on the list or takes it off: on every card of a set's checklist (the ones you are missing and
   the ones you own), in a card's details, and next to each result when you add a card by typing; cards on the list carry a

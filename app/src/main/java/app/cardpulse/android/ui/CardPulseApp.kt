@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.cardpulse.android.core.SearchScope
 import app.cardpulse.android.core.cardIds
 import app.cardpulse.android.core.homeNote
 import app.cardpulse.android.core.requestsWaiting
@@ -48,6 +49,7 @@ import app.cardpulse.android.ui.screens.MostValuableScreen
 import app.cardpulse.android.ui.screens.PasswordScreen
 import app.cardpulse.android.ui.screens.PortfolioScreen
 import app.cardpulse.android.ui.screens.ScanScreen
+import app.cardpulse.android.ui.screens.SearchScreen
 import app.cardpulse.android.ui.screens.SetChecklistScreen
 import app.cardpulse.android.ui.screens.SettingsScreen
 import app.cardpulse.android.ui.screens.SetsScreen
@@ -60,6 +62,7 @@ fun CardPulseApp(
     appVm: AppViewModel = viewModel(),
     scanVm: ScanViewModel = viewModel(),
     friendsVm: FriendsViewModel = viewModel(),
+    searchVm: SearchViewModel = viewModel(),
 ) {
     val app by appVm.state.collectAsState()
     val friends by friendsVm.session.state.collectAsState()
@@ -80,8 +83,20 @@ fun CardPulseApp(
     // The same for the copies a user would trade: any card's details can offer them without a callback passed through every screen.
     // Nothing is offered until the marks have loaded, or on a server that has no Friends.
     val tradeControls = rememberTradeControls(friends, friendsVm.session) { problem -> Toast.makeText(context, problem, Toast.LENGTH_LONG).show() }
-    CompositionLocalProvider(LocalWishlist provides wishlistControls, LocalTrade provides tradeControls) {
-        CardPulseScreens(appVm, scanVm, friendsVm)
+    // The search of the whole catalogue covers every other screen, so what is open under it is where Back returns to. It is opened from
+    // the bar on Home, and from an artist's name on any card's details, which is why it is handed out like the controls above.
+    var searching by rememberSaveable { mutableStateOf(false) }
+    val searchControls = remember(searchVm) {
+        CardSearchControls(
+            enabled = true,
+            byArtist = { artist ->
+                searchVm.session.open(SearchScope.ARTIST, artist)
+                searching = true
+            },
+        )
+    }
+    CompositionLocalProvider(LocalWishlist provides wishlistControls, LocalTrade provides tradeControls, LocalCardSearch provides searchControls) {
+        CardPulseScreens(appVm, scanVm, friendsVm, searchVm, searching = searching, onSearching = { searching = it })
     }
 }
 
@@ -93,7 +108,15 @@ private fun copyInviteCode(context: Context, code: String) {
 }
 
 @Composable
-private fun CardPulseScreens(appVm: AppViewModel, scanVm: ScanViewModel, friendsVm: FriendsViewModel) {
+private fun CardPulseScreens(
+    appVm: AppViewModel,
+    scanVm: ScanViewModel,
+    friendsVm: FriendsViewModel,
+    searchVm: SearchViewModel,
+    /** The search of the whole catalogue is open. */
+    searching: Boolean,
+    onSearching: (Boolean) -> Unit,
+) {
     val app by appVm.state.collectAsState()
     val friends by friendsVm.session.state.collectAsState()
     val context = LocalContext.current
@@ -119,9 +142,12 @@ private fun CardPulseScreens(appVm: AppViewModel, scanVm: ScanViewModel, friends
             showMostValuable = false
             showWishlist = false
             showFriends = false
+            onSearching(false)
             openSet = null
         }
     }
+    // What was found is forgotten the moment the user is not in: nothing of one account is kept for the next.
+    LaunchedEffect(app.signedIn) { if (!app.signedIn) searchVm.session.reset() }
     // Friends are looked up once the user is in, and forgotten the moment they are not: nothing of one account is kept for the next.
     LaunchedEffect(app.signedIn, app.mustChangePassword) {
         if (app.signedIn && !app.mustChangePassword) friendsVm.session.start() else friendsVm.session.reset()
@@ -132,6 +158,10 @@ private fun CardPulseScreens(appVm: AppViewModel, scanVm: ScanViewModel, friends
         if (app.signedIn && !app.mustChangePassword) scanVm.refreshQuietly()
     }
     val openManualAdd = { showManualAdd = true }
+    val openSearch = { scope: SearchScope ->
+        searchVm.session.open(scope)
+        onSearching(true)
+    }
     val openCollection = { search: String ->
         collectionSearch = search
         tab = MainTab.COLLECTION.ordinal
@@ -140,7 +170,7 @@ private fun CardPulseScreens(appVm: AppViewModel, scanVm: ScanViewModel, friends
     // The open camera uses the whole screen on black, over whichever tab is showing: no tab bar, and it shows its own
     // messages. Closing it goes back to that tab.
     val cameraOpen = app.signedIn && !app.mustChangePassword && !showSettings && !showManualAdd && !showMostValuable &&
-        !showWishlist && !showFriends && scan.stage == ScanStage.RAPID
+        !showWishlist && !showFriends && !searching && scan.stage == ScanStage.RAPID
     // Light icons on the status and navigation bars wherever the screen behind them is dark.
     SystemBarIcons(lightIcons = LocalDarkTheme.current || cameraOpen)
 
@@ -160,6 +190,17 @@ private fun CardPulseScreens(appVm: AppViewModel, scanVm: ScanViewModel, friends
             onSignOut = { appVm.signOut() },
             onDismissMessage = appVm::dismissMessage,
         )
+
+        // The search covers whichever screen the user was on, which is where Back returns to.
+        searching -> Scaffold { padding ->
+            SearchScreen(
+                app = app,
+                vm = searchVm,
+                onClose = { onSearching(false) },
+                // The padding already leaves room for the system bars; the keyboard's padding must not count them twice.
+                modifier = Modifier.padding(padding).consumeWindowInsets(padding),
+            )
+        }
 
         showSettings -> {
             BackHandler { showSettings = false }
@@ -279,6 +320,7 @@ private fun CardPulseScreens(appVm: AppViewModel, scanVm: ScanViewModel, friends
                                 friendsNote = friends.homeNote(),
                                 friendsRequests = friends.requestsWaiting,
                                 onOpenFriends = { showFriends = true },
+                                onOpenSearch = openSearch,
                             )
                             MainTab.SETS -> SetsScreen(
                                 state = app,

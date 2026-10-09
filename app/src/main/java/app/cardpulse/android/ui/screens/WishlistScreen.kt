@@ -401,6 +401,7 @@ private fun ColumnScope.WishlistCardDetails(
     DetailRow("Set", entry.setName.ifBlank { "—" })
     DetailRow("Number", entry.numberText.ifBlank { "—" })
     DetailRow("Rarity", entry.rarity ?: "—")
+    ArtistRow(entry.card?.artist)
     DetailRow("Price now", if (entry.hasPrice) money.format(entry.priceEur) else "No price")
     DetailRow("You own", entry.statusText.ifBlank { "—" })
     if (entry.item.quantity > 1) DetailRow("Wanted", "×${entry.item.quantity}")

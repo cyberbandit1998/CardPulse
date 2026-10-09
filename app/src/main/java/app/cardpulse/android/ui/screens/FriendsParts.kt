@@ -220,7 +220,11 @@ internal fun FriendCardDetails(card: FriendCard, owner: String, state: AppState,
     Column(modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         CardArt(item, state.serverUrl, state.prefs, Modifier.fillMaxWidth().aspectRatio(CARD_ASPECT), large = true)
         WishlistToggleButton(card.cardId)
-        card.detailLines(owner, money).forEach { (label, value) -> DetailRow(label, value) }
+        card.detailLines(owner, money).forEach { (label, value) ->
+            DetailRow(label, value)
+            // Under the rarity, where the other details of the card end and what the friend has begins.
+            if (label == "Rarity") ArtistRow(card.card?.artist)
+        }
     }
 }
 
