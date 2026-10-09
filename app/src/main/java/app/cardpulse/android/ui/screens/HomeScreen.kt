@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.cardpulse.android.core.CollectionItemDto
 import app.cardpulse.android.core.MoneyFormatter
+import app.cardpulse.android.core.SearchScope
 import app.cardpulse.android.core.cardsMissingCost
 import app.cardpulse.android.core.costCoverage
 import app.cardpulse.android.core.setProgress
@@ -69,6 +70,8 @@ fun HomeScreen(
     friendsNote: String = "",
     friendsRequests: Int = 0,
     onOpenFriends: (() -> Unit)? = null,
+    /** The search bar under the header, when given: opens the search of the whole catalogue, for what the user chose to look at. */
+    onOpenSearch: ((SearchScope) -> Unit)? = null,
 ) {
     val money = remember(state.prefs.currency, state.prefs.rateFromEur) {
         MoneyFormatter(state.prefs.currency, state.prefs.rateFromEur)
@@ -109,6 +112,9 @@ fun HomeScreen(
                     modifier = inset,
                     onOpenWishlist = onOpenWishlist,
                 )
+                if (onOpenSearch != null) {
+                    HomeSearchBar(onOpen = { onOpenSearch(SearchScope.ALL) }, onPickScope = onOpenSearch, modifier = inset.padding(top = 12.dp))
+                }
                 if (state.dashboardLoading || state.collectionLoading) {
                     LinearProgressIndicator(inset.fillMaxWidth().padding(top = 8.dp))
                 }

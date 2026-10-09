@@ -292,6 +292,8 @@ internal fun ItemDialog(
                 DetailRow("Set", entry.setName().ifBlank { "—" })
                 DetailRow("Number", entry.card?.number ?: "—")
                 DetailRow("Rarity", entry.card?.rarity ?: "—")
+                // Left out for a card the catalogue has no artist for; the name opens the search for every card they drew.
+                ArtistRow(entry.card?.artist, onSearch = onClose)
                 DetailRow("Quantity", entry.quantity.toString())
                 DetailRow("Condition", entry.condition)
                 DetailRow("Variant", entry.variant)

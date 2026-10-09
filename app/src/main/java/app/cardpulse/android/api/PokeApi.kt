@@ -132,6 +132,24 @@ interface PokeApi {
     ): CardSearchDto
 
     /**
+     * Searches the catalogue by any of what is printed on a card; a filter that is null is left out, and a card must match every
+     * one that is given. [q] is looked for inside the name, [artist] and [rarity] inside theirs (accents and case ignored),
+     * [number] is one card number (leading zeros ignored) and [setId] is the server's own id for a set, such as "sv3_en". The
+     * answer is in the language the user has chosen on the server, by name. Never send a [q] that is a word and a number
+     * ("OBF 125"): the server takes it for a set code and goes to the internet to look for the set.
+     */
+    @GET("api/cards/search")
+    suspend fun searchCatalog(
+        @Query("q") q: String?,
+        @Query("artist") artist: String?,
+        @Query("set_id") setId: String?,
+        @Query("number") number: String?,
+        @Query("rarity") rarity: String?,
+        @Query("page") page: Int,
+        @Query("page_size") pageSize: Int,
+    ): CardSearchDto
+
+    /**
      * Every set the server lists for this user's language, newest first, each with how many different cards of it the
      * user owns (`owned_count`, 0 for a set with none).
      */

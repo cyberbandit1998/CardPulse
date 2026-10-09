@@ -6,6 +6,8 @@ import app.cardpulse.android.core.AddToCollectionRequest
 import app.cardpulse.android.core.AppJson
 import app.cardpulse.android.core.CardDto
 import app.cardpulse.android.core.CardSearchDto
+import app.cardpulse.android.core.CardSearchParams
+import app.cardpulse.android.core.CatalogBackend
 import app.cardpulse.android.core.CollectionItemDto
 import app.cardpulse.android.core.CollectionQuantityRequest
 import app.cardpulse.android.core.CustomCardRequest
@@ -77,7 +79,7 @@ class Repository(
     private val api: PokeApi,
     private val session: SessionHolder,
     private val json: Json = AppJson,
-) : ScanBackend, PriceBackend, ManualAddBackend, FriendsBackend {
+) : ScanBackend, PriceBackend, ManualAddBackend, FriendsBackend, CatalogBackend {
     // --- connection and sign-in ---------------------------------------------------------------
 
     /** Points the app at [serverUrl] and confirms it really is a PokéCollector server. */
@@ -248,6 +250,10 @@ class Repository(
     /** Every language the server has, so a card can be found whichever language its name is typed in. */
     override suspend fun searchCards(name: String, number: String?, pageSize: Int): CardSearchDto =
         api.searchCards(name, number, lang = "all", page = 1, pageSize = pageSize)
+
+    /** One page of a catalogue search by name, artist, set, number or rarity, in the user's own language (the global search). */
+    override suspend fun searchCatalog(params: CardSearchParams, page: Int, pageSize: Int): CardSearchDto =
+        api.searchCatalog(params.q, params.artist, params.setId, params.number, params.rarity, page, pageSize)
 
     /** Every set the server lists, each with how many of its cards are owned: the catalogue the Sets tab browses. */
     override suspend fun sets(): List<SetDto> = api.sets()

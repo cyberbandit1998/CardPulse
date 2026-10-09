@@ -1,9 +1,9 @@
-**Friends and trading, with your own privacy settings.**
+**Search the whole catalogue, from Home.**
 
-- **A new row on Home: Friends & trading.** Add friends by username or invite code; they accept or decline, and a request shares nothing by itself.
-- **Everything starts private.** In Friends → Sharing you choose, for your collection, your wishlist and your For Trade cards one at a time, whether it is **Private**, **Friends only** or **Public** (everyone with an account on your server, but not the internet).
-- **For Trade is up to you.** Open a card in your Collection and offer its copies one at a time ("2 of 4 for trade"). Nothing is ever offered automatically, not even duplicates, and never more than you hold.
-- **A friend's page opens on the Trade match:** the cards they have for trade that you want, and the cards you have for trade that they want. Then their For Trade list, wishlist and collection, as far as they share them. Tap any card for its details; the heart puts it on your own wishlist.
-- **Your server needs a small update first.** A phone app can't keep one person's cards private from another, so the server has to. The update and the steps to install it are in the `server` folder of this repository. Until it is installed the Friends screen says so, and everything else works as before. The update also makes the website's Leaderboard, compare and "view collection" follow the same sharing settings, and takes anyone's invested amount and profit off its Leaderboard and Compare pages.
+- **A search bar under the header on Home.** It opens a search of every card your server knows, not only the ones you own. The sliders at its end choose what to look at before you start.
+- **One box, and chips for what it looks at:** All (the default), Pokémon, Artist, Set and Number. All looks at names, artists, sets, card numbers and rarities together: "Pikachu" finds every Pikachu in every set, an artist's name finds every card they drew, "30th Celebration" finds that set's cards, and "130/128" finds the card with that number in the set that prints 128 cards.
+- **Each card is a row you know from the wishlist:** picture, name, set, number, rarity, who drew it (left out when the catalogue doesn't say), what it costs now, how many copies you own, and a heart. A card opens as a page.
+- **The artist's name is a link.** On a found card, on a card in your collection and on a card on your wishlist, tapping the artist opens the search for every card they drew.
+- Nothing needs installing on your server: this uses PokéCollector's own card search.
 
 If anything looks wrong on your phone, tell me which screen it was.

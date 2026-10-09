@@ -29,16 +29,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -77,6 +83,7 @@ import androidx.compose.ui.unit.sp
 import app.cardpulse.android.core.ChartPoint
 import app.cardpulse.android.core.CollectionItemDto
 import app.cardpulse.android.core.MoneyFormatter
+import app.cardpulse.android.core.SearchScope
 import app.cardpulse.android.core.ServerUrls
 import app.cardpulse.android.core.SetProgress
 import app.cardpulse.android.core.TopCardDto
@@ -164,6 +171,61 @@ internal fun HomeHeader(
         RoundIconButton(Icons.Default.Refresh, "Refresh", onRefresh)
         Spacer(Modifier.width(8.dp))
         RoundIconButton(Icons.Default.Settings, "Settings", onOpenSettings)
+    }
+}
+
+/**
+ * The way into the search of the whole catalogue: a pill under the header that says what can be searched. Pressing it opens the
+ * search ([onOpen]); the sliders at its end offer what to look at first (everything, a name, an artist, a set or a number), and
+ * [onPickScope] opens the search for the one chosen.
+ */
+@Composable
+internal fun HomeSearchBar(onOpen: () -> Unit, onPickScope: (SearchScope) -> Unit, modifier: Modifier = Modifier) {
+    var choosing by remember { mutableStateOf(false) }
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        modifier
+            .fillMaxWidth()
+            .height(48.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .clickable(role = Role.Button, onClickLabel = "Search cards, artists and sets", onClick = onOpen)
+                .padding(start = 16.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(Icons.Default.Search, contentDescription = null, tint = muted, modifier = Modifier.size(22.dp))
+            Text(SearchScope.ALL.hint, style = MaterialTheme.typography.bodyLarge, color = muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        VerticalDivider(Modifier.height(24.dp), thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
+        Box {
+            IconButton(onClick = { choosing = true }, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Default.Tune, contentDescription = "Choose what to search", tint = muted, modifier = Modifier.size(22.dp))
+            }
+            DropdownMenu(expanded = choosing, onDismissRequest = { choosing = false }) {
+                SearchScope.entries.forEach { scope ->
+                    DropdownMenuItem(
+                        text = { Text(scope.label) },
+                        onClick = {
+                            choosing = false
+                            onPickScope(scope)
+                        },
+                        leadingIcon = if (scope == SearchScope.ALL) {
+                            { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(20.dp)) }
+                        } else {
+                            null
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 
