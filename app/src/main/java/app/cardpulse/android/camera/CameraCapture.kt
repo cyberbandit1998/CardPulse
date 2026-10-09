@@ -17,8 +17,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size as GeoSize
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
@@ -118,17 +117,27 @@ fun CameraPreview(controller: CaptureController, modifier: Modifier = Modifier) 
 @Composable
 internal fun CardGuide(modifier: Modifier = Modifier) {
     Canvas(modifier) {
-        val ratio = 63f / 88f
-        val maxWidth = size.width * 0.78f
-        val maxHeight = size.height * 0.72f
-        val width = minOf(maxWidth, maxHeight * ratio)
-        val height = width / ratio
+        val outline = cardGuideBounds(size.width, size.height)
         drawRoundRect(
             color = Color.White.copy(alpha = 0.85f),
-            topLeft = Offset((size.width - width) / 2f, (size.height - height) / 2f - size.height * 0.04f),
-            size = GeoSize(width, height),
+            topLeft = outline.topLeft,
+            size = outline.size,
             cornerRadius = CornerRadius(14.dp.toPx()),
             style = Stroke(width = 2.5.dp.toPx()),
         )
     }
+}
+
+/**
+ * Where [CardGuide] draws its outline in a view of this size, centred and a little above the middle. Whatever else is laid over
+ * the camera (the title, the count of scans, the instructions) is placed to keep clear of it, and the tests check that
+ * against these numbers rather than a copy of them.
+ */
+internal fun cardGuideBounds(width: Float, height: Float): Rect {
+    val ratio = 63f / 88f
+    val outlineWidth = minOf(width * 0.78f, height * 0.72f * ratio)
+    val outlineHeight = outlineWidth / ratio
+    val left = (width - outlineWidth) / 2f
+    val top = (height - outlineHeight) / 2f - height * 0.04f
+    return Rect(left, top, left + outlineWidth, top + outlineHeight)
 }

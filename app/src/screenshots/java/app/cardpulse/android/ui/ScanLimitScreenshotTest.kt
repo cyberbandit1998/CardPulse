@@ -8,12 +8,17 @@ import android.view.PixelCopy
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Text
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.unit.Density
+import app.cardpulse.android.camera.CardGuide
 import app.cardpulse.android.core.Fixtures
 import app.cardpulse.android.core.Ownership
 import app.cardpulse.android.core.ScanAllowanceDto
@@ -39,11 +44,13 @@ import java.util.TimeZone
 /**
  * Draws the camera with the daily scan limit in each state (scans left, unlimited, used up, and a photo the limit turned away),
  * with what the server's own routes answered (`scan_limit_*.json`), and saves a picture of each, so layout and colour problems
- * can be seen without a phone. Only runs when asked for (`-Pscreenshots`): see app/build.gradle.kts and the CI workflow.
+ * can be seen without a phone. The camera is drawn as it is on a phone: with the card outline over it, and with the status bar
+ * and the gesture bar that a phone has (the pictures once left both out, and the instructions ran into the outline on a real
+ * phone without any of them showing it). Only runs when asked for (`-Pscreenshots`): see app/build.gradle.kts and the CI workflow.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(sdk = [34], qualifiers = "w360dp-h780dp-xxhdpi")
+@Config(sdk = [34], qualifiers = "w400dp-h867dp-xxhdpi")
 class ScanLimitScreenshotTest {
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
@@ -72,25 +79,34 @@ class ScanLimitScreenshotTest {
         locale?.let { Locale.setDefault(it) }
     }
 
+    /** [phone] has the size the test's window was given (see its @Config); [fontScale] above 1 is a phone set to a larger text. */
     private fun camera(
         allowance: ScanAllowanceDto?,
         entries: List<ScanEntry> = emptyList(),
         openId: Long? = null,
         dark: Boolean = true,
+        phone: Phone = tallPhone,
+        fontScale: Float = 1f,
     ) {
         compose.setContent {
             CardPulseTheme(darkTheme = dark) {
-                RapidScreenContent(
-                    entries = entries, openId = openId, message = null, serverUrl = "https://cards.example.com/",
-                    currency = "USD", rateFromEur = 1.1, ownership = { Ownership.Unknown },
-                    capturing = false, canShoot = true,
-                    preview = {
-                        Box(Modifier.fillMaxSize().background(Color(0xFF2B3A33)), contentAlignment = Alignment.Center) {
-                            Text("(live camera)", color = Color(0x88FFFFFF))
-                        }
-                    },
-                    actions = RapidActions(), allowance = allowance, now = evening,
-                )
+                val density = LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale)) {
+                    RapidScreenContent(
+                        entries = entries, openId = openId, message = null, serverUrl = "https://cards.example.com/",
+                        currency = "USD", rateFromEur = 1.1, ownership = { Ownership.Unknown },
+                        capturing = false, canShoot = true,
+                        preview = {
+                            Box(Modifier.fillMaxSize().background(Color(0xFF2B3A33)), contentAlignment = Alignment.Center) {
+                                Text("(live camera)", color = Color(0x88FFFFFF))
+                                CardGuide(Modifier.fillMaxSize())
+                            }
+                        },
+                        actions = RapidActions(), allowance = allowance, now = evening,
+                        statusBar = WindowInsets(top = phone.statusBar),
+                        navigationBar = WindowInsets(bottom = phone.navigationBar),
+                    )
+                }
             }
         }
     }
@@ -113,6 +129,10 @@ class ScanLimitScreenshotTest {
         File(dir, "$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
+    private val turnedAway = "Daily scan limit reached. Scans reset at midnight (Europe/Berlin)."
+
+    // --- the phone it was reported on (1080 x 2340 px, a tall status bar) -----------------------------------------------------------
+
     @Test
     fun scansLeft() {
         camera(twentyThree)
@@ -132,6 +152,12 @@ class ScanLimitScreenshotTest {
     }
 
     @Test
+    fun aServerWithoutTheLimits() {
+        camera(allowance = null)
+        capture("1l-scan-no-limits")
+    }
+
+    @Test
     fun theLimitReached() {
         camera(reached)
         capture("1l-scan-reached")
@@ -145,10 +171,9 @@ class ScanLimitScreenshotTest {
 
     @Test
     fun theLimitReachedWithPhotosTurnedAway() {
-        val message = "Daily scan limit reached. Scans reset at midnight (Europe/Berlin)."
         val entries = listOf(
-            ScanEntry(id = 3, photo = null, upload = Upload.FAILED, uploadError = message),
-            ScanEntry(id = 2, photo = null, upload = Upload.SENT, jobId = 2, item = ScanItemDto(id = 2, status = "failed", error = message)),
+            ScanEntry(id = 3, photo = null, upload = Upload.FAILED, uploadError = turnedAway),
+            ScanEntry(id = 2, photo = null, upload = Upload.SENT, jobId = 2, item = ScanItemDto(id = 2, status = "failed", error = turnedAway)),
             ScanEntry(id = 1, photo = null, upload = Upload.SENT, jobId = 1, item = ScanItemDto(id = 1, status = "processing")),
         )
         camera(reached, entries = entries)
@@ -157,9 +182,38 @@ class ScanLimitScreenshotTest {
 
     @Test
     fun aPhotoTheLimitTurnedAway() {
-        val message = "Daily scan limit reached. Scans reset at midnight (Europe/Berlin)."
-        val entry = ScanEntry(id = 2, photo = null, upload = Upload.SENT, jobId = 2, item = ScanItemDto(id = 2, status = "failed", error = message))
+        val entry = ScanEntry(id = 2, photo = null, upload = Upload.SENT, jobId = 2, item = ScanItemDto(id = 2, status = "failed", error = turnedAway))
         camera(reached, entries = listOf(entry), openId = 2)
         capture("1l-scan-reached-panel")
+    }
+
+    @Test
+    fun scansLeftWithAPhotoOnItsWay() {
+        val entry = ScanEntry(id = 1, photo = null, upload = Upload.SENT, jobId = 1, item = ScanItemDto(id = 1, status = "processing"))
+        camera(twentyThree.copy(used = 24, remaining = 76), entries = listOf(entry))
+        capture("1l-scan-usage-tray")
+    }
+
+    // --- a plainer phone, and a phone set to larger text ---------------------------------------------------------------------------
+
+    @Test
+    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    fun scansLeftOnAPlainerPhone() {
+        camera(twentyThree, phone = plainPhone)
+        capture("1l-scan-usage-plain-phone")
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    fun theLimitReachedOnAPlainerPhone() {
+        camera(reached, phone = plainPhone)
+        capture("1l-scan-reached-plain-phone")
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    fun scansLeftWithLargeText() {
+        camera(twentyThree, phone = plainPhone, fontScale = 1.3f)
+        capture("1l-scan-usage-large-text")
     }
 }

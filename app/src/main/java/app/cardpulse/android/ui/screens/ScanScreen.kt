@@ -14,15 +14,17 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -52,6 +54,7 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import app.cardpulse.android.camera.CameraPreview
@@ -232,6 +235,9 @@ fun RapidScreenContent(
     /** What the user may still scan today (the server's daily scan limit); null when the server has none to say. */
     allowance: ScanAllowanceDto? = null,
     now: Instant = Instant.now(),
+    /** The bars the controls keep clear of: the phone's own. Pictures and tests give them a size, to draw a phone that has them. */
+    statusBar: WindowInsets = WindowInsets.statusBars,
+    navigationBar: WindowInsets = WindowInsets.navigationBars,
 ) {
     val toReview = entries.count { it.tileState() == TileState.READY }
     val open = openId?.let { id -> entries.firstOrNull { it.id == id } }
@@ -244,7 +250,7 @@ fun RapidScreenContent(
         Box(Modifier.fillMaxSize()) { preview() }
 
         Column(
-            Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 8.dp),
+            Modifier.align(Alignment.TopCenter).fillMaxWidth().windowInsetsPadding(statusBar).padding(horizontal = 8.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -267,15 +273,6 @@ fun RapidScreenContent(
             }
             if (allowance != null) ScanAllowanceNotice(allowance, now)
             message?.let { Banner(it, isError = true, onDismiss = actions.dismissMessage) }
-            if (entries.isEmpty()) {
-                Text(
-                    "Fill the outline with one card, then tap the button. Results appear below as they are read, " +
-                        "while you carry on with the next card.",
-                    color = Color.White,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(horizontal = 8.dp),
-                )
-            }
         }
 
         Column(
@@ -283,7 +280,7 @@ fun RapidScreenContent(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .background(Color(0x99000000))
-                .navigationBarsPadding()
+                .windowInsetsPadding(navigationBar)
                 .padding(bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -295,6 +292,17 @@ fun RapidScreenContent(
                     openId = openId,
                     onOpen = actions.open,
                     modifier = Modifier.fillMaxWidth().height(92.dp),
+                )
+            } else if (!limitReached) {
+                // Below the camera, on the dark strip, and not over it: up in the camera it ran down into the card outline as soon
+                // as anything else (the count of scans, a status bar of a few more dp, a larger text size) took a line above it.
+                // The results of the first photo come up in this very place, which is what "here" means.
+                Text(
+                    "Fill the outline with one card, then tap the button. Results appear here as they are read.",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp),
                 )
             }
             Row(
@@ -342,7 +350,7 @@ fun RapidScreenContent(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .imePadding()
-                    .navigationBarsPadding()
+                    .windowInsetsPadding(navigationBar)
                     .heightIn(max = panelMaxHeight),
             )
         }
@@ -357,27 +365,19 @@ private const val AFTER_RESET_MS = 1_000L
 
 /**
  * How many scans are used today, such as "23 of 100 scans used today", or "Unlimited scans" for a user with no limit. At the
- * limit it also says so, and when scans start again: the server refuses a photo then, and nothing here would explain why.
+ * limit that is replaced by a notice that says so, and when scans start again: the server refuses a photo then, and nothing
+ * here would explain why. One element at a time keeps the top of the screen short, so it stays clear of the card outline.
  */
 @Composable
 private fun ScanAllowanceNotice(allowance: ScanAllowanceDto, now: Instant, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            allowance.usageText(),
-            color = Color.White,
-            style = MaterialTheme.typography.labelLarge,
-            modifier = Modifier
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color(0x99000000))
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-        )
+    Box(modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
         if (allowance.isUsedUp(now)) {
             Column(
                 Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.errorContainer)
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
                     // Said out loud when it appears: a screen reader user otherwise finds out from a shutter that does nothing.
                     .semantics { liveRegion = LiveRegionMode.Polite },
                 verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -392,6 +392,16 @@ private fun ScanAllowanceNotice(allowance: ScanAllowanceDto, now: Instant, modif
                     Text(it, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodyMedium)
                 }
             }
+        } else {
+            Text(
+                allowance.usageText(),
+                color = Color.White,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0x99000000))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
         }
     }
 }
